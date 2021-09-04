@@ -1,0 +1,8 @@
+fn main(a, b) -> (c) {
+    c = foodd(a, b) + 2.12312 + 1.1
+    c = c + 10.0
+}
+
+fn foodd(a, b) -> (c) {
+    c = a + b
+}
