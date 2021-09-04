@@ -1,12 +1,26 @@
-fn main(a, b) -> (c) {
-    c = a + b
-}
+//test
+fn main(a, b) -> (c) {//test
+//test
+    //test
+    d = foodd(a, b) + foodd(a, b) //test
+//test
+//test
+    c = d + 1.0 //test
+//test//test
+}//test
 
-fn maina(a, b) -> (c) {
-    c = foodd(a, b) + 2.12312 + 1.1
-    c = c + 10.0
-}
+//test
+//test
 
+fn maina(a, b) -> (c) {//test
+    c = foodd(a, b) + 2.12312 + 1.1//test
+    c = c + 10.0//test
+}//test
+//test
 fn foodd(a, b) -> (c) {
-    c = a + b
-}
+    c = a + b//test
+}//test
+
+//fn foodd(a, b) -> (c) {
+//    c = a + b//test
+//}//test

@@ -25,20 +25,20 @@ peg::parser!(pub grammar parser() for str {
         = function()*
 
     rule function() -> (String, Vec<String>, String, Vec<Expr>)
-        = [' ' | '\t' | '\n']* "fn" _ name:identifier() _
+        = __ "fn" _ name:identifier() _
         "(" params:((_ i:identifier() _ {i}) ** ",") ")" _
         "->" _
         "(" returns:(_ i:identifier() _ {i}) ")" _
-        "{" _ "\n"
+        "{" __
         stmts:statements()
-        _ "}" _ "\n" _
+        _ "}" __
         { (name, params, returns, stmts) }
 
     rule statements() -> Vec<Expr>
         = s:(statement()*) { s }
 
     rule statement() -> Expr
-        = _ e:expression() _ "\n" { e }
+        = __ e:expression() __ { e }
 
     rule expression() -> Expr
         = if_else()
@@ -87,5 +87,11 @@ peg::parser!(pub grammar parser() for str {
         = n:$(['0'..='9']+"."['0'..='9']+) { Expr::Literal(n.to_owned()) }
         / "&" i:identifier() { Expr::GlobalDataAddr(i) }
 
+    rule comment() -> ()
+        = quiet!{"//" [^'\n']*"\n"}
+
+
     rule _() =  quiet!{[' ' | '\t']*}
+
+    rule __() =  quiet!{comment()* [' ' | '\t' | '\n']* comment()* [' ' | '\t' | '\n']*}
 });
