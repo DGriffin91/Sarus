@@ -43,7 +43,7 @@ impl JIT {
     pub fn compile(&mut self, input: &str) -> Result<*const u8, String> {
         // First, parse the string, producing AST nodes.
         for (name, params, the_return, stmts) in
-            parser::program(&input).map_err(|e| e.to_string())?
+            parser::program(&input.replace("\r\n", "\n")).map_err(|e| e.to_string())?
         {
             ////println!(
             ////    "name {:?}, params {:?}, the_return {:?}",
