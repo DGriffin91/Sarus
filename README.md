@@ -11,3 +11,4 @@ TODO:
 - Array type
 - Struct type
 - Int type
+- Statically initialized heap allocated array-like type
