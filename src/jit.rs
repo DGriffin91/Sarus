@@ -69,7 +69,7 @@ impl JIT {
             let id = self
                 .module
                 .declare_function(&name, Linkage::Export, &self.ctx.func.signature)
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| format!("{}:{}:{} {:?}", file!(), line!(), column!(), e))?;
 
             ////println!("ID IS {}", id);
             // Define the function to jit. This finishes compilation, although
@@ -79,7 +79,7 @@ impl JIT {
             // function below.
             self.module
                 .define_function(id, &mut self.ctx, &mut codegen::binemit::NullTrapSink {})
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| format!("{}:{}:{} {:?}", file!(), line!(), column!(), e))?;
 
             // Now that compilation is finished, we can clear out the context state.
             self.module.clear_context(&mut self.ctx);
@@ -285,8 +285,9 @@ impl<'a> FunctionTranslator<'a> {
     fn translate_icmp(&mut self, cmp: FloatCC, lhs: Expr, rhs: Expr) -> Value {
         let lhs = *self.translate_expr(lhs).first().unwrap();
         let rhs = *self.translate_expr(rhs).first().unwrap();
-        let c = self.builder.ins().fcmp(cmp, lhs, rhs);
-        self.builder.ins().bint(self.float, c)
+        let b = self.builder.ins().fcmp(cmp, lhs, rhs);
+        let c = self.builder.ins().bint(types::I32, b);
+        self.builder.ins().fcvt_from_sint(self.float, c)
     }
 
     fn translate_if_else(
@@ -295,7 +296,13 @@ impl<'a> FunctionTranslator<'a> {
         then_body: Vec<Expr>,
         else_body: Vec<Expr>,
     ) -> Value {
-        let condition_value = self.translate_expr(condition);
+        let condition_value = *self.translate_expr(condition).first().unwrap();
+        //let int_val = self.builder.ins().fcvt_to_sint(types::I32, condition_value);
+        let zero = self.builder.ins().f32const(0.0);
+        let b_condition_value = self
+            .builder
+            .ins()
+            .fcmp(FloatCC::NotEqual, condition_value, zero);
 
         let then_block = self.builder.create_block();
         let else_block = self.builder.create_block();
@@ -309,9 +316,7 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.append_block_param(merge_block, self.float);
 
         // Test the if condition and conditionally branch.
-        self.builder
-            .ins()
-            .brz(*condition_value.first().unwrap(), else_block, &[]);
+        self.builder.ins().brz(b_condition_value, else_block, &[]);
         // Fall through to then block.
         self.builder.ins().jump(then_block, &[]);
 

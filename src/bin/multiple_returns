@@ -1,7 +1,11 @@
 
 fn main(a, b) -> (e) {
     c, d = stuff(a, b)
-    e = c + d
+    e = if a == b {
+        5.0
+    } else {
+        6.0
+    }
 }
 
 fn stuff(a, b) -> (c, d) {
