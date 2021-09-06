@@ -22,7 +22,7 @@ pub enum Expr {
 
 peg::parser!(pub grammar parser() for str {
     pub rule program() -> Vec<(String, Vec<String>, Vec<String>, Vec<Expr>)>
-        = function()*
+        = __ f:(function()*) __ { f }
 
     rule function() -> (String, Vec<String>, Vec<String>, Vec<Expr>)
         = __ "fn" _ name:identifier() _

@@ -5,7 +5,7 @@ fn main(a, b) -> (e) {
     e = if a == b {
         5.0
     } else {
-        6.0
+        8.0
     }
 }
 
@@ -13,3 +13,17 @@ fn stuff(a, b) -> (c, d) {
     c = a + 1.0
     d = c + b + 10.0
 }
+
+// Doesn't work yet
+// e, f = if a == b {
+//     5.0, 6.0
+// } else {
+//     7.0, 8.0
+// }
+
+// Also doesn't work yet but for different reasons
+// e, f = if a == b {
+//     stuff(a, b)
+// } else {
+//     stuff(a, b)
+// }
