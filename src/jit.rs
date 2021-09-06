@@ -49,9 +49,6 @@ impl JIT {
             return_counts.insert(name.to_string(), returns.len());
         }
 
-        //TODO avoid this duplication
-        let prog = parser::program(&input).map_err(|e| e.to_string())?;
-
         // First, parse the string, producing AST nodes.
         for (name, params, returns, stmts) in prog {
             ////println!(
