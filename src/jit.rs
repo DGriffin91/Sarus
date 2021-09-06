@@ -223,6 +223,24 @@ impl<'a> FunctionTranslator<'a> {
                 vec![self.builder.ins().fadd(lhs, rhs)]
             }
 
+            Expr::Sub(lhs, rhs) => {
+                let lhs = *self.translate_expr(*lhs).first().unwrap();
+                let rhs = *self.translate_expr(*rhs).first().unwrap();
+                vec![self.builder.ins().fsub(lhs, rhs)]
+            }
+
+            Expr::Mul(lhs, rhs) => {
+                let lhs = *self.translate_expr(*lhs).first().unwrap();
+                let rhs = *self.translate_expr(*rhs).first().unwrap();
+                vec![self.builder.ins().fmul(lhs, rhs)]
+            }
+
+            Expr::Div(lhs, rhs) => {
+                let lhs = *self.translate_expr(*lhs).first().unwrap();
+                let rhs = *self.translate_expr(*rhs).first().unwrap();
+                vec![self.builder.ins().fdiv(lhs, rhs)]
+            }
+
             Expr::AddAssign(name, expr) => {
                 vec![self
                     .translate_math_assign(name.to_string(), *expr, &|n, o, b| b.ins().fadd(n, o))]
@@ -241,24 +259,6 @@ impl<'a> FunctionTranslator<'a> {
             Expr::DivAssign(name, expr) => {
                 vec![self
                     .translate_math_assign(name.to_string(), *expr, &|n, o, b| b.ins().fdiv(n, o))]
-            }
-
-            Expr::Sub(lhs, rhs) => {
-                let lhs = *self.translate_expr(*lhs).first().unwrap();
-                let rhs = *self.translate_expr(*rhs).first().unwrap();
-                vec![self.builder.ins().fsub(lhs, rhs)]
-            }
-
-            Expr::Mul(lhs, rhs) => {
-                let lhs = *self.translate_expr(*lhs).first().unwrap();
-                let rhs = *self.translate_expr(*rhs).first().unwrap();
-                vec![self.builder.ins().fmul(lhs, rhs)]
-            }
-
-            Expr::Div(lhs, rhs) => {
-                let lhs = *self.translate_expr(*lhs).first().unwrap();
-                let rhs = *self.translate_expr(*rhs).first().unwrap();
-                vec![self.builder.ins().fdiv(lhs, rhs)]
             }
 
             Expr::Eq(lhs, rhs) => vec![self.translate_icmp(FloatCC::Equal, *lhs, *rhs)],
