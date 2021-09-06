@@ -1,78 +1,96 @@
+/// "Mathematical" binary operations variants
+#[derive(Debug, Clone)]
+pub enum Binop {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+/// Comparison operations
+#[derive(Debug, Clone)]
+pub enum Cmp {
+    Eq,
+    Ne,
+    Le,
+    Lt,
+    Ge,
+    Gt,
+}
+
 /// The AST node for expressions.
 #[derive(Debug, Clone)]
 pub enum Expr {
     Literal(String),
     Identifier(String),
-    Assign(Vec<String>, Vec<Expr>),
-    Eq(Box<Expr>, Box<Expr>),
-    Ne(Box<Expr>, Box<Expr>),
-    Lt(Box<Expr>, Box<Expr>),
-    Le(Box<Expr>, Box<Expr>),
-    Gt(Box<Expr>, Box<Expr>),
-    Ge(Box<Expr>, Box<Expr>),
-    Add(Box<Expr>, Box<Expr>),
-    Sub(Box<Expr>, Box<Expr>),
-    Mul(Box<Expr>, Box<Expr>),
-    Div(Box<Expr>, Box<Expr>),
+    Binop(Binop, Box<Expr>, Box<Expr>),
+    Compare(Cmp, Box<Expr>, Box<Expr>),
     IfElse(Box<Expr>, Vec<Expr>, Vec<Expr>),
+    Assign(Vec<String>, Vec<Expr>),
     WhileLoop(Box<Expr>, Vec<Expr>),
+    Block(Vec<Expr>),
     Call(String, Vec<Expr>),
     GlobalDataAddr(String),
 }
 
+pub struct Declaration {
+    pub name: String,
+    pub params: Vec<String>,
+    pub returns: Vec<String>,
+    pub body: Vec<Expr>,
+}
+
 peg::parser!(pub grammar parser() for str {
-    pub rule program() -> Vec<(String, Vec<String>, Vec<String>, Vec<Expr>)>
-        = __ f:(function()*) __ { f }
+    pub rule program() -> Vec<Declaration>
+        = (f:function() _ { f })*
 
-    rule function() -> (String, Vec<String>, Vec<String>, Vec<Expr>)
-        = __ "fn" _ name:identifier() _
-        "(" params:((_ i:identifier() _ {i}) ** ",") ")" _
+    rule function() -> Declaration
+        = _ "fn" name:identifier() _
+        "(" params:(i:identifier() ** comma()) ")" _
         "->" _
-        "(" returns:((_ i:identifier() _ {i}) ** ",") ")" _
-        "{" __
-        stmts:statements()
-        _ "}" __
-        { (name, params, returns, stmts) }
+        "(" returns:(i:identifier() ** comma()) _ ")"
+        body:block()
+        { Declaration {
+            name,
+            params,
+            returns,
+            body,
+        } }
 
-    rule statements() -> Vec<Expr>
-        = s:(statement()*) { s }
+    rule block() -> Vec<Expr>
+        = _ "{" b:(statement() ** _) _ "}" { b }
 
     rule statement() -> Expr
-        = __ e:expression() __ { e }
+        = while_loop() / assignment() / expression()
 
     rule expression() -> Expr
         = if_else()
-        / while_loop()
-        / assignment()
         / binary_op()
 
     rule if_else() -> Expr
-        = "if" _ e:expression() _ "{" _ "\n"
-        then_body:statements() _ "}" _ "else" _ "{" _ "\n"
-        else_body:statements() _ "}"
-        { Expr::IfElse(Box::new(e), then_body, else_body) }
+        = _ "if" e:expression() _ when_true:block() _ "else" when_false:block()
+        { Expr::IfElse(Box::new(e), when_true, when_false) }
 
     rule while_loop() -> Expr
-        = "while" _ e:expression() _ "{" _ "\n"
-        loop_body:statements() _ "}"
-        { Expr::WhileLoop(Box::new(e), loop_body) }
+        = _ "while" e:expression() body:block()
+        { Expr::WhileLoop(Box::new(e), body) }
 
     rule assignment() -> Expr
-        = assignments:((_ i:identifier() _ {i}) ** ",") _ "=" _ args:((_ e:expression() _ {e}) ** ",") {Expr::Assign(assignments, args)}
+        = assignments:((i:identifier() {i}) ** comma()) _ "=" args:((_ e:expression() _ {e}) ** comma()) {Expr::Assign(assignments, args)}
 
     rule binary_op() -> Expr = precedence!{
-        a:@ _ "==" _ b:(@) { Expr::Eq(Box::new(a), Box::new(b)) }
-        a:@ _ "!=" _ b:(@) { Expr::Ne(Box::new(a), Box::new(b)) }
-        a:@ _ "<"  _ b:(@) { Expr::Lt(Box::new(a), Box::new(b)) }
-        a:@ _ "<=" _ b:(@) { Expr::Le(Box::new(a), Box::new(b)) }
-        a:@ _ ">"  _ b:(@) { Expr::Gt(Box::new(a), Box::new(b)) }
-        a:@ _ ">=" _ b:(@) { Expr::Ge(Box::new(a), Box::new(b)) }
+        a:@ _ "==" b:(@) { Expr::Compare(Cmp::Eq, Box::new(a), Box::new(b)) }
+        a:@ _ "!=" b:(@) { Expr::Compare(Cmp::Ne, Box::new(a), Box::new(b)) }
+        a:@ _ "<"  b:(@) { Expr::Compare(Cmp::Lt, Box::new(a), Box::new(b)) }
+        a:@ _ "<=" b:(@) { Expr::Compare(Cmp::Le, Box::new(a), Box::new(b)) }
+        a:@ _ ">"  b:(@) { Expr::Compare(Cmp::Gt, Box::new(a), Box::new(b)) }
+        a:@ _ ">=" b:(@) { Expr::Compare(Cmp::Ge, Box::new(a), Box::new(b)) }
         --
-        a:@ _ "+" _ b:(@) { Expr::Add(Box::new(a), Box::new(b)) }
-        a:@ _ "-" _ b:(@) { Expr::Sub(Box::new(a), Box::new(b)) }
+        a:@ _ "+" b:(@) { Expr::Binop(Binop::Add, Box::new(a), Box::new(b)) }
+        a:@ _ "-" b:(@) { Expr::Binop(Binop::Sub, Box::new(a), Box::new(b)) }
         --
-        a:@ _ "*" _ b:(@) { Expr::Mul(Box::new(a), Box::new(b)) }
-        a:@ _ "/" _ b:(@) { Expr::Div(Box::new(a), Box::new(b)) }
+        a:@ _ "*" b:(@) { Expr::Binop(Binop::Mul, Box::new(a), Box::new(b)) }
+        a:@ _ "/" b:(@) { Expr::Binop(Binop::Div, Box::new(a), Box::new(b)) }
         --
         i:identifier() _ "(" args:((_ e:expression() _ {e}) ** ",") ")" { Expr::Call(i, args) }
         i:identifier() { Expr::Identifier(i) }
@@ -80,18 +98,17 @@ peg::parser!(pub grammar parser() for str {
     }
 
     rule identifier() -> String
-        = quiet!{ n:$(['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.to_owned() } }
+        = quiet!{ _ n:$(['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.to_owned() } }
         / expected!("identifier")
 
     rule literal() -> Expr
-        = n:$(['0'..='9']+"."['0'..='9']+) { Expr::Literal(n.to_owned()) }
+        = _ n:$(['0'..='9']+"."['0'..='9']+) { Expr::Literal(n.to_owned()) }
         / "&" i:identifier() { Expr::GlobalDataAddr(i) }
 
     rule comment() -> ()
         = quiet!{"//" [^'\n']*"\n"}
 
+    rule comma() = _ ","
 
-    rule _() =  quiet!{[' ' | '\t']*}
-
-    rule __() =  quiet!{comment()* [' ' | '\t' | '\n']* comment()* [' ' | '\t' | '\n']*}
+    rule _() =  quiet!{comment() / [' ' | '\t' | '\n']}*
 });

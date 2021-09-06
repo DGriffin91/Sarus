@@ -45,12 +45,18 @@ impl JIT {
         let prog = parser::program(&input).map_err(|e| e.to_string())?;
 
         let mut return_counts = HashMap::new();
-        for (name, _params, returns, _stmts) in &prog {
+        for Declaration { name, returns, .. } in &prog {
             return_counts.insert(name.to_string(), returns.len());
         }
 
         // First, parse the string, producing AST nodes.
-        for (name, params, returns, stmts) in prog {
+        for Declaration {
+            name,
+            params,
+            returns,
+            body: stmts,
+        } in prog
+        {
             ////println!(
             ////    "name {:?}, params {:?}, the_return {:?}",
             ////    &name, &params, &the_return
@@ -217,39 +223,8 @@ impl<'a> FunctionTranslator<'a> {
                 let imm: f32 = literal.parse().unwrap();
                 vec![self.builder.ins().f32const(imm as f32)]
             }
-
-            Expr::Add(lhs, rhs) => {
-                let lhs = *self.translate_expr(*lhs).first().unwrap();
-                let rhs = *self.translate_expr(*rhs).first().unwrap();
-                vec![self.builder.ins().fadd(lhs, rhs)]
-            }
-
-            Expr::Sub(lhs, rhs) => {
-                let lhs = *self.translate_expr(*lhs).first().unwrap();
-                let rhs = *self.translate_expr(*rhs).first().unwrap();
-                vec![self.builder.ins().fsub(lhs, rhs)]
-            }
-
-            Expr::Mul(lhs, rhs) => {
-                let lhs = *self.translate_expr(*lhs).first().unwrap();
-                let rhs = *self.translate_expr(*rhs).first().unwrap();
-                vec![self.builder.ins().fmul(lhs, rhs)]
-            }
-
-            Expr::Div(lhs, rhs) => {
-                let lhs = *self.translate_expr(*lhs).first().unwrap();
-                let rhs = *self.translate_expr(*rhs).first().unwrap();
-                vec![self.builder.ins().fdiv(lhs, rhs)]
-            }
-
-            Expr::Eq(lhs, rhs) => vec![self.translate_icmp(FloatCC::Equal, *lhs, *rhs)],
-            Expr::Ne(lhs, rhs) => vec![self.translate_icmp(FloatCC::NotEqual, *lhs, *rhs)],
-            Expr::Lt(lhs, rhs) => vec![self.translate_icmp(FloatCC::LessThan, *lhs, *rhs)],
-            Expr::Le(lhs, rhs) => vec![self.translate_icmp(FloatCC::LessThanOrEqual, *lhs, *rhs)],
-            Expr::Gt(lhs, rhs) => vec![self.translate_icmp(FloatCC::GreaterThan, *lhs, *rhs)],
-            Expr::Ge(lhs, rhs) => {
-                vec![self.translate_icmp(FloatCC::GreaterThanOrEqual, *lhs, *rhs)]
-            }
+            Expr::Binop(op, lhs, rhs) => self.translate_binop(op, *lhs, *rhs),
+            Expr::Compare(cmp, lhs, rhs) => self.translate_cmp(cmp, *lhs, *rhs),
             Expr::Call(name, args) => self.translate_call(name, args),
             Expr::GlobalDataAddr(name) => vec![self.translate_global_data_addr(name)],
             Expr::Identifier(name) => {
@@ -264,7 +239,38 @@ impl<'a> FunctionTranslator<'a> {
             Expr::WhileLoop(condition, loop_body) => {
                 vec![self.translate_while_loop(*condition, loop_body)]
             }
+            Expr::Block(b) => {
+                vec![b
+                    .into_iter()
+                    .map(|e| self.translate_expr(e))
+                    .last()
+                    .and_then(|v| v.first().cloned())
+                    .unwrap()]
+            }
         }
+    }
+
+    fn translate_binop(&mut self, op: Binop, lhs: Expr, rhs: Expr) -> Vec<Value> {
+        let lhs = *self.translate_expr(lhs).first().unwrap();
+        let rhs = *self.translate_expr(rhs).first().unwrap();
+        match op {
+            Binop::Add => vec![self.builder.ins().fadd(lhs, rhs)],
+            Binop::Sub => vec![self.builder.ins().fsub(lhs, rhs)],
+            Binop::Mul => vec![self.builder.ins().fmul(lhs, rhs)],
+            Binop::Div => vec![self.builder.ins().fdiv(lhs, rhs)],
+        }
+    }
+
+    fn translate_cmp(&mut self, cmp: Cmp, lhs: Expr, rhs: Expr) -> Vec<Value> {
+        let icmp = match cmp {
+            Cmp::Eq => FloatCC::Equal,
+            Cmp::Ne => FloatCC::NotEqual,
+            Cmp::Lt => FloatCC::LessThan,
+            Cmp::Le => FloatCC::LessThanOrEqual,
+            Cmp::Gt => FloatCC::GreaterThan,
+            Cmp::Ge => FloatCC::GreaterThanOrEqual,
+        };
+        vec![self.translate_icmp(icmp, lhs, rhs)]
     }
 
     fn translate_assign(&mut self, names: Vec<String>, expr: Vec<Expr>) -> Vec<Value> {
