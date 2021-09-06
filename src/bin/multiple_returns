@@ -7,6 +7,9 @@ fn main(a, b) -> (e) {
     } else {
         8.0
     }
+    if 1.0 {
+        e = e * 100.0
+    }
     i = 0.0
     while i < 10.0 {
         e = e * 2.0

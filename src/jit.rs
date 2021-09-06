@@ -258,6 +258,9 @@ impl<'a> FunctionTranslator<'a> {
                 vec![self.builder.use_var(*variable)]
             }
             Expr::Assign(names, expr) => self.translate_assign(names, expr),
+            Expr::IfThen(condition, then_body) => {
+                vec![self.translate_if_then(*condition, then_body)]
+            }
             Expr::IfElse(condition, then_body, else_body) => {
                 vec![self.translate_if_else(*condition, then_body, else_body)]
             }
@@ -300,6 +303,38 @@ impl<'a> FunctionTranslator<'a> {
         let b = self.builder.ins().fcmp(cmp, lhs, rhs);
         let c = self.builder.ins().bint(types::I32, b);
         self.builder.ins().fcvt_from_sint(self.float, c)
+    }
+
+    fn translate_if_then(&mut self, condition: Expr, then_body: Vec<Expr>) -> Value {
+        let condition_value = *self.translate_expr(condition).first().unwrap();
+        //Convert condition from float to bool
+        let zero = self.builder.ins().f64const(0.0);
+        let b_condition_value = self
+            .builder
+            .ins()
+            .fcmp(FloatCC::NotEqual, condition_value, zero);
+
+        let then_block = self.builder.create_block();
+        let merge_block = self.builder.create_block();
+
+        // Test the if condition and conditionally branch.
+        self.builder.ins().brz(b_condition_value, merge_block, &[]);
+        // Fall through to then block.
+        self.builder.ins().jump(then_block, &[]);
+
+        self.builder.switch_to_block(then_block);
+        self.builder.seal_block(then_block);
+        for expr in then_body {
+            self.translate_expr(expr).first().unwrap();
+        }
+
+        // Jump to the merge block, passing it the block return value.
+        self.builder.ins().jump(merge_block, &[]);
+        // Switch to the merge block for subsequent statements.
+        self.builder.switch_to_block(merge_block);
+        // We've now seen all the predecessors of the merge block.
+        self.builder.seal_block(merge_block);
+        condition_value
     }
 
     fn translate_if_else(

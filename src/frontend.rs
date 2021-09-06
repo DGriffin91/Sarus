@@ -14,6 +14,7 @@ pub enum Expr {
     Sub(Box<Expr>, Box<Expr>),
     Mul(Box<Expr>, Box<Expr>),
     Div(Box<Expr>, Box<Expr>),
+    IfThen(Box<Expr>, Vec<Expr>),
     IfElse(Box<Expr>, Vec<Expr>, Vec<Expr>),
     WhileLoop(Box<Expr>, Vec<Expr>),
     Call(String, Vec<Expr>),
@@ -41,10 +42,16 @@ peg::parser!(pub grammar parser() for str {
         = __ e:expression() __ { e }
 
     rule expression() -> Expr
-        = if_else()
+        = if_then()
+        / if_else()
         / while_loop()
         / assignment()
         / binary_op()
+
+    rule if_then() -> Expr
+        = "if" _ e:expression() _ "{" _ "\n"
+        then_body:statements() _ "}" _ "\n"
+        { Expr::IfThen(Box::new(e), then_body) }
 
     rule if_else() -> Expr
         = "if" _ e:expression() _ "{" _ "\n"
