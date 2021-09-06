@@ -11,9 +11,13 @@ pub enum Expr {
     Gt(Box<Expr>, Box<Expr>),
     Ge(Box<Expr>, Box<Expr>),
     Add(Box<Expr>, Box<Expr>),
+    AddAssign(Box<String>, Box<Expr>),
     Sub(Box<Expr>, Box<Expr>),
+    SubAssign(Box<String>, Box<Expr>),
     Mul(Box<Expr>, Box<Expr>),
+    MulAssign(Box<String>, Box<Expr>),
     Div(Box<Expr>, Box<Expr>),
+    DivAssign(Box<String>, Box<Expr>),
     IfThen(Box<Expr>, Vec<Expr>),
     IfElse(Box<Expr>, Vec<Expr>, Vec<Expr>),
     WhileLoop(Box<Expr>, Vec<Expr>),
@@ -76,10 +80,16 @@ peg::parser!(pub grammar parser() for str {
         a:@ _ ">=" _ b:(@) { Expr::Ge(Box::new(a), Box::new(b)) }
         --
         a:@ _ "+" _ b:(@) { Expr::Add(Box::new(a), Box::new(b)) }
+        i:identifier() _ "+=" _ a:(@) { Expr::AddAssign(Box::new(i), Box::new(a)) }
+
         a:@ _ "-" _ b:(@) { Expr::Sub(Box::new(a), Box::new(b)) }
+        i:identifier() _ "-=" _ a:(@) { Expr::SubAssign(Box::new(i), Box::new(a)) }
         --
         a:@ _ "*" _ b:(@) { Expr::Mul(Box::new(a), Box::new(b)) }
+        i:identifier() _ "*=" _ a:(@) { Expr::MulAssign(Box::new(i), Box::new(a)) }
+
         a:@ _ "/" _ b:(@) { Expr::Div(Box::new(a), Box::new(b)) }
+        i:identifier() _ "/=" _ a:(@) { Expr::DivAssign(Box::new(i), Box::new(a)) }
         --
         i:identifier() _ "(" args:((_ e:expression() _ {e}) ** ",") ")" { Expr::Call(i, args) }
         i:identifier() { Expr::Identifier(i) }

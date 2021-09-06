@@ -1,5 +1,4 @@
 use crate::frontend::*;
-use cranelift::codegen::dbg;
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataContext, Linkage, Module};
@@ -224,6 +223,26 @@ impl<'a> FunctionTranslator<'a> {
                 vec![self.builder.ins().fadd(lhs, rhs)]
             }
 
+            Expr::AddAssign(name, expr) => {
+                vec![self
+                    .translate_math_assign(name.to_string(), *expr, &|n, o, b| b.ins().fadd(n, o))]
+            }
+
+            Expr::SubAssign(name, expr) => {
+                vec![self
+                    .translate_math_assign(name.to_string(), *expr, &|n, o, b| b.ins().fsub(n, o))]
+            }
+
+            Expr::MulAssign(name, expr) => {
+                vec![self
+                    .translate_math_assign(name.to_string(), *expr, &|n, o, b| b.ins().fmul(n, o))]
+            }
+
+            Expr::DivAssign(name, expr) => {
+                vec![self
+                    .translate_math_assign(name.to_string(), *expr, &|n, o, b| b.ins().fdiv(n, o))]
+            }
+
             Expr::Sub(lhs, rhs) => {
                 let lhs = *self.translate_expr(*lhs).first().unwrap();
                 let rhs = *self.translate_expr(*rhs).first().unwrap();
@@ -295,6 +314,20 @@ impl<'a> FunctionTranslator<'a> {
             }
             new_value
         }
+    }
+
+    fn translate_math_assign(
+        &mut self,
+        name: String,
+        expr: Expr,
+        f: &dyn Fn(Value, Value, &mut FunctionBuilder) -> Value,
+    ) -> Value {
+        let new_value = *self.translate_expr(expr).first().unwrap();
+        let orig_variable = self.variables.get(&*name).unwrap();
+        let orig_value = self.builder.use_var(*orig_variable);
+        let added_val = f(new_value, orig_value, &mut self.builder);
+        self.builder.def_var(*orig_variable, added_val);
+        added_val
     }
 
     fn translate_icmp(&mut self, cmp: FloatCC, lhs: Expr, rhs: Expr) -> Value {
@@ -500,7 +533,7 @@ fn declare_variables(
         builder.def_var(var, val);
     }
 
-    for (i, name) in returns.iter().enumerate() {
+    for (_i, name) in returns.iter().enumerate() {
         let zero = builder.ins().f64const(0.0);
         let var = declare_variable(float, builder, &mut variables, &mut index, name);
         //TODO: should we check if there is an input var with the same name and use that instead? (like with params)
