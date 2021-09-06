@@ -25,8 +25,10 @@ pub enum Expr {
     Identifier(String),
     Binop(Binop, Box<Expr>, Box<Expr>),
     Compare(Cmp, Box<Expr>, Box<Expr>),
+    IfThen(Box<Expr>, Vec<Expr>),
     IfElse(Box<Expr>, Vec<Expr>, Vec<Expr>),
     Assign(Vec<String>, Vec<Expr>),
+    AssignOp(Binop, Box<String>, Box<Expr>),
     WhileLoop(Box<Expr>, Vec<Expr>),
     Block(Vec<Expr>),
     Call(String, Vec<Expr>),
@@ -64,8 +66,15 @@ peg::parser!(pub grammar parser() for str {
         = while_loop() / assignment() / expression()
 
     rule expression() -> Expr
-        = if_else()
+        = if_then()
+        / if_else()
+        / while_loop()
+        / assignment()
         / binary_op()
+
+    rule if_then() -> Expr
+        = "if" _ e:expression() then_body:block() "\n"
+        { Expr::IfThen(Box::new(e), then_body) }
 
     rule if_else() -> Expr
         = _ "if" e:expression() _ when_true:block() _ "else" when_false:block()
@@ -86,11 +95,17 @@ peg::parser!(pub grammar parser() for str {
         a:@ _ ">"  b:(@) { Expr::Compare(Cmp::Gt, Box::new(a), Box::new(b)) }
         a:@ _ ">=" b:(@) { Expr::Compare(Cmp::Ge, Box::new(a), Box::new(b)) }
         --
-        a:@ _ "+" b:(@) { Expr::Binop(Binop::Add, Box::new(a), Box::new(b)) }
-        a:@ _ "-" b:(@) { Expr::Binop(Binop::Sub, Box::new(a), Box::new(b)) }
+        a:@ _ "+" _ b:(@) { Expr::Binop(Binop::Add, Box::new(a), Box::new(b)) }
+        i:identifier() _ "+=" _ a:(@) { Expr::AssignOp(Binop::Add, Box::new(i), Box::new(a)) }
+
+        a:@ _ "-" _ b:(@) { Expr::Binop(Binop::Sub, Box::new(a), Box::new(b)) }
+        i:identifier() _ "-=" _ a:(@) { Expr::AssignOp(Binop::Sub, Box::new(i), Box::new(a)) }
         --
-        a:@ _ "*" b:(@) { Expr::Binop(Binop::Mul, Box::new(a), Box::new(b)) }
-        a:@ _ "/" b:(@) { Expr::Binop(Binop::Div, Box::new(a), Box::new(b)) }
+        a:@ _ "*" _ b:(@) { Expr::Binop(Binop::Mul, Box::new(a), Box::new(b)) }
+        i:identifier() _ "*=" _ a:(@) { Expr::AssignOp(Binop::Mul, Box::new(i), Box::new(a)) }
+
+        a:@ _ "/" _ b:(@) { Expr::Binop(Binop::Div, Box::new(a), Box::new(b)) }
+        i:identifier() _ "/=" _ a:(@) { Expr::AssignOp(Binop::Div, Box::new(i), Box::new(a)) }
         --
         i:identifier() _ "(" args:((_ e:expression() _ {e}) ** ",") ")" { Expr::Call(i, args) }
         i:identifier() { Expr::Identifier(i) }

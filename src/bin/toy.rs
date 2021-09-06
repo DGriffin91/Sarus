@@ -9,11 +9,11 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-fn run_file(jit: &mut jit::JIT) -> Result<f32, String> {
+fn run_file(jit: &mut jit::JIT) -> Result<f64, String> {
     if let Some(filename) = env::args().nth(1) {
         let contents = fs::read_to_string(filename).expect("Something went wrong reading the file");
         //Inputs need to be explicitly f32
-        unsafe { run_code(jit, &contents, (100.0f32, 200.0f32)) }
+        unsafe { run_code(jit, &contents, (100.0f64, 200.0f64)) }
     } else {
         Err(String::from("could not load"))
     }

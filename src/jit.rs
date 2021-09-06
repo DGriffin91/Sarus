@@ -1,5 +1,4 @@
 use crate::frontend::*;
-use cranelift::codegen::dbg;
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataContext, Linkage, Module};
@@ -136,7 +135,7 @@ impl JIT {
     ) -> Result<(), String> {
         // Our toy language currently only supports I64 values, though Cranelift
         // supports other types.
-        let float = types::F32; //self.module.target_config().pointer_type();
+        let float = types::F64; //self.module.target_config().pointer_type();
 
         for _p in &params {
             self.ctx.func.signature.params.push(AbiParam::new(float));
@@ -219,7 +218,7 @@ impl<'a> FunctionTranslator<'a> {
     fn translate_expr(&mut self, expr: &Expr) -> Vec<Value> {
         match expr {
             Expr::Literal(literal) => {
-                vec![self.builder.ins().f32const::<f32>(literal.parse().unwrap())]
+                vec![self.builder.ins().f64const::<f64>(literal.parse().unwrap())]
             }
             Expr::Binop(op, lhs, rhs) => self.translate_binop(*op, lhs, rhs),
             Expr::Compare(cmp, lhs, rhs) => self.translate_cmp(*cmp, lhs, rhs),
@@ -235,6 +234,10 @@ impl<'a> FunctionTranslator<'a> {
                 vec![self.builder.use_var(variable)]
             }
             Expr::Assign(names, expr) => self.translate_assign(names, expr),
+            Expr::AssignOp(op, lhs, rhs) => self.translate_math_assign(*op, lhs, rhs),
+            Expr::IfThen(condition, then_body) => {
+                vec![self.translate_if_then(condition, then_body)]
+            }
             Expr::IfElse(condition, then_body, else_body) => {
                 vec![self.translate_if_else(condition, then_body, else_body)]
             }
@@ -302,12 +305,58 @@ impl<'a> FunctionTranslator<'a> {
         }
     }
 
+    fn translate_math_assign(&mut self, op: Binop, name: &str, expr: &Expr) -> Vec<Value> {
+        let new_value = *self.translate_expr(expr).first().unwrap();
+        let orig_variable = self.variables.get(&*name).unwrap();
+        let orig_value = self.builder.use_var(*orig_variable);
+        let added_val = match op {
+            Binop::Add => self.builder.ins().fadd(orig_value, new_value),
+            Binop::Sub => self.builder.ins().fsub(orig_value, new_value),
+            Binop::Mul => self.builder.ins().fmul(orig_value, new_value),
+            Binop::Div => self.builder.ins().fdiv(orig_value, new_value),
+        };
+        self.builder.def_var(*orig_variable, added_val);
+        vec![added_val]
+    }
+
     fn translate_icmp(&mut self, cmp: FloatCC, lhs: &Expr, rhs: &Expr) -> Value {
         let lhs = *self.translate_expr(lhs).first().unwrap();
         let rhs = *self.translate_expr(rhs).first().unwrap();
         let b = self.builder.ins().fcmp(cmp, lhs, rhs);
         let c = self.builder.ins().bint(types::I32, b);
         self.builder.ins().fcvt_from_sint(self.float, c)
+    }
+
+    fn translate_if_then(&mut self, condition: &Expr, then_body: &[Expr]) -> Value {
+        let condition_value = *self.translate_expr(condition).first().unwrap();
+        //Convert condition from float to bool
+        let zero = self.builder.ins().f64const(0.0);
+        let b_condition_value = self
+            .builder
+            .ins()
+            .fcmp(FloatCC::NotEqual, condition_value, zero);
+
+        let then_block = self.builder.create_block();
+        let merge_block = self.builder.create_block();
+
+        // Test the if condition and conditionally branch.
+        self.builder.ins().brz(b_condition_value, merge_block, &[]);
+        // Fall through to then block.
+        self.builder.ins().jump(then_block, &[]);
+
+        self.builder.switch_to_block(then_block);
+        self.builder.seal_block(then_block);
+        for expr in then_body {
+            self.translate_expr(expr).first().unwrap();
+        }
+
+        // Jump to the merge block, passing it the block return value.
+        self.builder.ins().jump(merge_block, &[]);
+        // Switch to the merge block for subsequent statements.
+        self.builder.switch_to_block(merge_block);
+        // We've now seen all the predecessors of the merge block.
+        self.builder.seal_block(merge_block);
+        condition_value
     }
 
     fn translate_if_else(
@@ -317,8 +366,8 @@ impl<'a> FunctionTranslator<'a> {
         else_body: &[Expr],
     ) -> Value {
         let condition_value = *self.translate_expr(condition).first().unwrap();
-        //let int_val = self.builder.ins().fcvt_to_sint(types::I32, condition_value);
-        let zero = self.builder.ins().f32const(0.0);
+        //Convert condition from float to bool
+        let zero = self.builder.ins().f64const(0.0);
         let b_condition_value = self
             .builder
             .ins()
@@ -342,7 +391,7 @@ impl<'a> FunctionTranslator<'a> {
 
         self.builder.switch_to_block(then_block);
         self.builder.seal_block(then_block);
-        let mut then_return = self.builder.ins().f32const(0.0);
+        let mut then_return = self.builder.ins().f64const(0.0);
         for expr in then_body {
             then_return = *self.translate_expr(expr).first().unwrap();
         }
@@ -352,7 +401,7 @@ impl<'a> FunctionTranslator<'a> {
 
         self.builder.switch_to_block(else_block);
         self.builder.seal_block(else_block);
-        let mut else_return = self.builder.ins().f32const(0.0);
+        let mut else_return = self.builder.ins().f64const(0.0);
         for expr in else_body {
             else_return = *self.translate_expr(expr).first().unwrap();
         }
@@ -381,10 +430,15 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.ins().jump(header_block, &[]);
         self.builder.switch_to_block(header_block);
 
-        let condition_value = self.translate_expr(condition);
-        self.builder
+        let condition_value = *self.translate_expr(condition).first().unwrap();
+        //Convert condition from float to bool
+        let zero = self.builder.ins().f64const(0.0);
+        let b_condition_value = self
+            .builder
             .ins()
-            .brz(*condition_value.first().unwrap(), exit_block, &[]);
+            .fcmp(FloatCC::NotEqual, condition_value, zero);
+
+        self.builder.ins().brz(b_condition_value, exit_block, &[]);
         self.builder.ins().jump(body_block, &[]);
 
         self.builder.switch_to_block(body_block);
@@ -403,7 +457,7 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.seal_block(exit_block);
 
         // Just return 0 for now.
-        self.builder.ins().f32const(0.0)
+        self.builder.ins().f64const(0.0)
     }
 
     fn translate_call(&mut self, name: &str, args: &[Expr]) -> Vec<Value> {
@@ -469,7 +523,7 @@ fn declare_variables(
     }
 
     for name in returns {
-        let zero = builder.ins().f32const(0.0);
+        let zero = builder.ins().f64const(0.0);
         let var = declare_variable(float, builder, &mut variables, &mut index, name);
         //TODO: should we check if there is an input var with the same name and use that instead? (like with params)
         builder.def_var(var, zero);
