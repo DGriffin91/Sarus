@@ -309,7 +309,7 @@ impl<'a> FunctionTranslator<'a> {
         else_body: Vec<Expr>,
     ) -> Value {
         let condition_value = *self.translate_expr(condition).first().unwrap();
-        //let int_val = self.builder.ins().fcvt_to_sint(types::I32, condition_value);
+        //Convert condition from float to bool
         let zero = self.builder.ins().f64const(0.0);
         let b_condition_value = self
             .builder
@@ -373,10 +373,15 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.ins().jump(header_block, &[]);
         self.builder.switch_to_block(header_block);
 
-        let condition_value = self.translate_expr(condition);
-        self.builder
+        let condition_value = *self.translate_expr(condition).first().unwrap();
+        //Convert condition from float to bool
+        let zero = self.builder.ins().f64const(0.0);
+        let b_condition_value = self
+            .builder
             .ins()
-            .brz(*condition_value.first().unwrap(), exit_block, &[]);
+            .fcmp(FloatCC::NotEqual, condition_value, zero);
+
+        self.builder.ins().brz(b_condition_value, exit_block, &[]);
         self.builder.ins().jump(body_block, &[]);
 
         self.builder.switch_to_block(body_block);

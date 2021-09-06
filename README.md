@@ -6,6 +6,7 @@ DONE:
 - Basic support of f64 type
 - Functions with multiple return variables
 - Basic branching
+- While loop
 
 TODO:
 - Calling functions defined in rust
