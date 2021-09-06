@@ -130,7 +130,7 @@ impl JIT {
     ) -> Result<(), String> {
         // Our toy language currently only supports I64 values, though Cranelift
         // supports other types.
-        let float = types::F32; //self.module.target_config().pointer_type();
+        let float = types::F64; //self.module.target_config().pointer_type();
 
         for _p in &params {
             self.ctx.func.signature.params.push(AbiParam::new(float));
@@ -214,8 +214,8 @@ impl<'a> FunctionTranslator<'a> {
         match expr {
             Expr::Literal(literal) => {
                 //let imm: i32 = literal.parse().unwrap();
-                let imm: f32 = literal.parse().unwrap();
-                vec![self.builder.ins().f32const(imm as f32)]
+                let imm: f64 = literal.parse().unwrap();
+                vec![self.builder.ins().f64const(imm as f64)]
             }
 
             Expr::Add(lhs, rhs) => {
@@ -310,7 +310,7 @@ impl<'a> FunctionTranslator<'a> {
     ) -> Value {
         let condition_value = *self.translate_expr(condition).first().unwrap();
         //let int_val = self.builder.ins().fcvt_to_sint(types::I32, condition_value);
-        let zero = self.builder.ins().f32const(0.0);
+        let zero = self.builder.ins().f64const(0.0);
         let b_condition_value = self
             .builder
             .ins()
@@ -334,7 +334,7 @@ impl<'a> FunctionTranslator<'a> {
 
         self.builder.switch_to_block(then_block);
         self.builder.seal_block(then_block);
-        let mut then_return = self.builder.ins().f32const(0.0);
+        let mut then_return = self.builder.ins().f64const(0.0);
         for expr in then_body {
             then_return = *self.translate_expr(expr).first().unwrap();
         }
@@ -344,7 +344,7 @@ impl<'a> FunctionTranslator<'a> {
 
         self.builder.switch_to_block(else_block);
         self.builder.seal_block(else_block);
-        let mut else_return = self.builder.ins().f32const(0.0);
+        let mut else_return = self.builder.ins().f64const(0.0);
         for expr in else_body {
             else_return = *self.translate_expr(expr).first().unwrap();
         }
@@ -395,7 +395,7 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.seal_block(exit_block);
 
         // Just return 0 for now.
-        self.builder.ins().f32const(0.0)
+        self.builder.ins().f64const(0.0)
     }
 
     fn translate_call(&mut self, name: String, args: Vec<Expr>) -> Vec<Value> {
@@ -461,7 +461,7 @@ fn declare_variables(
     }
 
     for (i, name) in returns.iter().enumerate() {
-        let zero = builder.ins().f32const(0.0);
+        let zero = builder.ins().f64const(0.0);
         let var = declare_variable(float, builder, &mut variables, &mut index, name);
         //TODO: should we check if there is an input var with the same name and use that instead? (like with params)
         builder.def_var(var, zero);
