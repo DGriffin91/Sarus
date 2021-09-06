@@ -179,7 +179,7 @@ impl JIT {
             return_counts,
             module: &mut self.module,
         };
-        for expr in stmts {
+        for expr in &stmts {
             trans.translate_expr(expr);
         }
 
@@ -216,28 +216,30 @@ struct FunctionTranslator<'a> {
 impl<'a> FunctionTranslator<'a> {
     /// When you write out instructions in Cranelift, you get back `Value`s. You
     /// can then use these references in other instructions.
-    fn translate_expr(&mut self, expr: Expr) -> Vec<Value> {
+    fn translate_expr(&mut self, expr: &Expr) -> Vec<Value> {
         match expr {
             Expr::Literal(literal) => {
-                //let imm: i32 = literal.parse().unwrap();
-                let imm: f32 = literal.parse().unwrap();
-                vec![self.builder.ins().f32const(imm as f32)]
+                vec![self.builder.ins().f32const::<f32>(literal.parse().unwrap())]
             }
-            Expr::Binop(op, lhs, rhs) => self.translate_binop(op, *lhs, *rhs),
-            Expr::Compare(cmp, lhs, rhs) => self.translate_cmp(cmp, *lhs, *rhs),
+            Expr::Binop(op, lhs, rhs) => self.translate_binop(*op, lhs, rhs),
+            Expr::Compare(cmp, lhs, rhs) => self.translate_cmp(*cmp, lhs, rhs),
             Expr::Call(name, args) => self.translate_call(name, args),
             Expr::GlobalDataAddr(name) => vec![self.translate_global_data_addr(name)],
             Expr::Identifier(name) => {
                 // `use_var` is used to read the value of a variable.
-                let variable = self.variables.get(&name).expect("variable not defined");
-                vec![self.builder.use_var(*variable)]
+                let variable = self
+                    .variables
+                    .get(name)
+                    .copied()
+                    .expect("variable not defined");
+                vec![self.builder.use_var(variable)]
             }
             Expr::Assign(names, expr) => self.translate_assign(names, expr),
             Expr::IfElse(condition, then_body, else_body) => {
-                vec![self.translate_if_else(*condition, then_body, else_body)]
+                vec![self.translate_if_else(condition, then_body, else_body)]
             }
             Expr::WhileLoop(condition, loop_body) => {
-                vec![self.translate_while_loop(*condition, loop_body)]
+                vec![self.translate_while_loop(condition, loop_body)]
             }
             Expr::Block(b) => {
                 vec![b
@@ -250,7 +252,7 @@ impl<'a> FunctionTranslator<'a> {
         }
     }
 
-    fn translate_binop(&mut self, op: Binop, lhs: Expr, rhs: Expr) -> Vec<Value> {
+    fn translate_binop(&mut self, op: Binop, lhs: &Expr, rhs: &Expr) -> Vec<Value> {
         let lhs = *self.translate_expr(lhs).first().unwrap();
         let rhs = *self.translate_expr(rhs).first().unwrap();
         match op {
@@ -261,7 +263,7 @@ impl<'a> FunctionTranslator<'a> {
         }
     }
 
-    fn translate_cmp(&mut self, cmp: Cmp, lhs: Expr, rhs: Expr) -> Vec<Value> {
+    fn translate_cmp(&mut self, cmp: Cmp, lhs: &Expr, rhs: &Expr) -> Vec<Value> {
         let icmp = match cmp {
             Cmp::Eq => FloatCC::Equal,
             Cmp::Ne => FloatCC::NotEqual,
@@ -273,7 +275,7 @@ impl<'a> FunctionTranslator<'a> {
         vec![self.translate_icmp(icmp, lhs, rhs)]
     }
 
-    fn translate_assign(&mut self, names: Vec<String>, expr: Vec<Expr>) -> Vec<Value> {
+    fn translate_assign(&mut self, names: &[String], expr: &[Expr]) -> Vec<Value> {
         // `def_var` is used to write the value of a variable. Note that
         // variables can have multiple definitions. Cranelift will
         // convert them into SSA form for itself automatically.
@@ -285,13 +287,13 @@ impl<'a> FunctionTranslator<'a> {
         if names.len() == expr.len() {
             let mut values = Vec::new();
             for (i, name) in names.iter().enumerate() {
-                values.push(*self.translate_expr(expr[i].clone()).first().unwrap());
+                values.push(*self.translate_expr(expr.get(i).unwrap()).first().unwrap());
                 let variable = self.variables.get(name).unwrap();
                 self.builder.def_var(*variable, *values.last().unwrap());
             }
             values
         } else {
-            let new_value = self.translate_expr(expr.first().unwrap().clone());
+            let new_value = self.translate_expr(expr.first().unwrap());
             for (i, name) in names.iter().enumerate() {
                 let variable = self.variables.get(name).unwrap();
                 self.builder.def_var(*variable, new_value[i]);
@@ -300,7 +302,7 @@ impl<'a> FunctionTranslator<'a> {
         }
     }
 
-    fn translate_icmp(&mut self, cmp: FloatCC, lhs: Expr, rhs: Expr) -> Value {
+    fn translate_icmp(&mut self, cmp: FloatCC, lhs: &Expr, rhs: &Expr) -> Value {
         let lhs = *self.translate_expr(lhs).first().unwrap();
         let rhs = *self.translate_expr(rhs).first().unwrap();
         let b = self.builder.ins().fcmp(cmp, lhs, rhs);
@@ -310,9 +312,9 @@ impl<'a> FunctionTranslator<'a> {
 
     fn translate_if_else(
         &mut self,
-        condition: Expr,
-        then_body: Vec<Expr>,
-        else_body: Vec<Expr>,
+        condition: &Expr,
+        then_body: &[Expr],
+        else_body: &[Expr],
     ) -> Value {
         let condition_value = *self.translate_expr(condition).first().unwrap();
         //let int_val = self.builder.ins().fcvt_to_sint(types::I32, condition_value);
@@ -371,7 +373,7 @@ impl<'a> FunctionTranslator<'a> {
         phi
     }
 
-    fn translate_while_loop(&mut self, condition: Expr, loop_body: Vec<Expr>) -> Value {
+    fn translate_while_loop(&mut self, condition: &Expr, loop_body: &[Expr]) -> Value {
         let header_block = self.builder.create_block();
         let body_block = self.builder.create_block();
         let exit_block = self.builder.create_block();
@@ -404,15 +406,15 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.ins().f32const(0.0)
     }
 
-    fn translate_call(&mut self, name: String, args: Vec<Expr>) -> Vec<Value> {
+    fn translate_call(&mut self, name: &str, args: &[Expr]) -> Vec<Value> {
         let mut sig = self.module.make_signature();
 
         // Add a parameter for each argument.
-        for _arg in &args {
+        for _arg in args {
             sig.params.push(AbiParam::new(self.float));
         }
 
-        for _ in 0..self.return_counts[&name] {
+        for _ in 0..self.return_counts[name] {
             sig.returns.push(AbiParam::new(self.float));
         }
 
@@ -433,7 +435,7 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.inst_results(call).to_vec()
     }
 
-    fn translate_global_data_addr(&mut self, name: String) -> Value {
+    fn translate_global_data_addr(&mut self, name: &str) -> Value {
         let sym = self
             .module
             .declare_data(&name, Linkage::Export, true, false)
@@ -466,7 +468,7 @@ fn declare_variables(
         builder.def_var(var, val);
     }
 
-    for (i, name) in returns.iter().enumerate() {
+    for name in returns {
         let zero = builder.ins().f32const(0.0);
         let var = declare_variable(float, builder, &mut variables, &mut index, name);
         //TODO: should we check if there is an input var with the same name and use that instead? (like with params)

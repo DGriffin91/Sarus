@@ -1,5 +1,5 @@
 /// "Mathematical" binary operations variants
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum Binop {
     Add,
     Sub,
@@ -8,7 +8,7 @@ pub enum Binop {
 }
 
 /// Comparison operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum Cmp {
     Eq,
     Ne,
