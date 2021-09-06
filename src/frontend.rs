@@ -3,7 +3,7 @@
 pub enum Expr {
     Literal(String),
     Identifier(String),
-    Assign(String, Box<Expr>),
+    Assign(Vec<String>, Box<Expr>),
     Eq(Box<Expr>, Box<Expr>),
     Ne(Box<Expr>, Box<Expr>),
     Lt(Box<Expr>, Box<Expr>),
@@ -21,14 +21,14 @@ pub enum Expr {
 }
 
 peg::parser!(pub grammar parser() for str {
-    pub rule program() -> Vec<(String, Vec<String>, String, Vec<Expr>)>
+    pub rule program() -> Vec<(String, Vec<String>, Vec<String>, Vec<Expr>)>
         = function()*
 
-    rule function() -> (String, Vec<String>, String, Vec<Expr>)
+    rule function() -> (String, Vec<String>, Vec<String>, Vec<Expr>)
         = __ "fn" _ name:identifier() _
         "(" params:((_ i:identifier() _ {i}) ** ",") ")" _
         "->" _
-        "(" returns:(_ i:identifier() _ {i}) ")" _
+        "(" returns:((_ i:identifier() _ {i}) ** ",") ")" _
         "{" __
         stmts:statements()
         _ "}" __
@@ -58,7 +58,7 @@ peg::parser!(pub grammar parser() for str {
         { Expr::WhileLoop(Box::new(e), loop_body) }
 
     rule assignment() -> Expr
-        = i:identifier() _ "=" _ e:expression() {Expr::Assign(i, Box::new(e))}
+        = assignments:((_ i:identifier() _ {i}) ** ",") _ "=" _ e:expression() {Expr::Assign(assignments, Box::new(e))}
 
     rule binary_op() -> Expr = precedence!{
         a:@ _ "==" _ b:(@) { Expr::Eq(Box::new(a), Box::new(b)) }

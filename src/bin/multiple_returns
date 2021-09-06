@@ -1,0 +1,10 @@
+
+fn main(a, b) -> (e) {
+    c, d = stuff(a, b)
+    e = c + d
+}
+
+fn stuff(a, b) -> (c, d) {
+    c = a + 1.0
+    d = c + b + 10.0
+}
