@@ -260,7 +260,7 @@ impl<'a> FunctionTranslator<'a> {
                 let variable = self.variables.get(&name).expect("variable not defined");
                 vec![self.builder.use_var(*variable)]
             }
-            Expr::Assign(names, expr) => self.translate_assign(names, *expr),
+            Expr::Assign(names, expr) => self.translate_assign(names, expr),
             Expr::IfElse(condition, then_body, else_body) => {
                 vec![self.translate_if_else(*condition, then_body, else_body)]
             }
@@ -270,16 +270,31 @@ impl<'a> FunctionTranslator<'a> {
         }
     }
 
-    fn translate_assign(&mut self, names: Vec<String>, expr: Expr) -> Vec<Value> {
+    fn translate_assign(&mut self, names: Vec<String>, expr: Vec<Expr>) -> Vec<Value> {
         // `def_var` is used to write the value of a variable. Note that
         // variables can have multiple definitions. Cranelift will
         // convert them into SSA form for itself automatically.
-        let new_value = self.translate_expr(expr);
-        for (i, name) in names.iter().enumerate() {
-            let variable = self.variables.get(name).unwrap();
-            self.builder.def_var(*variable, new_value[i]);
+
+        //if there are the same number of expressions as there are names
+        //eg: `a, b = b, a` then use the first output of each expression
+        //But if there is not, use the output of the first expression:
+        //eg: `a, b = func_that_outputs_2_floats(1.0)`
+        if names.len() == expr.len() {
+            let mut values = Vec::new();
+            for (i, name) in names.iter().enumerate() {
+                values.push(*self.translate_expr(expr[i].clone()).first().unwrap());
+                let variable = self.variables.get(name).unwrap();
+                self.builder.def_var(*variable, *values.last().unwrap());
+            }
+            values
+        } else {
+            let new_value = self.translate_expr(expr.first().unwrap().clone());
+            for (i, name) in names.iter().enumerate() {
+                let variable = self.variables.get(name).unwrap();
+                self.builder.def_var(*variable, new_value[i]);
+            }
+            new_value
         }
-        new_value
     }
 
     fn translate_icmp(&mut self, cmp: FloatCC, lhs: Expr, rhs: Expr) -> Value {

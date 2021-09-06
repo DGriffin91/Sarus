@@ -1,9 +1,9 @@
 /// The AST node for expressions.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     Literal(String),
     Identifier(String),
-    Assign(Vec<String>, Box<Expr>),
+    Assign(Vec<String>, Vec<Expr>),
     Eq(Box<Expr>, Box<Expr>),
     Ne(Box<Expr>, Box<Expr>),
     Lt(Box<Expr>, Box<Expr>),
@@ -58,7 +58,7 @@ peg::parser!(pub grammar parser() for str {
         { Expr::WhileLoop(Box::new(e), loop_body) }
 
     rule assignment() -> Expr
-        = assignments:((_ i:identifier() _ {i}) ** ",") _ "=" _ e:expression() {Expr::Assign(assignments, Box::new(e))}
+        = assignments:((_ i:identifier() _ {i}) ** ",") _ "=" _ args:((_ e:expression() _ {e}) ** ",") {Expr::Assign(assignments, args)}
 
     rule binary_op() -> Expr = precedence!{
         a:@ _ "==" _ b:(@) { Expr::Eq(Box::new(a), Box::new(b)) }

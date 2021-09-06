@@ -1,6 +1,7 @@
 
 fn main(a, b) -> (e) {
     c, d = stuff(a, b)
+    c, d = d, c
     e = if a == b {
         5.0
     } else {
