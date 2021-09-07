@@ -18,6 +18,8 @@ pub enum Cmp {
     Gt,
 }
 
+type NV<T> = non_empty_vec::NonEmpty<T>;
+
 /// The AST node for expressions.
 #[derive(Debug, Clone)]
 pub enum Expr {
@@ -27,12 +29,20 @@ pub enum Expr {
     Compare(Cmp, Box<Expr>, Box<Expr>),
     IfThen(Box<Expr>, Vec<Expr>),
     IfElse(Box<Expr>, Vec<Expr>, Vec<Expr>),
-    Assign(Vec<String>, Vec<Expr>),
+    Assign(NV<String>, NV<Expr>),
     AssignOp(Binop, Box<String>, Box<Expr>),
     WhileLoop(Box<Expr>, Vec<Expr>),
     Block(Vec<Expr>),
     Call(String, Vec<Expr>),
     GlobalDataAddr(String),
+}
+
+fn make_nonempty<T>(v: Vec<T>) -> Option<NV<T>> {
+    if v.is_empty() {
+        None
+    } else {
+        Some(unsafe { NV::new_unchecked(v) })
+    }
 }
 
 pub struct Declaration {
@@ -85,7 +95,12 @@ peg::parser!(pub grammar parser() for str {
         { Expr::WhileLoop(Box::new(e), body) }
 
     rule assignment() -> Expr
-        = assignments:((i:identifier() {i}) ** comma()) _ "=" args:((_ e:expression() _ {e}) ** comma()) {Expr::Assign(assignments, args)}
+        = assignments:((i:identifier() {i}) ** comma()) _ "=" args:((_ e:expression() _ {e}) ** comma()) {?
+            make_nonempty(assignments)
+                .and_then(|assignments| make_nonempty(args)
+                .map(|args| Expr::Assign(assignments, args)))
+                .ok_or("Cannot assign to/from empty tuple")
+        }
 
     rule binary_op() -> Expr = precedence!{
         a:@ _ "==" b:(@) { Expr::Compare(Cmp::Eq, Box::new(a), Box::new(b)) }

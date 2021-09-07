@@ -39,10 +39,7 @@ impl Default for JIT {
 
 impl JIT {
     /// Compile a string in the toy language into machine code.
-    pub fn compile(&mut self, input: &str) -> Result<*const u8, String> {
-        let input = input.replace("\r\n", "\n");
-        let prog = parser::program(&input).map_err(|e| e.to_string())?;
-
+    pub fn translate(&mut self, prog: Vec<Declaration>) -> Result<*const u8, String> {
         let mut return_counts = HashMap::new();
         for Declaration { name, returns, .. } in &prog {
             return_counts.insert(name.to_string(), returns.len());
@@ -61,7 +58,7 @@ impl JIT {
             ////    &name, &params, &the_return
             ////);
             //// Then, translate the AST nodes into Cranelift IR.
-            self.translate(params, returns, stmts, return_counts.to_owned())?;
+            self.codegen(params, returns, stmts, return_counts.to_owned())?;
             // Next, declare the function to jit. Functions must be declared
             // before they can be called, or defined.
             //
@@ -126,7 +123,7 @@ impl JIT {
     }
 
     // Translate from toy-language AST nodes into Cranelift IR.
-    fn translate(
+    fn codegen(
         &mut self,
         params: Vec<String>,
         returns: Vec<String>,
@@ -464,7 +461,7 @@ impl<'a> FunctionTranslator<'a> {
         let mut sig = self.module.make_signature();
 
         // Add a parameter for each argument.
-        for _arg in args {
+        for _ in args {
             sig.params.push(AbiParam::new(self.float));
         }
 
@@ -548,7 +545,7 @@ fn declare_variables_in_stmt(
 ) {
     match *expr {
         Expr::Assign(ref names, _) => {
-            for name in names {
+            for name in names.iter() {
                 declare_variable(int, builder, variables, index, name);
             }
         }
