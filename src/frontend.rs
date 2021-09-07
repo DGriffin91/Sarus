@@ -74,6 +74,7 @@ peg::parser!(pub grammar parser() for str {
         = _ "{" b:(statement() ** _) _ "}" { b }
 
     rule statement() -> Expr
+        //TODO allow for multiple expressions like: a, b, c returned from if/then/else, etc...
         = while_loop() / assignment() / expression()
 
     rule expression() -> Expr
@@ -123,7 +124,7 @@ peg::parser!(pub grammar parser() for str {
         a:@ _ "/" _ b:(@) { Expr::Binop(Binop::Div, Box::new(a), Box::new(b)) }
         i:identifier() _ "/=" _ a:(@) { Expr::AssignOp(Binop::Div, Box::new(i), Box::new(a)) }
         --
-        i:identifier() _ "(" args:((_ e:expression() _ {e}) ** ",") ")" { Expr::Call(i, args) }
+        i:identifier() _ "(" args:((_ e:expression() _ {e}) ** comma()) ")" { Expr::Call(i, args) }
         i:identifier() { Expr::Identifier(i) }
         l:literal() { l }
     }

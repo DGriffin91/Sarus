@@ -294,7 +294,6 @@ impl<'a> FunctionTranslator<'a> {
             values
         } else {
             let new_value = self.translate_expr(expr.first().unwrap());
-            dbg!(&new_value);
             for (i, name) in names.iter().enumerate() {
                 let variable = self.variables.get(name).unwrap();
                 self.builder.def_var(*variable, new_value[i]);
@@ -394,20 +393,12 @@ impl<'a> FunctionTranslator<'a> {
 
         self.builder.switch_to_block(then_block);
         self.builder.seal_block(then_block);
-        //let mut then_return = vec![self.builder.ins().f64const(0.0)];
-        //for expr in then_body {
-        //    then_return = self.translate_expr(expr);
-        //}
 
         // Jump to the merge block, passing it the block return value.
         self.builder.ins().jump(merge_block, &then_return);
 
         self.builder.switch_to_block(else_block);
         self.builder.seal_block(else_block);
-        //let mut else_return = vec![self.builder.ins().f64const(0.0)];
-        //for expr in else_body {
-        //    else_return = self.translate_expr(expr);
-        //}
 
         // Jump to the merge block, passing it the block return value.
         self.builder.ins().jump(merge_block, &else_return);

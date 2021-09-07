@@ -3,9 +3,9 @@ fn main(a, b) -> (e) {
     c, d = stuff(a, b)
     c, d = d, c
     e, f = if a == b {
-        stuff(a, b)
-    } else {
         stuff(b, a)
+    } else {
+        stuff(a, b)
     }
     if 1.0 == 1.0 {
         e = e * 100.0
@@ -23,6 +23,10 @@ fn main(a, b) -> (e) {
 fn stuff(a, b) -> (c, d) {
     c = a + 1.0
     d = c + b + 10.0
+}
+
+fn stuff2(a) -> (c) {
+    c = a + 1.0
 }
 
 // Doesn't work yet
