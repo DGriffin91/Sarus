@@ -91,7 +91,11 @@ impl Type {
                 }
             }
             Expr::Assign(vars, e) => {
-                if vars.len() != e.len() {
+                let tlen = match e.len().into() {
+                    1 => Type::of(&e[0], env)?.tuple_size(),
+                    n => n,
+                };
+                if usize::from(vars.len()) != tlen {
                     return Err(TypeError::TupleLengthMismatch {
                         actual: vars.len().into(),
                         expected: e.len().into(),
@@ -113,7 +117,7 @@ impl Type {
                 .unwrap_or(Type::Void),
             Expr::Call(fn_name, args) => {
                 if let Some(d) = env.iter().filter(|d| &d.name == fn_name).next() {
-                    if d.returns.len() == args.len() {
+                    if d.params.len() == args.len() {
                         let targs: Result<Vec<_>, _> =
                             args.iter().map(|e| Type::of(e, env)).collect();
                         match targs {
@@ -137,6 +141,14 @@ impl Type {
             Expr::GlobalDataAddr(_) => Type::Float,
         };
         Ok(res)
+    }
+
+    pub fn tuple_size(&self) -> usize {
+        match self {
+            Type::Void => 0,
+            Type::Bool | Type::Float => 1,
+            Type::Tuple(v) => v.len(),
+        }
     }
 }
 

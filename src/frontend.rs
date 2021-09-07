@@ -45,6 +45,7 @@ fn make_nonempty<T>(v: Vec<T>) -> Option<NV<T>> {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Declaration {
     pub name: String,
     pub params: Vec<String>,
