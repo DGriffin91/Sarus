@@ -56,7 +56,16 @@ impl Type {
                 }
             }
             Expr::Compare(_, _, _) => Type::Bool,
-            Expr::IfThen(_, _) => Type::Void,
+            Expr::IfThen(econd, _) => {
+                let tcond = Type::of(econd, env)?;
+                if tcond != Type::Bool {
+                    return Err(TypeError::TypeMismatch {
+                        expected: Type::Bool,
+                        actual: tcond,
+                    });
+                }
+                Type::Void
+            }
             Expr::IfElse(econd, etrue, efalse) => {
                 let tcond = Type::of(econd, env)?;
                 if tcond != Type::Bool {

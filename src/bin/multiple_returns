@@ -7,7 +7,7 @@ fn main(a, b) -> (e) {
     } else {
         stuff(b, a)
     }
-    if 1.0 {
+    if 1.0 == 1.0 {
         e = e * 100.0
     }
     e *= 2.0
@@ -30,11 +30,4 @@ fn stuff(a, b) -> (c, d) {
 //     5.0, 6.0
 // } else {
 //     7.0, 8.0
-// }
-
-// Also doesn't work yet but for different reasons
-// e, f = if a == b {
-//     stuff(a, b)
-// } else {
-//     stuff(a, b)
 // }
