@@ -236,7 +236,7 @@ impl<'a> FunctionTranslator<'a> {
                 vec![self.translate_if_then(condition, then_body)]
             }
             Expr::IfElse(condition, then_body, else_body) => {
-                vec![self.translate_if_else(condition, then_body, else_body)]
+                self.translate_if_else(condition, then_body, else_body)
             }
             Expr::WhileLoop(condition, loop_body) => {
                 vec![self.translate_while_loop(condition, loop_body)]
@@ -294,6 +294,7 @@ impl<'a> FunctionTranslator<'a> {
             values
         } else {
             let new_value = self.translate_expr(expr.first().unwrap());
+            dbg!(&new_value);
             for (i, name) in names.iter().enumerate() {
                 let variable = self.variables.get(name).unwrap();
                 self.builder.def_var(*variable, new_value[i]);
@@ -361,7 +362,7 @@ impl<'a> FunctionTranslator<'a> {
         condition: &Expr,
         then_body: &[Expr],
         else_body: &[Expr],
-    ) -> Value {
+    ) -> Vec<Value> {
         let condition_value = *self.translate_expr(condition).first().unwrap();
         //Convert condition from float to bool
         let zero = self.builder.ins().f64const(0.0);
@@ -374,12 +375,17 @@ impl<'a> FunctionTranslator<'a> {
         let else_block = self.builder.create_block();
         let merge_block = self.builder.create_block();
 
-        // If-else constructs in the toy language have a return value.
-        // In traditional SSA form, this would produce a PHI between
-        // the then and else bodies. Cranelift uses block parameters,
-        // so set up a parameter in the merge block, and we'll pass
-        // the return values to it from the branches.
-        self.builder.append_block_param(merge_block, self.float);
+        let then_return = self.translate_expr(then_body.last().unwrap());
+        let else_return = self.translate_expr(else_body.last().unwrap());
+
+        for _ in 0..then_return.len() {
+            // If-else constructs in the toy language have a return value.
+            // In traditional SSA form, this would produce a PHI between
+            // the then and else bodies. Cranelift uses block parameters,
+            // so set up a parameter in the merge block, and we'll pass
+            // the return values to it from the branches.
+            self.builder.append_block_param(merge_block, self.float);
+        }
 
         // Test the if condition and conditionally branch.
         self.builder.ins().brz(b_condition_value, else_block, &[]);
@@ -388,23 +394,23 @@ impl<'a> FunctionTranslator<'a> {
 
         self.builder.switch_to_block(then_block);
         self.builder.seal_block(then_block);
-        let mut then_return = self.builder.ins().f64const(0.0);
-        for expr in then_body {
-            then_return = *self.translate_expr(expr).first().unwrap();
-        }
+        //let mut then_return = vec![self.builder.ins().f64const(0.0)];
+        //for expr in then_body {
+        //    then_return = self.translate_expr(expr);
+        //}
 
         // Jump to the merge block, passing it the block return value.
-        self.builder.ins().jump(merge_block, &[then_return]);
+        self.builder.ins().jump(merge_block, &then_return);
 
         self.builder.switch_to_block(else_block);
         self.builder.seal_block(else_block);
-        let mut else_return = self.builder.ins().f64const(0.0);
-        for expr in else_body {
-            else_return = *self.translate_expr(expr).first().unwrap();
-        }
+        //let mut else_return = vec![self.builder.ins().f64const(0.0)];
+        //for expr in else_body {
+        //    else_return = self.translate_expr(expr);
+        //}
 
         // Jump to the merge block, passing it the block return value.
-        self.builder.ins().jump(merge_block, &[else_return]);
+        self.builder.ins().jump(merge_block, &else_return);
 
         // Switch to the merge block for subsequent statements.
         self.builder.switch_to_block(merge_block);
@@ -414,9 +420,9 @@ impl<'a> FunctionTranslator<'a> {
 
         // Read the value of the if-else by reading the merge block
         // parameter.
-        let phi = self.builder.block_params(merge_block)[0];
+        let phi = self.builder.block_params(merge_block);
 
-        phi
+        phi.to_vec()
     }
 
     fn translate_while_loop(&mut self, condition: &Expr, loop_body: &[Expr]) -> Value {

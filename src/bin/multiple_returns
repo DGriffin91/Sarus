@@ -2,10 +2,10 @@
 fn main(a, b) -> (e) {
     c, d = stuff(a, b)
     c, d = d, c
-    e = if a == b {
-        5.0
+    e, f = if a == b {
+        stuff(a, b)
     } else {
-        8.0
+        stuff(b, a)
     }
     if 1.0 {
         e = e * 100.0
