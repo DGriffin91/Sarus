@@ -15,3 +15,12 @@ cranelift-module = "0.69.0"
 non-empty-vec = "0.2.0"
 peg = "0.7"
 thiserror = "1.0.29"
+
+[[example]]
+name = "run_file"
+
+[[example]]
+name = "run_string"
+
+[[example]]
+name = "run_multiple_strings"

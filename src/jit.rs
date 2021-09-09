@@ -39,7 +39,7 @@ impl Default for JIT {
 
 impl JIT {
     /// Compile a string in the toy language into machine code.
-    pub fn translate(&mut self, prog: Vec<Declaration>) -> Result<*const u8, String> {
+    pub fn translate(&mut self, prog: Vec<Declaration>) -> anyhow::Result<()> {
         let mut return_counts = HashMap::new();
         for Declaration { name, returns, .. } in &prog {
             return_counts.insert(name.to_string(), returns.len());
@@ -68,7 +68,7 @@ impl JIT {
             let id = self
                 .module
                 .declare_function(&name, Linkage::Export, &self.ctx.func.signature)
-                .map_err(|e| format!("{}:{}:{} {:?}", file!(), line!(), column!(), e))?;
+                .map_err(|e| anyhow::anyhow!("{}:{}:{} {:?}", file!(), line!(), column!(), e))?;
 
             ////println!("ID IS {}", id);
             // Define the function to jit. This finishes compilation, although
@@ -78,7 +78,7 @@ impl JIT {
             // function below.
             self.module
                 .define_function(id, &mut self.ctx, &mut codegen::binemit::NullTrapSink {})
-                .map_err(|e| format!("{}:{}:{} {:?}", file!(), line!(), column!(), e))?;
+                .map_err(|e| anyhow::anyhow!("{}:{}:{} {:?}", file!(), line!(), column!(), e))?;
 
             // Now that compilation is finished, we can clear out the context state.
             self.module.clear_context(&mut self.ctx);
@@ -88,33 +88,36 @@ impl JIT {
             // available).
             self.module.finalize_definitions();
         }
+        Ok(())
+    }
 
-        match self.module.get_name("main") {
-            Some(main) => match main {
+    pub fn get_func(&mut self, fn_name: &str) -> anyhow::Result<*const u8> {
+        match self.module.get_name(fn_name) {
+            Some(func) => match func {
                 cranelift_module::FuncOrDataId::Func(id) => {
                     Ok(self.module.get_finalized_function(id))
                 }
                 cranelift_module::FuncOrDataId::Data(_) => {
-                    Err("main fn required, data found".to_string())
+                    anyhow::bail!("function {} required, data found", fn_name);
                 }
             },
-            None => Err("No main function found".to_string()),
+            None => anyhow::bail!("No function {} found", fn_name),
         }
     }
 
     /// Create a zero-initialized data section.
-    pub fn create_data(&mut self, name: &str, contents: Vec<u8>) -> Result<&[u8], String> {
+    pub fn create_data(&mut self, name: &str, contents: Vec<u8>) -> anyhow::Result<&[u8]> {
         // The steps here are analogous to `compile`, except that data is much
         // simpler than functions.
         self.data_ctx.define(contents.into_boxed_slice());
         let id = self
             .module
             .declare_data(name, Linkage::Export, true, false)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         self.module
             .define_data(id, &self.data_ctx)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         self.data_ctx.clear();
         self.module.finalize_definitions();
         let buffer = self.module.get_finalized_data(id);
@@ -129,7 +132,7 @@ impl JIT {
         returns: Vec<String>,
         stmts: Vec<Expr>,
         return_counts: HashMap<String, usize>,
-    ) -> Result<(), String> {
+    ) -> anyhow::Result<()> {
         // Our toy language currently only supports I64 values, though Cranelift
         // supports other types.
         let float = types::F64; //self.module.target_config().pointer_type();
