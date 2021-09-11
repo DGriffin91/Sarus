@@ -89,6 +89,63 @@ fn nums() -> (r) {
 }
 
 #[test]
+fn rounding() -> anyhow::Result<()> {
+    let mut jit = jit::JIT::default();
+
+    let code = r#"
+fn main(a, b) -> (c) {
+    c = ceil(a) * floor(b) * trunc(a) * fract(a * b * -1.234) * round(1.5)
+}
+"#;
+
+    let a = 100.0f64;
+    let b = 200.0f64;
+    let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
+    assert_eq!(
+        a.ceil() * b.floor() * a.trunc() * (a * b * -1.234).fract() * 1.5f64.round(),
+        result
+    );
+    Ok(())
+}
+
+#[test]
+fn minmax() -> anyhow::Result<()> {
+    let mut jit = jit::JIT::default();
+
+    let a = 100.0f64;
+    let b = 200.0f64;
+    let result: f64 = unsafe {
+        run_string(
+            &mut jit,
+            r#"
+            fn main(a, b) -> (c) {
+                c = min(a, b)
+            }
+            "#,
+            "main",
+            (a, b),
+        )?
+    };
+    assert_eq!(result, a);
+    let mut jit = jit::JIT::default();
+    let result: f64 = unsafe {
+        run_string(
+            &mut jit,
+            r#"
+            fn main(a, b) -> (c) {
+                c = max(a, b)
+            }
+            "#,
+            "main",
+            (a, b),
+        )?
+    };
+    assert_eq!(result, b);
+
+    Ok(())
+}
+
+#[test]
 fn comments() -> anyhow::Result<()> {
     let mut jit = jit::JIT::default();
     let code = r#"

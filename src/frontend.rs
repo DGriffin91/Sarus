@@ -139,7 +139,7 @@ peg::parser!(pub grammar parser() for str {
         / expected!("identifier")
 
     rule literal() -> Expr
-        = _ n:$(['0'..='9']+"."['0'..='9']+) { Expr::Literal(n.to_owned()) }
+        = _ n:$(['-']*['0'..='9']+"."['0'..='9']+) { Expr::Literal(n.to_owned()) }
         / "&" i:identifier() { Expr::GlobalDataAddr(i) }
         / _ "true" _ { Expr::Bool(true) }
         / _ "false" _ { Expr::Bool(false) }

@@ -16,8 +16,15 @@ non-empty-vec = "0.2.0"
 peg = "0.7"
 thiserror = "1.0.29"
 
+[dev-dependencies]
+basic-audio-filters = {git = "https://github.com/DGriffin91/rust-basic-audio-filters", branch = "f64"}
+
+
 [[example]]
 name = "run_file"
+
+[[example]]
+name = "run_file_no_validate"
 
 [[example]]
 name = "run_string"

@@ -9,13 +9,17 @@ use thiserror::Error;
 
 //couldn't get to work (STATUS_ACCESS_VIOLATION):
 // "asinh", "acosh", "atanh", "erf", "erfc", "lgamma", "gamma", "tgamma", "exp2", "exp10", "log2"
-const LIBC_MATH_1ARG: [&str; 14] = [
+const STD_1ARG: [&str; 20] = [
     "sin", "cos", "tan", "asin", "acos", "atan", "exp", "log", "log10", "sqrt", "sinh", "cosh",
-    "exp10", "tanh",
+    "exp10", "tanh", // libc
+    "ceil", "floor", "trunc", "fract", "abs", "round", // built in std
 ];
 //couldn't get to work (STATUS_ACCESS_VIOLATION):
 // "hypot", "expm1", "log1p"
-const LIBC_MATH_2ARG: [&str; 2] = ["atan2", "pow"];
+const STD_2ARG: [&str; 4] = [
+    "atan2", "pow", // libc
+    "min", "max", // built in std
+];
 
 #[derive(Debug, Clone, Error)]
 pub enum TypeError {
@@ -157,7 +161,7 @@ impl Type {
                             actual: args.len(),
                         });
                     }
-                } else if LIBC_MATH_1ARG.contains(&fn_name.as_str()) {
+                } else if STD_1ARG.contains(&fn_name.as_str()) {
                     if args.len() == 1 {
                         Type::Float
                     } else {
@@ -166,7 +170,7 @@ impl Type {
                             actual: args.len(),
                         });
                     }
-                } else if LIBC_MATH_2ARG.contains(&fn_name.as_str()) {
+                } else if STD_2ARG.contains(&fn_name.as_str()) {
                     if args.len() == 2 {
                         Type::Float
                     } else {

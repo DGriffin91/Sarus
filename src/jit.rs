@@ -485,9 +485,14 @@ impl<'a> FunctionTranslator<'a> {
                 sig.returns.push(AbiParam::new(self.float));
             }
         } else {
-            // If we can't find the function name, maybe it's a libc function.
-            // For now, assume it will return a float.
-            sig.returns.push(AbiParam::new(self.float));
+            match self.translate_std(name, args) {
+                Some(v) => return v,
+                None => {
+                    // If we can't find the function name, maybe it's a libc function.
+                    // For now, assume it will return a float.
+                    sig.returns.push(AbiParam::new(self.float))
+                }
+            }
         }
 
         // TODO: Streamline the API here?
@@ -526,6 +531,48 @@ impl<'a> FunctionTranslator<'a> {
 
         //self.builder.ins().symbol_value(ptr_ty, local_id)
         self.builder.ins().global_value(ptr_ty, global_val)
+    }
+
+    fn translate_std(&mut self, name: &str, args: &[Expr]) -> Option<Vec<Value>> {
+        match name {
+            "trunc" => {
+                let v = *self.translate_expr(&args[0]).first().unwrap();
+                Some(vec![self.builder.ins().trunc(v)])
+            }
+            "floor" => {
+                let v = *self.translate_expr(&args[0]).first().unwrap();
+                Some(vec![self.builder.ins().floor(v)])
+            }
+            "ceil" => {
+                let v = *self.translate_expr(&args[0]).first().unwrap();
+                Some(vec![self.builder.ins().ceil(v)])
+            }
+            "fract" => {
+                let v = *self.translate_expr(&args[0]).first().unwrap();
+                let v_int = self.builder.ins().trunc(v);
+                let v = self.builder.ins().fsub(v, v_int);
+                Some(vec![v])
+            }
+            "abs" => {
+                let v = *self.translate_expr(&args[0]).first().unwrap();
+                Some(vec![self.builder.ins().fabs(v)])
+            }
+            "round" => {
+                let v = *self.translate_expr(&args[0]).first().unwrap();
+                Some(vec![self.builder.ins().nearest(v)])
+            }
+            "min" => {
+                let v1 = *self.translate_expr(&args[0]).first().unwrap();
+                let v2 = *self.translate_expr(&args[1]).first().unwrap();
+                Some(vec![self.builder.ins().fmin(v1, v2)])
+            }
+            "max" => {
+                let v1 = *self.translate_expr(&args[0]).first().unwrap();
+                let v2 = *self.translate_expr(&args[1]).first().unwrap();
+                Some(vec![self.builder.ins().fmax(v1, v2)])
+            }
+            _ => None,
+        }
     }
 }
 
