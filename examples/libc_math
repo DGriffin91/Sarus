@@ -1,0 +1,18 @@
+fn main(a, b) -> (c) {
+	c = b
+	c = sin(c)
+	c = cos(c)
+	c = tan(c)
+	c = asin(c)
+	c = acos(c)
+	c = atan(c)
+	c = exp(c)
+	c = log(c)
+	c = log10(c)
+	c = sqrt(c + 10.0)
+	c = sinh(c)
+	c = cosh(c)
+	c = tanh(c * 0.00001)
+	c = atan2(c, a)
+	c = pow(c, a * 0.001)
+}

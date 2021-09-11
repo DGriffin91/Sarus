@@ -451,7 +451,13 @@ impl<'a> FunctionTranslator<'a> {
             sig.params.push(AbiParam::new(self.float));
         }
 
-        for _ in 0..self.return_counts[name] {
+        if self.return_counts.contains_key(name) {
+            for _ in 0..self.return_counts[name] {
+                sig.returns.push(AbiParam::new(self.float));
+            }
+        } else {
+            // If we can't find the function name, maybe it's a libc function.
+            // For now, assume it will return a float.
             sig.returns.push(AbiParam::new(self.float));
         }
 

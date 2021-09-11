@@ -3,6 +3,20 @@ use std::fmt::Display;
 use crate::frontend::{Declaration, Expr};
 use thiserror::Error;
 
+//Reference: https://www.gnu.org/software/libc/manual/html_node/Mathematics.html
+//https://docs.rs/libc/0.2.101/libc/
+//should this include bessel functions? It seems like they would pollute the name space.
+
+//couldn't get to work (STATUS_ACCESS_VIOLATION):
+// "asinh", "acosh", "atanh", "erf", "erfc", "lgamma", "gamma", "tgamma", "exp2", "exp10", "log2"
+const LIBC_MATH_1ARG: [&str; 14] = [
+    "sin", "cos", "tan", "asin", "acos", "atan", "exp", "log", "log10", "sqrt", "sinh", "cosh",
+    "exp10", "tanh",
+];
+//couldn't get to work (STATUS_ACCESS_VIOLATION):
+// "hypot", "expm1", "log1p"
+const LIBC_MATH_2ARG: [&str; 2] = ["atan2", "pow"];
+
 #[derive(Debug, Clone, Error)]
 pub enum TypeError {
     #[error("Type mismatch; expected {expected}, found {actual}")]
@@ -140,6 +154,24 @@ impl Type {
                     } else {
                         return Err(TypeError::TupleLengthMismatch {
                             expected: d.params.len(),
+                            actual: args.len(),
+                        });
+                    }
+                } else if LIBC_MATH_1ARG.contains(&fn_name.as_str()) {
+                    if args.len() == 1 {
+                        Type::Float
+                    } else {
+                        return Err(TypeError::TupleLengthMismatch {
+                            expected: 1,
+                            actual: args.len(),
+                        });
+                    }
+                } else if LIBC_MATH_2ARG.contains(&fn_name.as_str()) {
+                    if args.len() == 2 {
+                        Type::Float
+                    } else {
+                        return Err(TypeError::TupleLengthMismatch {
+                            expected: 2,
                             actual: args.len(),
                         });
                     }
