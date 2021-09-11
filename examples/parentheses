@@ -1,0 +1,3 @@
+fn main(a, b) -> (c) {
+	c = a * (a - b) * (a * (2.0 + b))
+} //the answer is: -202000000

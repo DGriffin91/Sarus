@@ -258,6 +258,7 @@ impl<'a> FunctionTranslator<'a> {
                     .unwrap()]
             }
             Expr::Bool(b) => vec![self.builder.ins().bconst(types::B1, *b)],
+            Expr::Parentheses(expr) => self.translate_expr(expr),
         }
     }
 

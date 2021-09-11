@@ -36,6 +36,7 @@ pub enum Expr {
     Call(String, Vec<Expr>),
     GlobalDataAddr(String),
     Bool(bool),
+    Parentheses(Box<Expr>),
 }
 
 fn make_nonempty<T>(v: Vec<T>) -> Option<NV<T>> {
@@ -128,6 +129,9 @@ peg::parser!(pub grammar parser() for str {
         i:identifier() _ "(" args:((_ e:expression() _ {e}) ** comma()) ")" { Expr::Call(i, args) }
         i:identifier() { Expr::Identifier(i) }
         l:literal() { l }
+        --
+        "(" e:expression() ")" { Expr::Parentheses(Box::new(e)) }
+
     }
 
     rule identifier() -> String

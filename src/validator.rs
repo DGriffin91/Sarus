@@ -149,6 +149,7 @@ impl Type {
             }
             Expr::GlobalDataAddr(_) => Type::Float,
             Expr::Bool(_) => Type::Bool,
+            Expr::Parentheses(expr) => Type::of(expr, env)?,
         };
         Ok(res)
     }
