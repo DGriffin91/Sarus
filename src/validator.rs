@@ -148,6 +148,7 @@ impl Type {
                 }
             }
             Expr::GlobalDataAddr(_) => Type::Float,
+            Expr::Bool(_) => Type::Bool,
         };
         Ok(res)
     }

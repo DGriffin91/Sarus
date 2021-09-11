@@ -1,0 +1,10 @@
+fn main(a, b) -> (c) {
+	c = if true {
+	    a * b
+    } else {
+        0.0
+    }
+    if false {
+        c = 999999999.0
+    }
+}

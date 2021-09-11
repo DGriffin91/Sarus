@@ -35,6 +35,7 @@ pub enum Expr {
     Block(Vec<Expr>),
     Call(String, Vec<Expr>),
     GlobalDataAddr(String),
+    Bool(bool),
 }
 
 fn make_nonempty<T>(v: Vec<T>) -> Option<NV<T>> {
@@ -130,12 +131,14 @@ peg::parser!(pub grammar parser() for str {
     }
 
     rule identifier() -> String
-        = quiet!{ _ n:$(['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.to_owned() } }
+        = quiet!{ _ n:$((!"true"!"false")['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.to_owned() } }
         / expected!("identifier")
 
     rule literal() -> Expr
         = _ n:$(['0'..='9']+"."['0'..='9']+) { Expr::Literal(n.to_owned()) }
         / "&" i:identifier() { Expr::GlobalDataAddr(i) }
+        / _ "true" _ { Expr::Bool(true) }
+        / _ "false" _ { Expr::Bool(false) }
 
     rule comment() -> ()
         = quiet!{"//" [^'\n']*"\n"}

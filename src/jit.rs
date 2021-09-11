@@ -257,6 +257,7 @@ impl<'a> FunctionTranslator<'a> {
                     .and_then(|v| v.first().cloned())
                     .unwrap()]
             }
+            Expr::Bool(b) => vec![self.builder.ins().bconst(types::B1, *b)],
         }
     }
 
@@ -327,19 +328,11 @@ impl<'a> FunctionTranslator<'a> {
     fn translate_icmp(&mut self, cmp: FloatCC, lhs: &Expr, rhs: &Expr) -> Value {
         let lhs = *self.translate_expr(lhs).first().unwrap();
         let rhs = *self.translate_expr(rhs).first().unwrap();
-        let b = self.builder.ins().fcmp(cmp, lhs, rhs);
-        let c = self.builder.ins().bint(types::I32, b);
-        self.builder.ins().fcvt_from_sint(self.float, c)
+        self.builder.ins().fcmp(cmp, lhs, rhs)
     }
 
     fn translate_if_then(&mut self, condition: &Expr, then_body: &[Expr]) -> Value {
-        let condition_value = *self.translate_expr(condition).first().unwrap();
-        //Convert condition from float to bool
-        let zero = self.builder.ins().f64const(0.0);
-        let b_condition_value = self
-            .builder
-            .ins()
-            .fcmp(FloatCC::NotEqual, condition_value, zero);
+        let b_condition_value = *self.translate_expr(condition).first().unwrap();
 
         let then_block = self.builder.create_block();
         let merge_block = self.builder.create_block();
@@ -361,7 +354,7 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.switch_to_block(merge_block);
         // We've now seen all the predecessors of the merge block.
         self.builder.seal_block(merge_block);
-        condition_value
+        b_condition_value
     }
 
     fn translate_if_else(
@@ -370,13 +363,7 @@ impl<'a> FunctionTranslator<'a> {
         then_body: &[Expr],
         else_body: &[Expr],
     ) -> Vec<Value> {
-        let condition_value = *self.translate_expr(condition).first().unwrap();
-        //Convert condition from float to bool
-        let zero = self.builder.ins().f64const(0.0);
-        let b_condition_value = self
-            .builder
-            .ins()
-            .fcmp(FloatCC::NotEqual, condition_value, zero);
+        let b_condition_value = *self.translate_expr(condition).first().unwrap();
 
         let then_block = self.builder.create_block();
         let else_block = self.builder.create_block();
