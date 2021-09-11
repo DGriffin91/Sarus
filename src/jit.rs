@@ -1,4 +1,5 @@
 use crate::frontend::*;
+use cranelift::codegen::ir::immediates::Offset32;
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataContext, Linkage, Module};
@@ -93,6 +94,7 @@ impl JIT {
             // available).
             self.module.finalize_definitions();
         }
+
         Ok(())
     }
 
@@ -205,6 +207,33 @@ impl JIT {
         trans.builder.finalize();
         Ok(())
     }
+
+    pub fn add_math_constants(&mut self) -> anyhow::Result<()> {
+        let names = [
+            ("E", std::f64::consts::E),
+            ("FRAC_1_PI", std::f64::consts::FRAC_1_PI),
+            ("FRAC_1_SQRT_2", std::f64::consts::FRAC_1_SQRT_2),
+            ("FRAC_2_SQRT_PI", std::f64::consts::FRAC_2_SQRT_PI),
+            ("FRAC_PI_2", std::f64::consts::FRAC_PI_2),
+            ("FRAC_PI_3", std::f64::consts::FRAC_PI_3),
+            ("FRAC_PI_4", std::f64::consts::FRAC_PI_4),
+            ("FRAC_PI_6", std::f64::consts::FRAC_PI_6),
+            ("FRAC_PI_8", std::f64::consts::FRAC_PI_8),
+            ("LN_2", std::f64::consts::LN_2),
+            ("LN_10", std::f64::consts::LN_10),
+            ("LOG2_10", std::f64::consts::LOG2_10),
+            ("LOG2_E", std::f64::consts::LOG2_E),
+            ("LOG10_2", std::f64::consts::LOG10_2),
+            ("LOG10_E", std::f64::consts::LOG10_E),
+            ("PI", std::f64::consts::PI),
+            ("SQRT_2", std::f64::consts::SQRT_2),
+            ("TAU", std::f64::consts::TAU),
+        ];
+        for (name, val) in &names {
+            self.create_data(name, val.to_ne_bytes().to_vec())?;
+        }
+        Ok(())
+    }
 }
 
 /// A collection of state used for translating from toy-language AST nodes
@@ -228,15 +257,15 @@ impl<'a> FunctionTranslator<'a> {
             Expr::Binop(op, lhs, rhs) => self.translate_binop(*op, lhs, rhs),
             Expr::Compare(cmp, lhs, rhs) => self.translate_cmp(*cmp, lhs, rhs),
             Expr::Call(name, args) => self.translate_call(name, args),
-            Expr::GlobalDataAddr(name) => vec![self.translate_global_data_addr(name)],
+            Expr::GlobalDataAddr(name) => {
+                vec![self
+                    .translate_global_data_addr(self.module.target_config().pointer_type(), name)]
+            }
             Expr::Identifier(name) => {
-                // `use_var` is used to read the value of a variable.
-                let variable = self
-                    .variables
-                    .get(name)
-                    .copied()
-                    .expect("variable not defined");
-                vec![self.builder.use_var(variable)]
+                vec![match self.variables.get(name).copied() {
+                    Some(v) => self.builder.use_var(v),
+                    None => self.translate_global_data_addr(self.float, name), //Try to load global
+                }]
             }
             Expr::Assign(names, expr) => self.translate_assign(names, expr),
             Expr::AssignOp(op, lhs, rhs) => self.translate_math_assign(*op, lhs, rhs),
@@ -478,7 +507,7 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.inst_results(call).to_vec()
     }
 
-    fn translate_global_data_addr(&mut self, name: &str) -> Value {
+    fn translate_global_data_addr(&mut self, ptr_ty: Type, name: &str) -> Value {
         let sym = self
             .module
             .declare_data(&name, Linkage::Export, true, false)
@@ -486,9 +515,17 @@ impl<'a> FunctionTranslator<'a> {
         let local_id = self
             .module
             .declare_data_in_func(sym, &mut self.builder.func);
+        let global_val = self.builder.create_global_value(GlobalValueData::Load {
+            base: local_id,
+            offset: Offset32::new(0),
+            global_type: ptr_ty,
+            readonly: true,
+        });
 
-        let pointer = self.module.target_config().pointer_type();
-        self.builder.ins().symbol_value(pointer, local_id)
+        //TODO see if this still works with strings like in original toy example
+
+        //self.builder.ins().symbol_value(ptr_ty, local_id)
+        self.builder.ins().global_value(ptr_ty, global_val)
     }
 }
 

@@ -8,6 +8,7 @@ fn main() -> anyhow::Result<()> {
 
         // Create the JIT instance, which manages all generated functions and data.
         let mut jit = jit::JIT::default();
+        jit.add_math_constants()?;
 
         // Generate AST from string
         let ast = parser::program(&code)?;
