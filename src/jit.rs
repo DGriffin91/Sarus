@@ -419,13 +419,7 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.ins().jump(header_block, &[]);
         self.builder.switch_to_block(header_block);
 
-        let condition_value = *self.translate_expr(condition).first().unwrap();
-        //Convert condition from float to bool
-        let zero = self.builder.ins().f64const(0.0);
-        let b_condition_value = self
-            .builder
-            .ins()
-            .fcmp(FloatCC::NotEqual, condition_value, zero);
+        let b_condition_value = *self.translate_expr(condition).first().unwrap();
 
         self.builder.ins().brz(b_condition_value, exit_block, &[]);
         self.builder.ins().jump(body_block, &[]);
@@ -445,8 +439,7 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.seal_block(header_block);
         self.builder.seal_block(exit_block);
 
-        // Just return 0 for now.
-        self.builder.ins().f64const(0.0)
+        b_condition_value
     }
 
     fn translate_call(&mut self, name: &str, args: &[Expr]) -> Vec<Value> {
