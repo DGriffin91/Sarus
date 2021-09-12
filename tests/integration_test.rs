@@ -283,3 +283,17 @@ fn main(&arr, b) -> () {
     assert_eq!([200.0, 400.0, 600.0, 800.0], arr);
     Ok(())
 }
+
+#[test]
+fn negative() -> anyhow::Result<()> {
+    let mut jit = jit::JIT::default();
+    let code = r#"
+    fn main(a) -> (c) {
+        c = -1.0 + a
+    }
+"#;
+    let a = -100.0f64;
+    let result: f64 = unsafe { run_string(&mut jit, code, "main", a)? };
+    assert_eq!(-101.0, result);
+    Ok(())
+}
