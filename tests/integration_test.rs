@@ -248,3 +248,38 @@ fn bools() -> anyhow::Result<()> {
     assert_eq!(20000.0, result);
     Ok(())
 }
+
+#[test]
+fn order() -> anyhow::Result<()> {
+    let mut jit = jit::JIT::default();
+    let code = r#"
+    fn main(a, b) -> (c) {
+        c = a
+    }
+"#;
+    let a = 100.0f64;
+    let b = 200.0f64;
+    let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
+    assert_eq!(100.0, result);
+    Ok(())
+}
+
+#[test]
+fn array_read_write() -> anyhow::Result<()> {
+    let mut jit = jit::JIT::default();
+
+    let code = r#"
+fn main(&arr, b) -> () {
+    &arr[0.0] = &arr[0.0] * b
+    &arr[1.0] = &arr[1.0] * b
+    &arr[2.0] = &arr[2.0] * b
+    &arr[3.0] = &arr[3.0] * b
+}
+"#;
+
+    let mut arr = [1.0, 2.0, 3.0, 4.0];
+    let b = 200.0f64;
+    unsafe { run_string(&mut jit, code, "main", (&mut arr, b))? };
+    assert_eq!([200.0, 400.0, 600.0, 800.0], arr);
+    Ok(())
+}

@@ -144,8 +144,16 @@ impl JIT {
         // supports other types.
         let float = types::F64; //self.module.target_config().pointer_type();
 
-        for _p in &params {
-            self.ctx.func.signature.params.push(AbiParam::new(float));
+        for p in &params {
+            if p.starts_with("&") {
+                self.ctx
+                    .func
+                    .signature
+                    .params
+                    .push(AbiParam::new(self.module.target_config().pointer_type()));
+            } else {
+                self.ctx.func.signature.params.push(AbiParam::new(float));
+            }
         }
 
         for _p in &returns {
@@ -174,8 +182,15 @@ impl JIT {
 
         // The toy language allows variables to be declared implicitly.
         // Walk the AST and declare all implicitly-declared variables.
-        let variables =
-            declare_variables(float, &mut builder, &params, &returns, &stmts, entry_block);
+        let variables = declare_variables(
+            float,
+            &mut builder,
+            &mut self.module,
+            &params,
+            &returns,
+            &stmts,
+            entry_block,
+        );
 
         // Now translate the statements of the function body.
         let mut trans = FunctionTranslator {
@@ -205,6 +220,8 @@ impl JIT {
 
         // Tell the builder we're done with this function.
         trans.builder.finalize();
+
+        println!("{}", trans.builder.func.display(None));
         Ok(())
     }
 
@@ -262,10 +279,20 @@ impl<'a> FunctionTranslator<'a> {
                     .translate_global_data_addr(self.module.target_config().pointer_type(), name)]
             }
             Expr::Identifier(name) => {
-                vec![match self.variables.get(name).copied() {
-                    Some(v) => self.builder.use_var(v),
-                    None => self.translate_global_data_addr(self.float, name), //Try to load global
-                }]
+                //TODO should this be moved into pattern matching frontend?
+                if name.starts_with("&") {
+                    let var = self
+                        .variables
+                        .get(name)
+                        .copied()
+                        .expect(&format!("variable {} not found", name));
+                    vec![self.builder.use_var(var)]
+                } else {
+                    vec![match self.variables.get(name).copied() {
+                        Some(v) => self.builder.use_var(v),
+                        None => self.translate_global_data_addr(self.float, name), //Try to load global
+                    }]
+                }
             }
             Expr::Assign(names, expr) => self.translate_assign(names, expr),
             Expr::AssignOp(op, lhs, rhs) => self.translate_math_assign(*op, lhs, rhs),
@@ -288,6 +315,10 @@ impl<'a> FunctionTranslator<'a> {
             }
             Expr::Bool(b) => vec![self.builder.ins().bconst(types::B1, *b)],
             Expr::Parentheses(expr) => self.translate_expr(expr),
+            Expr::ArrayGet(name, idx_expr) => self.translate_array_get(name.to_string(), idx_expr),
+            Expr::ArraySet(name, idx_expr, expr) => {
+                self.translate_array_set(name.to_string(), idx_expr, expr)
+            }
         }
     }
 
@@ -339,6 +370,54 @@ impl<'a> FunctionTranslator<'a> {
             }
             new_value
         }
+    }
+
+    fn translate_array_get(&mut self, name: String, idx_expr: &Expr) -> Vec<Value> {
+        let ptr_ty = self.module.target_config().pointer_type();
+
+        let variable = self.variables.get(&name).unwrap();
+        let array_ptr = self.builder.use_var(*variable);
+
+        let idx_val = self.translate_expr(idx_expr);
+        let idx_val = self
+            .builder
+            .ins()
+            .fcvt_to_uint(ptr_ty, *idx_val.first().unwrap());
+        let mult_n = self.builder.ins().iconst(ptr_ty, types::F64.bytes() as i64);
+        let idx_val = self.builder.ins().imul(mult_n, idx_val);
+        let idx_ptr = self.builder.ins().iadd(idx_val, array_ptr);
+
+        let val =
+            self.builder
+                .ins()
+                .load(types::F64, MemFlags::trusted(), idx_ptr, Offset32::new(0));
+        vec![val]
+    }
+
+    fn translate_array_set(&mut self, name: String, idx_expr: &Expr, expr: &Expr) -> Vec<Value> {
+        let ptr_ty = self.module.target_config().pointer_type();
+
+        let new_val = self.translate_expr(expr);
+
+        let variable = self.variables.get(&name).unwrap();
+        let array_ptr = self.builder.use_var(*variable);
+
+        let idx_val = self.translate_expr(idx_expr);
+        let idx_val = self
+            .builder
+            .ins()
+            .fcvt_to_uint(ptr_ty, *idx_val.first().unwrap());
+        let mult_n = self.builder.ins().iconst(ptr_ty, types::F64.bytes() as i64);
+        let idx_val = self.builder.ins().imul(mult_n, idx_val);
+        let idx_ptr = self.builder.ins().iadd(idx_val, array_ptr);
+
+        self.builder.ins().store(
+            MemFlags::trusted(),
+            *new_val.first().unwrap(),
+            idx_ptr,
+            Offset32::new(0),
+        );
+        vec![]
     }
 
     fn translate_math_assign(&mut self, op: Binop, name: &str, expr: &Expr) -> Vec<Value> {
@@ -579,6 +658,7 @@ impl<'a> FunctionTranslator<'a> {
 fn declare_variables(
     float: types::Type,
     builder: &mut FunctionBuilder,
+    module: &mut Module,
     params: &[String],
     returns: &[String],
     stmts: &[Expr],
@@ -591,7 +671,18 @@ fn declare_variables(
         // TODO: cranelift_frontend should really have an API to make it easy to set
         // up param variables.
         let val = builder.block_params(entry_block)[i];
-        let var = declare_variable(float, builder, &mut variables, &mut index, name);
+
+        let var = if name.starts_with("&") {
+            declare_variable(
+                module.target_config().pointer_type(),
+                builder,
+                &mut variables,
+                &mut index,
+                name,
+            )
+        } else {
+            declare_variable(float, builder, &mut variables, &mut index, name)
+        };
         builder.def_var(var, val);
     }
 

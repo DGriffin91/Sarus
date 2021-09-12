@@ -37,6 +37,8 @@ pub enum Expr {
     GlobalDataAddr(String),
     Bool(bool),
     Parentheses(Box<Expr>),
+    ArrayGet(String, Box<Expr>),
+    ArraySet(String, Box<Expr>, Box<Expr>),
 }
 
 fn make_nonempty<T>(v: Vec<T>) -> Option<NV<T>> {
@@ -83,6 +85,7 @@ peg::parser!(pub grammar parser() for str {
         = if_then()
         / if_else()
         / while_loop()
+        / arrayset()
         / assignment()
         / binary_op()
 
@@ -106,6 +109,9 @@ peg::parser!(pub grammar parser() for str {
                 .ok_or("Cannot assign to/from empty tuple")
         }
 
+    rule arrayset() -> Expr
+        = i:identifier() _ "[" idx:expression() "]" _ "=" _ e:expression() {Expr::ArraySet(i, Box::new(idx), Box::new(e))}
+
     rule binary_op() -> Expr = precedence!{
         a:@ _ "==" b:(@) { Expr::Compare(Cmp::Eq, Box::new(a), Box::new(b)) }
         a:@ _ "!=" b:(@) { Expr::Compare(Cmp::Ne, Box::new(a), Box::new(b)) }
@@ -127,6 +133,7 @@ peg::parser!(pub grammar parser() for str {
         i:identifier() _ "/=" _ a:(@) { Expr::AssignOp(Binop::Div, Box::new(i), Box::new(a)) }
         --
         i:identifier() _ "(" args:((_ e:expression() _ {e}) ** comma()) ")" { Expr::Call(i, args) }
+        i:identifier() _ "[" idx:expression() "]" { Expr::ArrayGet(i, Box::new(idx)) }
         i:identifier() { Expr::Identifier(i) }
         l:literal() { l }
         --
@@ -136,11 +143,12 @@ peg::parser!(pub grammar parser() for str {
 
     rule identifier() -> String
         = quiet!{ _ n:$((!"true"!"false")['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.to_owned() } }
+        / _ "&" i:identifier() _ { "&".to_owned()+&i } //TODO Should this be a seperate type?
         / expected!("identifier")
 
     rule literal() -> Expr
         = _ n:$(['-']*['0'..='9']+"."['0'..='9']+) { Expr::Literal(n.to_owned()) }
-        / "&" i:identifier() { Expr::GlobalDataAddr(i) }
+        / "*" i:identifier() { Expr::GlobalDataAddr(i) }
         / _ "true" _ { Expr::Bool(true) }
         / _ "false" _ { Expr::Bool(false) }
 

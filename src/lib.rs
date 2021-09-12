@@ -42,6 +42,8 @@ pub unsafe fn run_fn<I, O>(jit: &mut jit::JIT, fn_name: &str, input: I) -> anyho
         // Cast the raw pointer to a typed function pointer. This is unsafe, because
         // this is the critical point where you have to trust that the generated code
         // is safe to be called.
+
+        //unsafe extern "C" (seems to reverse input order or something?)
         let func = mem::transmute::<_, fn(I) -> O>(func_ptr);
 
         func(input)

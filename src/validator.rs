@@ -36,6 +36,7 @@ pub enum Type {
     Void,
     Bool,
     Float,
+    Address,
     Tuple(Vec<Type>),
 }
 
@@ -45,6 +46,7 @@ impl Display for Type {
             Type::Void => write!(f, "void"),
             Type::Bool => write!(f, "bool"),
             Type::Float => write!(f, "float"),
+            Type::Address => write!(f, "address"),
             Type::Tuple(inner) => {
                 write!(f, "(")?;
                 inner
@@ -186,6 +188,8 @@ impl Type {
             Expr::GlobalDataAddr(_) => Type::Float,
             Expr::Bool(_) => Type::Bool,
             Expr::Parentheses(expr) => Type::of(expr, env)?,
+            Expr::ArraySet(_, _, e) => Type::of(e, env)?,
+            Expr::ArrayGet(_, _) => Type::Float,
         };
         Ok(res)
     }
@@ -193,7 +197,7 @@ impl Type {
     pub fn tuple_size(&self) -> usize {
         match self {
             Type::Void => 0,
-            Type::Bool | Type::Float => 1,
+            Type::Bool | Type::Float | Type::Address => 1,
             Type::Tuple(v) => v.len(),
         }
     }
