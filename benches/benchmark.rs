@@ -37,13 +37,13 @@ fn filter_benchmark_1(iterations: f64, output_array: &mut [f64]) -> f64 {
 #[bench]
 fn test_static_filter_benchmark_1(b: &mut Bencher) {
     let mut result = 0.0;
+    let mut output_arr = [0.0f64; 48000];
     b.iter(|| {
         test::black_box({
-            let mut output_arr = [0.0f64; 48000];
             result = filter_benchmark_1(48000.0, &mut output_arr);
         });
     });
-    dbg!(result);
+    dbg!((result, output_arr.iter().sum::<f64>()));
 }
 
 fn get_eq_jit() -> jit::JIT {
@@ -136,13 +136,13 @@ fn get_eq_jit() -> jit::JIT {
 fn eq(b: &mut Bencher) {
     let mut jit = get_eq_jit();
     let mut result = 0.0;
+    let mut output_arr = [0.0f64; 48000];
     b.iter(|| {
         test::black_box(unsafe {
-            let mut output_arr = [0.0f64; 48000];
             result = run_fn(&mut jit, "main", (48000.0, &mut output_arr)).unwrap();
         });
     });
-    dbg!(result);
+    dbg!((result, output_arr.iter().sum::<f64>()));
 }
 
 #[test]
