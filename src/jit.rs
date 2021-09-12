@@ -221,7 +221,7 @@ impl JIT {
         // Tell the builder we're done with this function.
         trans.builder.finalize();
 
-        println!("{}", trans.builder.func.display(None));
+        //println!("{}", trans.builder.func.display(None));
         Ok(())
     }
 

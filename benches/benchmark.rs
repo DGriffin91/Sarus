@@ -133,6 +133,20 @@ fn get_eq_jit() -> jit::JIT {
 }
 
 #[bench]
+fn eq_compile(b: &mut Bencher) {
+    let mut sum = 0.0;
+    b.iter(|| {
+        test::black_box({
+            let mut jit = get_eq_jit();
+            let mut output_arr = [0.0f64; 2];
+            let result: f64 = unsafe { run_fn(&mut jit, "main", (2.0, &mut output_arr)).unwrap() };
+            sum += result;
+        });
+    });
+    dbg!(sum);
+}
+
+#[bench]
 fn eq(b: &mut Bencher) {
     let mut jit = get_eq_jit();
     let mut result = 0.0;
