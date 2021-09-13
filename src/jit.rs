@@ -658,7 +658,7 @@ impl<'a> FunctionTranslator<'a> {
 fn declare_variables(
     float: types::Type,
     builder: &mut FunctionBuilder,
-    module: &mut Module,
+    module: &mut dyn Module,
     params: &[String],
     returns: &[String],
     stmts: &[Expr],

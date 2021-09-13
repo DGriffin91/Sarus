@@ -168,7 +168,7 @@ fn compare_eq() {
     //println!("{:?}", &output_arr[0..10]);
     let mut output_arr2 = [0.0f64; 48000];
     let result2 = filter_benchmark_1(iterations, &mut output_arr2);
-    //assert_eq!(result, result2);
+    println!("{} {}", result, result2);
     //println!("{:?}", output_arr2);
     write_wav(&output_arr, "sc.wav");
     write_wav(&output_arr2, "ru.wav");
