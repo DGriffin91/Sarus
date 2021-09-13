@@ -1,3 +1,7 @@
+# Sarus
+
+## A jit engine
+
 test with `cargo run --example run_file examples/test`
 
 Derived from https://github.com/bytecodealliance/cranelift-jit-demo

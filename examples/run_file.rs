@@ -1,4 +1,4 @@
-use cranelift_jit_demo::{jit, run_string};
+use sarus::{jit, run_string};
 use std::{env, fs};
 
 fn main() -> anyhow::Result<()> {

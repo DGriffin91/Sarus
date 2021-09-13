@@ -1,4 +1,4 @@
-use cranelift_jit_demo::{frontend::parser, jit, run_fn};
+use sarus::{frontend::parser, jit, run_fn};
 use std::{env, fs};
 
 fn main() -> anyhow::Result<()> {

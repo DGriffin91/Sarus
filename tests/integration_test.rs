@@ -1,6 +1,6 @@
 use std::f64::consts::*;
 
-use cranelift_jit_demo::*;
+use sarus::*;
 
 #[test]
 fn parentheses() -> anyhow::Result<()> {

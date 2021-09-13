@@ -1,10 +1,10 @@
 [package]
-authors = ["The Cranelift Project Developers"]
-description = "Toy language implemented using cranelift-jit"
+authors = ["The Sarus Project Developers"]
+description = "A jit engine using cranelift"
 edition = "2018"
 license = "Apache-2.0 WITH LLVM-exception"
-name = "cranelift-jit-demo"
-repository = "https://github.com/bytecodealliance/cranelift-jit-demo"
+name = "sarus"
+repository = "https://github.com/DGriffin91/sarus/"
 version = "0.0.0"
 
 [dependencies]

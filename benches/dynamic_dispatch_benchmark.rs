@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use basic_audio_filters::second_order_iir::{IIR2Coefficients, IIR2};
 use test::Bencher;
 
-const STEP_SIZE: usize = 4usize;
+const STEP_SIZE: usize = 128usize;
 
 #[test]
 fn compare_eq() {
@@ -39,21 +39,21 @@ fn write_wav(samples: &[f64], path: &str) {
     }
     writer.finalize().unwrap();
 }
-
+//7,871,635
 #[bench]
 fn benchmark(b: &mut Bencher) {
     const STEPS: usize = 48000 / STEP_SIZE;
     let mut output_arr = [[0.0f64; STEP_SIZE]; STEPS];
 
-    //move this into iter for exactly correct output_arr result
-    let (mut nodes, mut connections) = build_graph();
-    b.iter(|| {
-        test::black_box({
+    //test::black_box({
+        //move this into iter for exactly correct output_arr result
+        let (mut nodes, mut connections) = build_graph();
+        b.iter(|| {
             for i in 0..STEPS {
                 output_arr[i] = process_graph_step(&mut nodes, &mut connections);
             }
         });
-    });
+    //});
     let flat = output_arr
         .iter()
         .flatten()

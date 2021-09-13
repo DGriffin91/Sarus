@@ -1,4 +1,4 @@
-use cranelift_jit_demo::{jit, run_string};
+use sarus::{jit, run_string};
 
 fn main() -> anyhow::Result<()> {
     // Create the JIT instance, which manages all generated functions and data.

@@ -39,9 +39,9 @@ fn test_static_filter_benchmark_1(b: &mut Bencher) {
     let mut result = 0.0;
     let mut output_arr = [0.0f64; 48000];
     b.iter(|| {
-        test::black_box({
+        //test::black_box({
             result = filter_benchmark_1(48000.0, &mut output_arr);
-        });
+        //});
     });
     dbg!((result, output_arr.iter().sum::<f64>()));
 }
