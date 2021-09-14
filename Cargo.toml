@@ -15,6 +15,7 @@ cranelift-module = "0.76.0"
 non-empty-vec = "0.2.0"
 peg = "0.7"
 thiserror = "1.0.29"
+toposort-scc = "0.5.4"
 
 [dev-dependencies]
 basic-audio-filters = {git = "https://github.com/DGriffin91/rust-basic-audio-filters", branch = "f64"}

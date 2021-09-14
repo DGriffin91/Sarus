@@ -2,7 +2,7 @@
 extern crate test; //rust-analyser complains, but this should work in nightly
 
 use basic_audio_filters::second_order_iir::{IIR2Coefficients, IIR2};
-use cranelift_jit_demo::*;
+use sarus::*;
 use test::Bencher;
 
 fn rand64(x: f64) -> f64 {
@@ -40,7 +40,7 @@ fn test_static_filter_benchmark_1(b: &mut Bencher) {
     let mut output_arr = [0.0f64; 48000];
     b.iter(|| {
         //test::black_box({
-            result = filter_benchmark_1(48000.0, &mut output_arr);
+        result = filter_benchmark_1(48000.0, &mut output_arr);
         //});
     });
     dbg!((result, output_arr.iter().sum::<f64>()));

@@ -10,6 +10,7 @@ fn main(a, b) -> (c) {
     c = a * (a - b) * (a * (2.0 + b))
 }
 "#;
+
     let a = 100.0f64;
     let b = 200.0f64;
     let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
@@ -45,6 +46,7 @@ fn nums() -> (r) {
     r = E + FRAC_1_PI + FRAC_1_SQRT_2 + FRAC_2_SQRT_PI + FRAC_PI_2 + FRAC_PI_3 + FRAC_PI_4 + FRAC_PI_6 + FRAC_PI_8 + LN_2 + LN_10 + LOG2_10 + LOG2_E + LOG10_2 + LOG10_E + PI + SQRT_2 + TAU
 }
 "#;
+
     let a = 100.0f64;
     let b = 200.0f64;
     let mut c = b;
@@ -179,6 +181,7 @@ fn foodd(a, b) -> (c) {
 //}//test
     
 "#;
+
     let a = 100.0f64;
     let b = 200.0f64;
     let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
@@ -220,6 +223,7 @@ fn multiple_returns() -> anyhow::Result<()> {
         c = a + 1.0
     }
 "#;
+
     let a = 100.0f64;
     let b = 200.0f64;
     let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
@@ -295,5 +299,43 @@ fn negative() -> anyhow::Result<()> {
     let a = -100.0f64;
     let result: f64 = unsafe { run_string(&mut jit, code, "main", a)? };
     assert_eq!(-101.0, result);
+    Ok(())
+}
+
+#[test]
+fn compiled_graph() -> anyhow::Result<()> {
+    let code = r#"
+    fn add_node (a, b) -> (c) {
+        c = a + b
+    }
+        
+    fn sub_node (a, b) -> (c) {
+        c = a - b
+    }
+        
+    fn sin_node (a) -> (c) {
+        c = sin(a)
+    }
+        
+    fn graph (&audio) -> () {
+        i = 0.0
+        while i <= 7.0 {
+            vINPUT_0 = &audio[i]
+            vadd1_0 = add_node(vINPUT_0, 2.0000000000)
+            vsin1_0 = sin_node(vadd1_0)
+            vadd2_0 = add_node(vsin1_0, 4.0000000000)
+            vsub1_0 = sub_node(vadd2_0, vadd1_0)
+            vOUTPUT_0 = vsub1_0
+            &audio[i] = vOUTPUT_0
+            i += 1.0
+        }
+    }
+"#;
+
+    let mut jit = jit::JIT::default();
+    let mut audio = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+    unsafe { run_string(&mut jit, code, "graph", &mut audio)? };
+    dbg!(audio);
+    //assert_eq!([200.0, 400.0, 600.0, 800.0], arr);
     Ok(())
 }

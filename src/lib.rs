@@ -5,6 +5,7 @@ use crate::validator::validate_program;
 use crate::frontend::parser;
 
 pub mod frontend;
+pub mod graph;
 pub mod jit;
 pub mod validator;
 

@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 /// "Mathematical" binary operations variants
 #[derive(Debug, Copy, Clone)]
 pub enum Binop {
@@ -7,15 +9,39 @@ pub enum Binop {
     Div,
 }
 
+impl Display for Binop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Binop::Add => write!(f, "+"),
+            Binop::Sub => write!(f, "-"),
+            Binop::Mul => write!(f, "*"),
+            Binop::Div => write!(f, "/"),
+        }
+    }
+}
+
 /// Comparison operations
 #[derive(Debug, Copy, Clone)]
 pub enum Cmp {
     Eq,
     Ne,
-    Le,
     Lt,
-    Ge,
+    Le,
     Gt,
+    Ge,
+}
+
+impl Display for Cmp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Cmp::Eq => write!(f, "=="),
+            Cmp::Ne => write!(f, "!="),
+            Cmp::Lt => write!(f, "<"),
+            Cmp::Le => write!(f, "<="),
+            Cmp::Gt => write!(f, ">"),
+            Cmp::Ge => write!(f, ">="),
+        }
+    }
 }
 
 type NV<T> = non_empty_vec::NonEmpty<T>;
@@ -31,7 +57,7 @@ pub enum Expr {
     IfElse(Box<Expr>, Vec<Expr>, Vec<Expr>),
     Assign(NV<String>, NV<Expr>),
     AssignOp(Binop, Box<String>, Box<Expr>),
-    WhileLoop(Box<Expr>, Vec<Expr>),
+    WhileLoop(Box<Expr>, Vec<Expr>), //Should this take a block instead of Vec<Expr>?
     Block(Vec<Expr>),
     Call(String, Vec<Expr>),
     GlobalDataAddr(String),
@@ -41,7 +67,88 @@ pub enum Expr {
     ArraySet(String, Box<Expr>, Box<Expr>),
 }
 
-fn make_nonempty<T>(v: Vec<T>) -> Option<NV<T>> {
+//TODO indentation, tests
+impl Display for Expr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Expr::Literal(s) => write!(f, "{}", s),
+            Expr::Identifier(s) => write!(f, "{}", s),
+            Expr::Binop(op, e1, e2) => write!(f, "{} {} {}", e1, op, e2),
+            Expr::Compare(cmp, e1, e2) => write!(f, "{} {} {}", e1, cmp, e2),
+            Expr::IfThen(e, body) => {
+                writeln!(f, "if {} {{", e)?;
+                for expr in body.iter() {
+                    writeln!(f, "{}", expr)?;
+                }
+                write!(f, "}}")?;
+                Ok(())
+            }
+            Expr::IfElse(e, body, else_body) => {
+                writeln!(f, "if {} {{", e)?;
+                for expr in body.iter() {
+                    writeln!(f, "{}", expr)?;
+                }
+                writeln!(f, "}} else {{")?;
+                for expr in else_body.iter() {
+                    writeln!(f, "{}", expr)?;
+                }
+                write!(f, "}}")?;
+                Ok(())
+            }
+            Expr::Assign(vars, exprs) => {
+                for (i, var) in vars.iter().enumerate() {
+                    write!(f, "{}", var)?;
+                    let len: usize = vars.len().into();
+                    if i < len - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, " = ")?;
+                for (i, expr) in exprs.iter().enumerate() {
+                    write!(f, "{}", expr)?;
+                    let len: usize = exprs.len().into();
+                    if i < len - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                Ok(())
+            }
+            Expr::AssignOp(op, s, e) => write!(f, "{} {}= {}", s, op, e),
+            Expr::WhileLoop(eval, block) => {
+                writeln!(f, "while {} {{", eval)?;
+                for expr in block.iter() {
+                    writeln!(f, "{}", expr)?;
+                }
+                write!(f, "}}")?;
+                Ok(())
+            }
+            Expr::Block(block) => {
+                for expr in block.iter() {
+                    writeln!(f, "{}", expr)?;
+                }
+                Ok(())
+            }
+            Expr::Call(func_name, args) => {
+                write!(f, "{}(", func_name)?;
+                for (i, arg) in args.iter().enumerate() {
+                    write!(f, "{}", arg)?;
+                    if i < args.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")?;
+                Ok(())
+            }
+            Expr::GlobalDataAddr(e) => write!(f, "{}", e),
+            Expr::Bool(b) => write!(f, "{}", b),
+            Expr::Parentheses(e) => write!(f, "({})", e),
+            Expr::ArrayGet(var, e) => write!(f, "{}[{}]", var, e),
+            Expr::ArraySet(var, idx_e, e) => write!(f, "{}[{}] = {}", var, idx_e, e),
+        }
+    }
+}
+
+pub fn make_nonempty<T>(v: Vec<T>) -> Option<NV<T>> {
     if v.is_empty() {
         None
     } else {
@@ -55,6 +162,28 @@ pub struct Declaration {
     pub params: Vec<String>,
     pub returns: Vec<String>,
     pub body: Vec<Expr>,
+}
+
+impl Display for Declaration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "fn {} (", self.name)?;
+        for (i, param) in self.params.iter().enumerate() {
+            write!(f, "{}", param)?;
+            if i < self.params.len() - 1 {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, ") -> (")?;
+        for ret in self.returns.iter() {
+            write!(f, "{}", ret)?;
+        }
+        writeln!(f, ") {{")?;
+        for expr in self.body.iter() {
+            writeln!(f, "{}", expr)?;
+        }
+        writeln!(f, "}}")?;
+        Ok(())
+    }
 }
 
 peg::parser!(pub grammar parser() for str {
