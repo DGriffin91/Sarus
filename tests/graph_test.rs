@@ -130,24 +130,33 @@ fn sin_node(a) -> (c) {
         },
     ];
 
+    //initialize graph, will arrange graph, generate graph code, and compile
     let mut graph = Graph::new(code.to_string(), nodes, connections, STEP_SIZE).unwrap();
 
+    //print out the resulting code for fun
     for d in graph.ast {
         println!("{}", d);
     }
 
-    const STEPS: usize = 48000 / 8;
+    // Calls to graph will be broken into STEP_SIZE chunks.
+    // A pointer to the current chunk is sent to the graph.
+    // The graph overwrites it with the new values
+    const STEPS: usize = 48000 / STEP_SIZE;
     let mut output_arr = [[0.0f64; STEP_SIZE]; STEPS];
     let mut n = 0;
     for i in 0..STEPS {
         let mut audio_buffer = [0.0f64; STEP_SIZE];
         for j in 0..STEP_SIZE {
-            audio_buffer[j] = ((n as f64).powi(2) * 0.000001).sin(); //sound source
+            audio_buffer[j] = ((n as f64).powi(2) * 0.000001).sin(); //sound source is sine sweep
             n += 1;
         }
         unsafe { run_fn(&mut graph.jit, "graph", &mut audio_buffer)? };
+
+        //Collect output audio
         output_arr[i] = audio_buffer;
     }
+
+    //Flatten output audio chunks for saving as wav
     let flat = output_arr
         .iter()
         .flatten()

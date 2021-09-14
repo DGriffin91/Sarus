@@ -4,7 +4,7 @@ use toposort_scc::IndexGraph;
 
 use crate::{
     frontend::{make_nonempty, parser, Binop, Cmp, Declaration, Expr},
-    jit, run_fn,
+    jit,
     validator::validate_program,
 };
 
