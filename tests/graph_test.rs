@@ -1,4 +1,5 @@
 use sarus::{
+    frontend::pretty_indent,
     graph::{Connection, Graph, Node},
     run_fn,
 };
@@ -135,7 +136,7 @@ fn sin_node(a) -> (c) {
 
     //print out the resulting code for fun
     for d in graph.ast {
-        println!("{}", d);
+        println!("{}", pretty_indent(&format!("{}", d)));
     }
 
     // Calls to graph will be broken into STEP_SIZE chunks.

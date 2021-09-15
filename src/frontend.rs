@@ -1,4 +1,5 @@
 use std::fmt::Display;
+use std::fmt::Write;
 
 /// "Mathematical" binary operations variants
 #[derive(Debug, Copy, Clone)]
@@ -184,6 +185,34 @@ impl Display for Declaration {
         writeln!(f, "}}")?;
         Ok(())
     }
+}
+
+// TODO there must be a better way.
+pub fn pretty_indent(code: &str) -> String {
+    let mut f = String::from("");
+    let mut depth = 0;
+    for line in code.lines() {
+        if let Some(b_pos) = line.find("}") {
+            if let Some(comment) = line.find("//") {
+                if comment > b_pos {
+                    depth -= 1;
+                }
+            } else {
+                depth -= 1;
+            }
+        }
+        writeln!(f, "{1:0$}{2:}", depth * 4, "", line).unwrap();
+        if let Some(b_pos) = line.find("{") {
+            if let Some(comment) = line.find("//") {
+                if comment > b_pos {
+                    depth += 1;
+                }
+            } else {
+                depth += 1;
+            }
+        }
+    }
+    f
 }
 
 peg::parser!(pub grammar parser() for str {
