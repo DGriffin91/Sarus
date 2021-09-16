@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Debug};
 use toposort_scc::IndexGraph;
 
 use crate::{
-    frontend::{make_nonempty, parser, Binop, Cmp, Declaration, Expr},
+    frontend::{make_nonempty, parser, Binop, Cmp, Declaration, Expr, Function},
     jit,
     validator::validate_program,
 };
@@ -96,8 +96,16 @@ fn build_graph_func(
     block_size: usize,
     node_execution_order: Vec<usize>,
 ) -> anyhow::Result<Declaration> {
+    let funcs: Vec<Function> = ast
+        .iter()
+        .filter_map(|d| match d {
+            Declaration::Function(func) => Some(func.clone()),
+            _ => None,
+        })
+        .collect();
+
     let mut node_lookup = HashMap::new();
-    for (i, decl) in ast.iter().enumerate() {
+    for (i, decl) in funcs.iter().enumerate() {
         node_lookup.insert(decl.name.clone(), i);
     }
 
@@ -126,7 +134,7 @@ fn build_graph_func(
         if &node.func_name == "INPUT" || &node.func_name == "OUTPUT" {
             continue;
         }
-        let node_src_ast = &ast[node_lookup[&node.func_name]];
+        let node_src_ast = &funcs[node_lookup[&node.func_name]];
 
         let mut return_var_names = Vec::new();
         for (i, _ret) in node_src_ast.returns.iter().enumerate() {
@@ -207,10 +215,10 @@ fn build_graph_func(
         body,
     ));
 
-    Ok(Declaration {
+    Ok(Declaration::Function(Function {
         name: "graph".to_string(),
         params: vec!["&audio".to_string()],
         returns: vec![],
         body: main_body,
-    })
+    }))
 }

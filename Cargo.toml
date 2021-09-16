@@ -16,6 +16,8 @@ non-empty-vec = "0.2.0"
 peg = "0.7"
 thiserror = "1.0.29"
 toposort-scc = "0.5.4"
+toml = "0.5.8"
+serde = {version = "1.0.130", features = ["derive"] }
 
 [dev-dependencies]
 basic-audio-filters = {git = "https://github.com/DGriffin91/rust-basic-audio-filters", branch = "f64"}

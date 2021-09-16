@@ -42,57 +42,68 @@ impl JIT {
     /// Compile a string in the toy language into machine code.
     pub fn translate(&mut self, prog: Vec<Declaration>) -> anyhow::Result<()> {
         let mut return_counts = HashMap::new();
-        for Declaration { name, returns, .. } in &prog {
-            return_counts.insert(name.to_string(), returns.len());
+        for func in prog.iter().filter_map(|d| match d {
+            Declaration::Function(func) => Some(func.clone()),
+            _ => None,
+        }) {
+            return_counts.insert(func.name.to_string(), func.returns.len());
         }
 
         // First, parse the string, producing AST nodes.
-        for Declaration {
-            name,
-            params,
-            returns,
-            body: stmts,
-        } in prog
-        {
-            ////println!(
-            ////    "name {:?}, params {:?}, the_return {:?}",
-            ////    &name, &params, &the_return
-            ////);
-            //// Then, translate the AST nodes into Cranelift IR.
-            self.codegen(params, returns, stmts, return_counts.to_owned())?;
-            // Next, declare the function to jit. Functions must be declared
-            // before they can be called, or defined.
-            //
-            // TODO: This may be an area where the API should be streamlined; should
-            // we have a version of `declare_function` that automatically declares
-            // the function?
-            let id = self
-                .module
-                .declare_function(&name, Linkage::Export, &self.ctx.func.signature)
-                .map_err(|e| anyhow::anyhow!("{}:{}:{} {:?}", file!(), line!(), column!(), e))?;
+        for d in prog {
+            match d {
+                Declaration::Function(func) => {
+                    ////println!(
+                    ////    "name {:?}, params {:?}, the_return {:?}",
+                    ////    &name, &params, &the_return
+                    ////);
+                    //// Then, translate the AST nodes into Cranelift IR.
+                    self.codegen(
+                        func.params,
+                        func.returns,
+                        func.body,
+                        return_counts.to_owned(),
+                    )?;
+                    // Next, declare the function to jit. Functions must be declared
+                    // before they can be called, or defined.
+                    //
+                    // TODO: This may be an area where the API should be streamlined; should
+                    // we have a version of `declare_function` that automatically declares
+                    // the function?
+                    let id = self
+                        .module
+                        .declare_function(&func.name, Linkage::Export, &self.ctx.func.signature)
+                        .map_err(|e| {
+                            anyhow::anyhow!("{}:{}:{} {:?}", file!(), line!(), column!(), e)
+                        })?;
 
-            ////println!("ID IS {}", id);
-            // Define the function to jit. This finishes compilation, although
-            // there may be outstanding relocations to perform. Currently, jit
-            // cannot finish relocations until all functions to be called are
-            // defined. For this toy demo for now, we'll just finalize the
-            // function below.
-            self.module
-                .define_function(
-                    id,
-                    &mut self.ctx,
-                    &mut codegen::binemit::NullTrapSink {},
-                    &mut codegen::binemit::NullStackMapSink {},
-                )
-                .map_err(|e| anyhow::anyhow!("{}:{}:{} {:?}", file!(), line!(), column!(), e))?;
+                    ////println!("ID IS {}", id);
+                    // Define the function to jit. This finishes compilation, although
+                    // there may be outstanding relocations to perform. Currently, jit
+                    // cannot finish relocations until all functions to be called are
+                    // defined. For this toy demo for now, we'll just finalize the
+                    // function below.
+                    self.module
+                        .define_function(
+                            id,
+                            &mut self.ctx,
+                            &mut codegen::binemit::NullTrapSink {},
+                            &mut codegen::binemit::NullStackMapSink {},
+                        )
+                        .map_err(|e| {
+                            anyhow::anyhow!("{}:{}:{} {:?}", file!(), line!(), column!(), e)
+                        })?;
 
-            // Now that compilation is finished, we can clear out the context state.
-            self.module.clear_context(&mut self.ctx);
+                    // Now that compilation is finished, we can clear out the context state.
+                    self.module.clear_context(&mut self.ctx);
 
-            // Finalize the functions which we just defined, which resolves any
-            // outstanding relocations (patching in addresses, now that they're
-            // available).
-            self.module.finalize_definitions();
+                    // Finalize the functions which we just defined, which resolves any
+                    // outstanding relocations (patching in addresses, now that they're
+                    // available).
+                    self.module.finalize_definitions();
+                }
+                _ => continue,
+            };
         }
 
         Ok(())

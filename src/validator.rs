@@ -145,7 +145,16 @@ impl Type {
                 .map(Result::unwrap)
                 .unwrap_or(Type::Void),
             Expr::Call(fn_name, args) => {
-                if let Some(d) = env.iter().filter(|d| &d.name == fn_name).next() {
+                if let Some(d) = env.iter().find_map(|d| match d {
+                    Declaration::Function(func) => {
+                        if &func.name == fn_name {
+                            Some(func)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }) {
                     if d.params.len() == args.len() {
                         let targs: Result<Vec<_>, _> =
                             args.iter().map(|e| Type::of(e, env)).collect();
@@ -204,8 +213,11 @@ impl Type {
 }
 
 pub fn validate_program(decls: Vec<Declaration>) -> Result<Vec<Declaration>, TypeError> {
-    for d in &decls {
-        for expr in &d.body {
+    for func in decls.iter().filter_map(|d| match d {
+        Declaration::Function(func) => Some(func.clone()),
+        _ => None,
+    }) {
+        for expr in &func.body {
             Type::of(expr, &decls)?;
         }
     }

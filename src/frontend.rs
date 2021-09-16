@@ -158,14 +158,36 @@ pub fn make_nonempty<T>(v: Vec<T>) -> Option<NV<T>> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Declaration {
+pub enum Declaration {
+    Function(Function),
+    Metadata(Vec<String>, Box<String>),
+}
+
+impl Display for Declaration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Declaration::Function(e) => write!(f, "{}", e),
+            Declaration::Metadata(head, body) => {
+                for word in head.iter() {
+                    write!(f, "{}", word)?;
+                }
+                writeln!(f, "")?;
+                write!(f, "{}", body)?;
+                Ok(())
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Function {
     pub name: String,
     pub params: Vec<String>,
     pub returns: Vec<String>,
     pub body: Vec<Expr>,
 }
 
-impl Display for Declaration {
+impl Display for Function {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "fn {} (", self.name)?;
         for (i, param) in self.params.iter().enumerate() {
@@ -217,7 +239,19 @@ pub fn pretty_indent(code: &str) -> String {
 
 peg::parser!(pub grammar parser() for str {
     pub rule program() -> Vec<Declaration>
-        = (f:function() _ { f })*
+        = (d:declaration() _ { d })*
+
+    rule declaration() -> Declaration
+        = function()
+        / metadata()
+
+    rule metadata() -> Declaration
+        = _ "@" _ headings:(i:(metadata_identifier()** ([' ' | '\t'])) {i}) ([' ' | '\t'])* "\n" body:$[^'@']* "@" _ {Declaration::Metadata(headings, Box::new(body.join("")))}
+
+
+    rule metadata_identifier() -> String
+        = quiet!{ _ n:$(['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.to_owned() } }
+        / expected!("identifier")
 
     rule function() -> Declaration
         = _ "fn" name:identifier() _
@@ -225,12 +259,12 @@ peg::parser!(pub grammar parser() for str {
         "->" _
         "(" returns:(i:identifier() ** comma()) _ ")"
         body:block()
-        { Declaration {
+        { Declaration::Function(Function {
             name,
             params,
             returns,
             body,
-        } }
+        }) }
 
     rule block() -> Vec<Expr>
         = _ "{" b:(statement() ** _) _ "}" { b }

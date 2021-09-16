@@ -1,4 +1,5 @@
-use std::f64::consts::*;
+use serde::Deserialize;
+use std::{collections::HashMap, f64::consts::*};
 
 use sarus::*;
 
@@ -335,6 +336,90 @@ fn compiled_graph() -> anyhow::Result<()> {
     let mut jit = jit::JIT::default();
     let mut audio = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
     unsafe { run_string(&mut jit, code, "graph", &mut audio)? };
+    dbg!(audio);
+    //assert_eq!([200.0, 400.0, 600.0, 800.0], arr);
+    Ok(())
+}
+
+#[derive(Deserialize, Debug)]
+struct Metadata {
+    description: Option<String>,
+    inputs: HashMap<String, MetadataInput>,
+}
+
+#[derive(Deserialize, Debug)]
+struct MetadataInput {
+    default: Option<f64>,
+    min: Option<f64>,
+    max: Option<f64>,
+    description: Option<String>,
+    label: Option<String>,
+    unit: Option<String>,
+    gradient: Option<String>,
+}
+
+#[test]
+fn metadata() -> anyhow::Result<()> {
+    let code = r#"    
+    
+    @ add_node node
+        description = "add two numbers!"
+
+        [inputs]
+        a = {default = 0.0, description = "1st number"}
+        b = {default = 0.0, description = "2nd number"}
+    @
+    fn add_node (a, b) -> (c) {
+        c = a + b
+    }
+        
+    fn sub_node (a, b) -> (c) {
+        c = a - b
+    }
+        
+    fn sin_node (a) -> (c) {
+        c = sin(a)
+    }
+        
+    fn graph (&audio) -> () {
+        i = 0.0
+        while i <= 7.0 {
+            vINPUT_0 = &audio[i]
+            vadd1_0 = add_node(vINPUT_0, 2.0000000000)
+            vsin1_0 = sin_node(vadd1_0)
+            vadd2_0 = add_node(vsin1_0, 4.0000000000)
+            vsub1_0 = sub_node(vadd2_0, vadd1_0)
+            vOUTPUT_0 = vsub1_0
+            &audio[i] = vOUTPUT_0
+            i += 1.0
+        }
+    }
+"#;
+
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+
+    let func_meta: Option<Metadata> = ast.iter().find_map(|d| match d {
+        frontend::Declaration::Metadata(head, body) => {
+            if let Some(head) = head.first() {
+                if head == "add_node" {
+                    Some(toml::from_str(&body).unwrap())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    });
+
+    dbg!(&func_meta);
+
+    let mut audio = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+    unsafe { run_fn(&mut jit, "graph", &mut audio)? };
     dbg!(audio);
     //assert_eq!([200.0, 400.0, 600.0, 800.0], arr);
     Ok(())
