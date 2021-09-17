@@ -11,22 +11,20 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Node {
     pub func_name: String,
-    pub id: String,
-    pub port_defaults: Vec<f64>,
-    pub position: (f64, f64),
+    pub port_defaults: HashMap<String, f64>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Connection {
-    pub src_node: usize,
-    pub dst_node: usize,
-    pub src_port: usize,
-    pub dst_port: usize,
+    pub src_node: String,
+    pub dst_node: String,
+    pub src_port: String,
+    pub dst_port: String,
 }
 
 pub struct Graph {
     pub code: String,
-    pub nodes: Vec<Node>,
+    pub nodes: HashMap<String, Node>,
     pub connections: Vec<Connection>,
     pub jit: jit::JIT,
     pub ast: Vec<Declaration>,
@@ -35,7 +33,7 @@ pub struct Graph {
 impl Graph {
     pub fn new(
         code: String,
-        nodes: Vec<Node>,
+        nodes: HashMap<String, Node>,
         connections: Vec<Connection>,
         block_size: usize,
     ) -> anyhow::Result<Graph> {
@@ -49,11 +47,11 @@ impl Graph {
         // Validate type useage
         let mut ast = validate_program(ast)?;
 
-        let node_execution_order = order_connections(&connections, nodes.len());
+        let node_execution_order = order_connections(&connections, &nodes);
 
         println!("Execution order:");
-        for n in &node_execution_order {
-            println!("{}", nodes[*n].id);
+        for node_id in &node_execution_order {
+            println!("{}", node_id);
         }
         println!("");
 
@@ -79,34 +77,45 @@ impl Graph {
     }
 }
 
-fn order_connections(connections: &Vec<Connection>, nodes_qty: usize) -> Vec<usize> {
-    let mut g = IndexGraph::with_vertices(nodes_qty);
+fn order_connections(connections: &Vec<Connection>, nodes: &HashMap<String, Node>) -> Vec<String> {
+    // TODO probably implement our own toposort
+    let node_indices = nodes
+        .iter()
+        .map(|(k, _v)| k.to_string())
+        .collect::<Vec<String>>();
+    let mut node_map = HashMap::new();
+    for (i, (k, _v)) in nodes.iter().enumerate() {
+        node_map.insert(k, i);
+    }
+    let mut g = IndexGraph::with_vertices(nodes.len());
     for connection in connections {
-        g.add_edge(connection.src_node, connection.dst_node);
+        g.add_edge(
+            node_map[&connection.src_node],
+            node_map[&connection.dst_node],
+        );
     }
 
     let node_execution_order = g.toposort_or_scc().unwrap();
-    node_execution_order
+
+    let mut order = Vec::new();
+    for idx in &node_execution_order {
+        order.push(node_indices[*idx].clone());
+    }
+    order
 }
 
 fn build_graph_func(
     connections: &Vec<Connection>,
-    nodes: &Vec<Node>,
+    nodes: &HashMap<String, Node>,
     ast: &Vec<Declaration>,
     block_size: usize,
-    node_execution_order: Vec<usize>,
+    node_execution_order: Vec<String>,
 ) -> anyhow::Result<Declaration> {
-    let funcs: Vec<Function> = ast
-        .iter()
-        .filter_map(|d| match d {
-            Declaration::Function(func) => Some(func.clone()),
-            _ => None,
-        })
-        .collect();
-
-    let mut node_lookup = HashMap::new();
-    for (i, decl) in funcs.iter().enumerate() {
-        node_lookup.insert(decl.name.clone(), i);
+    let mut funcs = HashMap::new();
+    for decl in ast.iter() {
+        if let Declaration::Function(func) = decl {
+            funcs.insert(func.name.clone(), func.clone());
+        }
     }
 
     let mut main_body = Vec::new();
@@ -120,7 +129,7 @@ fn build_graph_func(
 
     body.push(Expr::Assign(
         //vINPUT_0 = &audio[i]
-        make_nonempty(vec!["vINPUT_0".to_string()]).unwrap(),
+        make_nonempty(vec!["vINPUT_src".to_string()]).unwrap(),
         make_nonempty(vec![Expr::ArrayGet(
             "&audio".to_string(),
             Box::new(Expr::Identifier("i".to_string())),
@@ -128,26 +137,26 @@ fn build_graph_func(
         .unwrap(),
     ));
 
-    for node_idx in &node_execution_order {
-        let node = &nodes[*node_idx];
+    for node_id in &node_execution_order {
+        let node = &nodes[node_id];
 
         if &node.func_name == "INPUT" || &node.func_name == "OUTPUT" {
             continue;
         }
-        let node_src_ast = &funcs[node_lookup[&node.func_name]];
+        let node_src_ast = &funcs[&node.func_name];
 
         let mut return_var_names = Vec::new();
-        for (i, _ret) in node_src_ast.returns.iter().enumerate() {
-            return_var_names.push(format!("v{}_{}", node.id, i))
+        for ret in node_src_ast.returns.iter() {
+            return_var_names.push(format!("v{}_{}", node_id, ret))
         }
 
         let mut param_names = Vec::new();
 
-        for (port, _param_name) in node_src_ast.params.iter().enumerate() {
+        for param_name in node_src_ast.params.iter() {
             // find the connection that has this node and port as a dst
             let connection = connections
                 .into_iter()
-                .filter(|c| c.dst_node == *node_idx && c.dst_port == port)
+                .filter(|c| c.dst_node == *node_id && c.dst_port == *param_name)
                 .collect::<Vec<&Connection>>();
 
             if connection.len() > 0 {
@@ -155,12 +164,15 @@ fn build_graph_func(
                 let connection = connection.first().unwrap();
                 param_names.push(Expr::Identifier(format!(
                     "v{}_{}",
-                    nodes[connection.src_node].id, connection.src_port
+                    &connection.src_node, connection.src_port
                 )))
             } else {
-                println!("{}", format!("{}", node.port_defaults[port]));
+                println!("{}", format!("{}", node.port_defaults[param_name]));
                 // If there is no connection use the default val
-                param_names.push(Expr::Literal(format!("{:.10}", node.port_defaults[port])))
+                param_names.push(Expr::Literal(format!(
+                    "{:.10}",
+                    node.port_defaults[param_name]
+                )))
                 //TODO arbitrary precision while always printing decimal?
             }
         }
@@ -171,24 +183,21 @@ fn build_graph_func(
         ))
     }
 
-    let last_node_idx = *node_execution_order.last().unwrap();
-    let last_node = &nodes[last_node_idx];
+    let last_node_id = node_execution_order.last().unwrap();
 
     let last_connection = connections
         .into_iter()
-        .filter(|c| c.dst_node == last_node_idx && c.dst_port == 0)
+        .filter(|c| c.dst_node == *last_node_id)
         .collect::<Vec<&Connection>>();
 
     let last_connection = last_connection.first().unwrap();
 
-    let node_that_feeds_last_node = &nodes[last_connection.src_node];
-
     body.push(Expr::Assign(
         //assign last node to output
-        make_nonempty(vec![format!("v{}_0", last_node.id)]).unwrap(),
+        make_nonempty(vec![format!("v{}_dst", last_node_id)]).unwrap(),
         make_nonempty(vec![Expr::Identifier(format!(
             "v{}_{}",
-            node_that_feeds_last_node.id, last_connection.src_port
+            &last_connection.src_node, last_connection.src_port
         ))])
         .unwrap(),
     ));
@@ -196,7 +205,7 @@ fn build_graph_func(
     body.push(Expr::ArraySet(
         "&audio".to_string(),
         Box::new(Expr::Identifier("i".to_string())),
-        Box::new(Expr::Identifier("vOUTPUT_0".to_string())),
+        Box::new(Expr::Identifier("vOUTPUT_dst".to_string())),
     ));
 
     body.push(Expr::AssignOp(

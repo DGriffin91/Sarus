@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use sarus::{
     frontend::pretty_indent,
     graph::{Connection, Graph, Node},
-    run_fn,
+    hashmap, run_fn,
 };
 
 const STEP_SIZE: usize = 16usize;
@@ -23,111 +25,99 @@ fn sin_node(a) -> (c) {
 }
 "#;
 
-    let nodes = vec![
+    let mut nodes = HashMap::new();
+    nodes.insert(
+        "INPUT".to_string(),
         Node {
             func_name: "INPUT".to_string(),
-            id: "INPUT".to_string(),
-            port_defaults: vec![0.0],
-            position: (0.0, 0.0),
+            port_defaults: hashmap!("a".to_string() => 0.0),
         },
+    );
+    nodes.insert(
+        "add1".to_string(),
         Node {
             func_name: "add_node".to_string(),
-            id: "add1".to_string(),
-            port_defaults: vec![0.0, 0.0],
-            position: (0.0, 0.0),
+            port_defaults: hashmap!("a".to_string() => 0.0, "b".to_string() => 0.0),
         },
-        Node {
-            func_name: "mul_node".to_string(),
-            id: "mul3".to_string(),
-            port_defaults: vec![0.0, 0.0],
-            position: (0.0, 0.0),
-        },
+    );
+    nodes.insert(
+        "OUTPUT".to_string(),
         Node {
             func_name: "OUTPUT".to_string(),
-            id: "OUTPUT".to_string(),
-            port_defaults: vec![0.0],
-            position: (0.0, 0.0),
+            port_defaults: hashmap!("a".to_string() => 0.0),
         },
+    );
+    nodes.insert(
+        "tanh1".to_string(),
         Node {
             func_name: "tanh_node".to_string(),
-            id: "tanh1".to_string(),
-            port_defaults: vec![0.0],
-            position: (0.0, 0.0),
+            port_defaults: hashmap!("a".to_string() => 0.0),
         },
+    );
+    nodes.insert(
+        "sin1".to_string(),
         Node {
             func_name: "sin_node".to_string(),
-            id: "sin1".to_string(),
-            port_defaults: vec![0.0],
-            position: (0.0, 0.0),
+            port_defaults: hashmap!("a".to_string() => 0.0),
         },
+    );
+    nodes.insert(
+        "mul1".to_string(),
         Node {
             func_name: "mul_node".to_string(),
-            id: "mul1".to_string(),
-            port_defaults: vec![0.0, 0.1],
-            position: (0.0, 0.0),
+            port_defaults: hashmap!("a".to_string() => 0.0, "b".to_string() => 10.0),
         },
+    );
+    nodes.insert(
+        "mul2".to_string(),
         Node {
             func_name: "mul_node".to_string(),
-            id: "mul2".to_string(),
-            port_defaults: vec![0.0, 10.0],
-            position: (0.0, 0.0),
+            port_defaults: hashmap!("a".to_string() => 0.0, "b".to_string() => 0.2),
         },
-    ];
+    );
 
     let connections = vec![
         Connection {
-            src_node: 7,
-            dst_node: 4,
-            src_port: 0,
-            dst_port: 0,
+            src_node: "INPUT".to_string(),
+            dst_node: "mul1".to_string(),
+            src_port: "src".to_string(),
+            dst_port: "a".to_string(),
         },
         Connection {
-            src_node: 7,
-            dst_node: 5,
-            src_port: 0,
-            dst_port: 0,
+            src_node: "mul1".to_string(),
+            dst_node: "tanh1".to_string(),
+            src_port: "c".to_string(),
+            dst_port: "a".to_string(),
         },
         Connection {
-            src_node: 4,
-            dst_node: 1,
-            src_port: 0,
-            dst_port: 0,
+            src_node: "mul1".to_string(),
+            dst_node: "sin1".to_string(),
+            src_port: "c".to_string(),
+            dst_port: "a".to_string(),
         },
         Connection {
-            src_node: 5,
-            dst_node: 1,
-            src_port: 0,
-            dst_port: 1,
+            src_node: "tanh1".to_string(),
+            dst_node: "add1".to_string(),
+            src_port: "c".to_string(),
+            dst_port: "a".to_string(),
         },
         Connection {
-            src_node: 7,
-            dst_node: 2,
-            src_port: 0,
-            dst_port: 0,
+            src_node: "sin1".to_string(),
+            dst_node: "add1".to_string(),
+            src_port: "c".to_string(),
+            dst_port: "b".to_string(),
         },
         Connection {
-            src_node: 5,
-            dst_node: 2,
-            src_port: 0,
-            dst_port: 1,
+            src_node: "add1".to_string(),
+            dst_node: "mul2".to_string(),
+            src_port: "c".to_string(),
+            dst_port: "a".to_string(),
         },
         Connection {
-            src_node: 2,
-            dst_node: 6,
-            src_port: 0,
-            dst_port: 0,
-        },
-        Connection {
-            src_node: 6,
-            dst_node: 3,
-            src_port: 0,
-            dst_port: 0,
-        },
-        Connection {
-            src_node: 0,
-            dst_node: 7,
-            src_port: 0,
-            dst_port: 0,
+            src_node: "mul2".to_string(),
+            dst_node: "OUTPUT".to_string(),
+            src_port: "c".to_string(),
+            dst_port: "DST".to_string(),
         },
     ];
 
