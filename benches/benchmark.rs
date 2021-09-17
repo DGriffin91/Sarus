@@ -2,6 +2,7 @@
 extern crate test; //rust-analyser complains, but this should work in nightly
 
 use basic_audio_filters::second_order_iir::{IIR2Coefficients, IIR2};
+use mitosis::JoinHandle;
 use sarus::*;
 use test::Bencher;
 
@@ -138,7 +139,7 @@ fn eq_compile(b: &mut Bencher) {
     b.iter(|| {
         test::black_box({
             let mut jit = get_eq_jit();
-            let mut output_arr = [0.0f64; 2];
+            let mut output_arr = [0.0f64; 128];
             let result: f64 = unsafe { run_fn(&mut jit, "main", (2.0, &mut output_arr)).unwrap() };
             sum += result;
         });
@@ -186,4 +187,34 @@ fn write_wav(samples: &[f64], path: &str) {
         writer.write_sample(*sample as f32).unwrap();
     }
     writer.finalize().unwrap();
+}
+
+// NOTE: this method won't work in a VST plugin.
+// It will try to open the whole DAW in a second instance
+
+fn subprocess_code(_: Option<()>) -> Result<f64, String> {
+    //let mut jit = jit::JIT::default();
+    //// Pass the AST to the JIT to compile
+    //jit.translate(ast)
+    //    .map_err(|e| format!("jit translate failed: {}", e))?;
+    let mut jit = get_eq_jit();
+    let mut output_arr = [0.0f64; 128];
+
+    // Run compiled code
+    unsafe { run_fn(&mut jit, "main", (2.0, &mut output_arr)) }
+        .map_err(|e| format!("run_fn main failed: {}", e))
+}
+
+#[bench]
+fn subprocess_eq_compile(b: &mut Bencher) {
+    let mut sum = 0.0;
+    b.iter(|| {
+        test::black_box({
+            mitosis::init();
+            // Spawn separate process that will jit compile code, returning result
+            let runner: JoinHandle<Result<f64, String>> = mitosis::spawn(None, subprocess_code);
+            sum += runner.join().unwrap().unwrap()
+        });
+    });
+    dbg!(sum);
 }
