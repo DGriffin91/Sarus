@@ -1,6 +1,9 @@
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display};
 
-use crate::frontend::{Declaration, Expr};
+use crate::{
+    frontend::{Declaration, Expr},
+    jit::SVariable,
+};
 use thiserror::Error;
 
 //Reference: https://www.gnu.org/software/libc/manual/html_node/Mathematics.html
@@ -9,22 +12,29 @@ use thiserror::Error;
 
 //couldn't get to work (STATUS_ACCESS_VIOLATION):
 // "asinh", "acosh", "atanh", "erf", "erfc", "lgamma", "gamma", "tgamma", "exp2", "exp10", "log2"
-const STD_1ARG: [&str; 22] = [
+const STD_1ARG_F: [&str; 21] = [
     "sin", "cos", "tan", "asin", "acos", "atan", "exp", "log", "log10", "sqrt", "sinh", "cosh",
     "exp10", "tanh", // libc
-    "ceil", "floor", "trunc", "fract", "abs", "round", "int", "float", // built in std
+    "ceil", "floor", "trunc", "fract", "abs", "round", "float", // built in std
 ];
+const STD_1ARG_I: [&str; 1] = [
+    "int", // built in std
+];
+
 //couldn't get to work (STATUS_ACCESS_VIOLATION):
 // "hypot", "expm1", "log1p"
-const STD_2ARG: [&str; 4] = [
+const STD_2ARG_F: [&str; 4] = [
     "atan2", "pow", // libc
     "min", "max", // built in std
+];
+const STD_2ARG_I: [&str; 2] = [
+    "imin", "imax", // built in std
 ];
 
 #[derive(Debug, Clone, Error)]
 pub enum TypeError {
     #[error("Type mismatch; expected {expected}, found {actual}")]
-    TypeMismatch { expected: Type, actual: Type },
+    TypeMismatch { expected: SType, actual: SType },
     #[error("Tuple length mismatch; expected {expected} found {actual}")]
     TupleLengthMismatch { expected: usize, actual: usize },
     #[error("Function \"{0}\" does not exist")]
@@ -32,24 +42,24 @@ pub enum TypeError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Type {
+pub enum SType {
     Void,
     Bool,
     Float,
     Int,
     Address,
-    Tuple(Vec<Type>),
+    Tuple(Vec<SType>),
 }
 
-impl Display for Type {
+impl Display for SType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Type::Void => write!(f, "void"),
-            Type::Bool => write!(f, "bool"),
-            Type::Float => write!(f, "float"),
-            Type::Int => write!(f, "int"),
-            Type::Address => write!(f, "address"),
-            Type::Tuple(inner) => {
+            SType::Void => write!(f, "void"),
+            SType::Bool => write!(f, "bool"),
+            SType::Float => write!(f, "float"),
+            SType::Int => write!(f, "int"),
+            SType::Address => write!(f, "address"),
+            SType::Tuple(inner) => {
                 write!(f, "(")?;
                 inner
                     .iter()
@@ -61,19 +71,38 @@ impl Display for Type {
     }
 }
 
-impl Type {
-    fn of(expr: &Expr, env: &[Declaration]) -> Result<Type, TypeError> {
+impl SType {
+    pub fn of(
+        expr: &Expr,
+        env: &[Declaration],
+        variables: &HashMap<String, SVariable>,
+    ) -> Result<SType, TypeError> {
         let res = match expr {
             //TODO don't assume all identifiers are floats
-            Expr::LiteralFloat(_) | Expr::Identifier(_) => Type::Float,
-            Expr::LiteralInt(_) => Type::Int,
+            Expr::Identifier(id_name) => {
+                if variables.contains_key(id_name) {
+                    match variables[id_name] {
+                        SVariable::Unknown(_, _) => SType::Address,
+                        SVariable::Bool(_, _) => SType::Bool,
+                        SVariable::Float(_, _) => SType::Float,
+                        SVariable::Int(_, _) => SType::Int,
+                        SVariable::Address(_, _) => SType::Address,
+                    }
+                } else {
+                    //This doesn't really make sense.
+                    //The validator needs to be aware of previous vars
+                    SType::Float
+                }
+            }
+            Expr::LiteralFloat(_) => SType::Float,
+            Expr::LiteralInt(_) => SType::Int,
             Expr::Binop(_, l, r) => {
-                let lt = Type::of(l, env)?;
-                let rt = Type::of(r, env)?;
+                let lt = SType::of(l, env, variables)?;
+                let rt = SType::of(r, env, variables)?;
                 match lt {
-                    Type::Float => match rt {
-                        Type::Float => Type::Float,
-                        Type::Int => Type::Float,
+                    SType::Float => match rt {
+                        SType::Float => SType::Float,
+                        SType::Int => SType::Float,
                         _ => {
                             return Err(TypeError::TypeMismatch {
                                 expected: lt,
@@ -81,9 +110,9 @@ impl Type {
                             })
                         }
                     },
-                    Type::Int => match rt {
-                        Type::Float => Type::Float,
-                        Type::Int => Type::Int,
+                    SType::Int => match rt {
+                        SType::Float => SType::Float,
+                        SType::Int => SType::Int,
                         _ => {
                             return Err(TypeError::TypeMismatch {
                                 expected: lt,
@@ -103,40 +132,40 @@ impl Type {
                     }
                 }
             }
-            Expr::Compare(_, _, _) => Type::Bool,
+            Expr::Compare(_, _, _) => SType::Bool,
             Expr::IfThen(econd, _) => {
-                let tcond = Type::of(econd, env)?;
-                if tcond != Type::Bool {
+                let tcond = SType::of(econd, env, variables)?;
+                if tcond != SType::Bool {
                     return Err(TypeError::TypeMismatch {
-                        expected: Type::Bool,
+                        expected: SType::Bool,
                         actual: tcond,
                     });
                 }
-                Type::Void
+                SType::Void
             }
             Expr::IfElse(econd, etrue, efalse) => {
-                let tcond = Type::of(econd, env)?;
-                if tcond != Type::Bool {
+                let tcond = SType::of(econd, env, variables)?;
+                if tcond != SType::Bool {
                     return Err(TypeError::TypeMismatch {
-                        expected: Type::Bool,
+                        expected: SType::Bool,
                         actual: tcond,
                     });
                 }
 
                 let ttrue = etrue
                     .iter()
-                    .map(|e| Type::of(e, env))
+                    .map(|e| SType::of(e, env, variables))
                     .collect::<Result<Vec<_>, _>>()?
                     .last()
                     .cloned()
-                    .unwrap_or(Type::Void);
+                    .unwrap_or(SType::Void);
                 let tfalse = efalse
                     .iter()
-                    .map(|e| Type::of(e, env))
+                    .map(|e| SType::of(e, env, variables))
                     .collect::<Result<Vec<_>, _>>()?
                     .last()
                     .cloned()
-                    .unwrap_or(Type::Void);
+                    .unwrap_or(SType::Void);
 
                 if ttrue == tfalse {
                     ttrue
@@ -149,7 +178,7 @@ impl Type {
             }
             Expr::Assign(vars, e) => {
                 let tlen = match e.len().into() {
-                    1 => Type::of(&e[0], env)?.tuple_size(),
+                    1 => SType::of(&e[0], env, variables)?.tuple_size(),
                     n => n,
                 };
                 if usize::from(vars.len()) != tlen {
@@ -158,20 +187,20 @@ impl Type {
                         expected: tlen,
                     });
                 }
-                Type::Tuple(
+                SType::Tuple(
                     e.iter()
-                        .map(|e| Type::of(e, env))
+                        .map(|e| SType::of(e, env, variables))
                         .collect::<Result<Vec<_>, _>>()?,
                 )
             }
-            Expr::AssignOp(_, _, e) => Type::of(e, env)?,
-            Expr::WhileLoop(_, _) => Type::Void,
+            Expr::AssignOp(_, _, e) => SType::of(e, env, variables)?,
+            Expr::WhileLoop(_, _) => SType::Void,
             Expr::Block(b) => b
                 .iter()
-                .map(|e| Type::of(e, env))
+                .map(|e| SType::of(e, env, variables))
                 .last()
                 .map(Result::unwrap)
-                .unwrap_or(Type::Void),
+                .unwrap_or(SType::Void),
             Expr::Call(fn_name, args) => {
                 if let Some(d) = env.iter().find_map(|d| match d {
                     Declaration::Function(func) => {
@@ -185,12 +214,12 @@ impl Type {
                 }) {
                     if d.params.len() == args.len() {
                         let targs: Result<Vec<_>, _> =
-                            args.iter().map(|e| Type::of(e, env)).collect();
+                            args.iter().map(|e| SType::of(e, env, variables)).collect();
                         match targs {
                             Ok(_) => match &d.returns {
-                                v if v.is_empty() => Type::Void,
-                                v if v.len() == 1 => Type::Float,
-                                v => Type::Tuple(vec![Type::Float; v.len()]),
+                                v if v.is_empty() => SType::Void,
+                                v if v.len() == 1 => SType::Float,
+                                v => SType::Tuple(vec![SType::Float; v.len()]),
                             },
                             Err(err) => return Err(err),
                         }
@@ -200,18 +229,36 @@ impl Type {
                             actual: args.len(),
                         });
                     }
-                } else if STD_1ARG.contains(&fn_name.as_str()) {
+                } else if STD_1ARG_F.contains(&fn_name.as_str()) {
                     if args.len() == 1 {
-                        Type::Float
+                        SType::Float
                     } else {
                         return Err(TypeError::TupleLengthMismatch {
                             expected: 1,
                             actual: args.len(),
                         });
                     }
-                } else if STD_2ARG.contains(&fn_name.as_str()) {
+                } else if STD_2ARG_F.contains(&fn_name.as_str()) {
                     if args.len() == 2 {
-                        Type::Float
+                        SType::Float
+                    } else {
+                        return Err(TypeError::TupleLengthMismatch {
+                            expected: 2,
+                            actual: args.len(),
+                        });
+                    }
+                } else if STD_1ARG_I.contains(&fn_name.as_str()) {
+                    if args.len() == 1 {
+                        SType::Int
+                    } else {
+                        return Err(TypeError::TupleLengthMismatch {
+                            expected: 1,
+                            actual: args.len(),
+                        });
+                    }
+                } else if STD_2ARG_I.contains(&fn_name.as_str()) {
+                    if args.len() == 2 {
+                        SType::Int
                     } else {
                         return Err(TypeError::TupleLengthMismatch {
                             expected: 2,
@@ -222,31 +269,32 @@ impl Type {
                     return Err(TypeError::UnknownFunction(fn_name.to_string()));
                 }
             }
-            Expr::GlobalDataAddr(_) => Type::Float,
-            Expr::Bool(_) => Type::Bool,
-            Expr::Parentheses(expr) => Type::of(expr, env)?,
-            Expr::ArraySet(_, _, e) => Type::of(e, env)?,
-            Expr::ArrayGet(_, _) => Type::Float,
+            Expr::GlobalDataAddr(_) => SType::Float,
+            Expr::Bool(_) => SType::Bool,
+            Expr::Parentheses(expr) => SType::of(expr, env, variables)?,
+            Expr::ArraySet(_, _, e) => SType::of(e, env, variables)?,
+            Expr::ArrayGet(_, _) => SType::Float,
         };
         Ok(res)
     }
 
     pub fn tuple_size(&self) -> usize {
         match self {
-            Type::Void => 0,
-            Type::Bool | Type::Float | Type::Address | Type::Int => 1,
-            Type::Tuple(v) => v.len(),
+            SType::Void => 0,
+            SType::Bool | SType::Float | SType::Address | SType::Int => 1,
+            SType::Tuple(v) => v.len(),
         }
     }
 }
 
 pub fn validate_program(decls: Vec<Declaration>) -> Result<Vec<Declaration>, TypeError> {
+    let variables = HashMap::new(); //Previously declared variables, used in jit
     for func in decls.iter().filter_map(|d| match d {
         Declaration::Function(func) => Some(func.clone()),
         _ => None,
     }) {
         for expr in &func.body {
-            Type::of(expr, &decls)?;
+            SType::of(expr, &decls, &variables)?;
         }
     }
     Ok(decls)

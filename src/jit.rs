@@ -1,4 +1,5 @@
 use crate::frontend::*;
+use crate::validator::SType;
 use cranelift::codegen::ir::immediates::Offset32;
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
@@ -51,7 +52,7 @@ impl JIT {
         }
 
         // First, parse the string, producing AST nodes.
-        for d in prog {
+        for d in prog.clone() {
             match d {
                 Declaration::Function(func) => {
                     ////println!(
@@ -64,13 +65,10 @@ impl JIT {
                         func.returns,
                         func.body,
                         return_counts.to_owned(),
+                        &prog,
                     )?;
                     // Next, declare the function to jit. Functions must be declared
                     // before they can be called, or defined.
-                    //
-                    // TODO: This may be an area where the API should be streamlined; should
-                    // we have a version of `declare_function` that automatically declares
-                    // the function?
                     let id = self
                         .module
                         .declare_function(&func.name, Linkage::Export, &self.ctx.func.signature)
@@ -140,7 +138,7 @@ impl JIT {
         self.data_ctx.clear();
         self.module.finalize_definitions();
         let buffer = self.module.get_finalized_data(id);
-        // TODO: Can we move the unsafe into cranelift?
+
         Ok(unsafe { slice::from_raw_parts(buffer.0, buffer.1) })
     }
 
@@ -151,6 +149,7 @@ impl JIT {
         returns: Vec<String>,
         stmts: Vec<Expr>,
         return_counts: HashMap<String, usize>,
+        env: &[Declaration],
     ) -> anyhow::Result<()> {
         let float = types::F64; //self.module.target_config().pointer_type();
 
@@ -178,8 +177,6 @@ impl JIT {
 
         // Since this is the entry block, add block parameters corresponding to
         // the function's parameters.
-        //
-        // TODO: Streamline the API here.
         builder.append_block_params_for_function_params(entry_block);
 
         // Tell the builder to emit code in this block.
@@ -200,6 +197,7 @@ impl JIT {
             &returns,
             &stmts,
             entry_block,
+            env,
         )?;
 
         // Now translate the statements of the function body.
@@ -233,7 +231,7 @@ impl JIT {
         // Tell the builder we're done with this function.
         trans.builder.finalize();
 
-        //println!("{}", trans.builder.func.display(None));
+        //println!("{}", trans.builder.func.display(None)); //DISPLAY CLIF
         Ok(())
     }
 
@@ -376,7 +374,7 @@ impl<'a> FunctionTranslator<'a> {
                             SVariable::Address(_, v) => SValue::Address(self.builder.use_var(*v)),
                         }),
                         None => Ok(SValue::Float(
-                            //TODO Don't assume this is a float
+                            //TODO Don't assume this is a float (this is used for math const)
                             self.translate_global_data_addr(self.ty, name),
                         )), //Try to load global
                     }
@@ -427,7 +425,7 @@ impl<'a> FunctionTranslator<'a> {
                     let f_a = self.builder.ins().fcvt_from_sint(types::F64, a);
                     Ok(SValue::Float(self.binop_float(op, f_a, b)))
                 }
-                SValue::Int(b) => Ok(SValue::Float(self.binop_int(op, a, b))),
+                SValue::Int(b) => Ok(SValue::Int(self.binop_int(op, a, b))),
                 _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs),
             },
             _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs),
@@ -674,7 +672,6 @@ impl<'a> FunctionTranslator<'a> {
         name: &str,
         expr: &Expr,
     ) -> anyhow::Result<SValue> {
-        //TODO Don't just assume that destination var is same type as set var
         match self.translate_expr(expr)? {
             SValue::Float(v) => {
                 let orig_variable = self.variables.get(&*name).unwrap();
@@ -833,11 +830,8 @@ impl<'a> FunctionTranslator<'a> {
         // parameter.
         let phi = self.builder.block_params(merge_block);
 
-        // TODO stop assuming everything is a float
-        // to be able to do this here, we'll need a way to find where
-        // all these vars came from, and what their types would be
-
         if phi.len() > 1 {
+            // TODO don't assume these are floats
             Ok(SValue::Tuple(
                 phi.iter()
                     .map(|v| SValue::Float(*v))
@@ -916,7 +910,6 @@ impl<'a> FunctionTranslator<'a> {
             }
         }
 
-        // TODO: Streamline the API here?
         let callee = self
             .module
             .declare_function(&name, Linkage::Import, &sig)
@@ -964,8 +957,6 @@ impl<'a> FunctionTranslator<'a> {
             readonly: true,
         });
 
-        //TODO see if this still works with strings like in original toy example
-
         //self.builder.ins().symbol_value(ptr_ty, local_id)
         self.builder.ins().global_value(ptr_ty, global_val)
     }
@@ -997,20 +988,27 @@ impl<'a> FunctionTranslator<'a> {
                 },
                 t => anyhow::bail!("type {:?} not supported", t),
             },
-            2 => {
-                let v0 = self
-                    .translate_expr(&args[0])?
-                    .expect_float("translate_std")?;
-                let v1 = self
-                    .translate_expr(&args[1])?
-                    .expect_float("translate_std")?;
-                match name {
-                    //TODO int versions of this
-                    "min" => Ok(Some(SValue::Float(self.builder.ins().fmin(v0, v1)))),
-                    "max" => Ok(Some(SValue::Float(self.builder.ins().fmax(v0, v1)))),
-                    _ => Ok(None),
+            2 => match self.translate_expr(&args[0])? {
+                SValue::Float(v0) => {
+                    let v1 = self
+                        .translate_expr(&args[1])?
+                        .expect_float("translate_std")?;
+                    match name {
+                        "min" => Ok(Some(SValue::Float(self.builder.ins().fmin(v0, v1)))),
+                        "max" => Ok(Some(SValue::Float(self.builder.ins().fmax(v0, v1)))),
+                        _ => Ok(None),
+                    }
                 }
-            }
+                SValue::Int(v0) => {
+                    let v1 = self.translate_expr(&args[1])?.expect_int("translate_std")?;
+                    match name {
+                        "imin" => Ok(Some(SValue::Int(self.builder.ins().imin(v0, v1)))),
+                        "imax" => Ok(Some(SValue::Int(self.builder.ins().imax(v0, v1)))),
+                        _ => Ok(None),
+                    }
+                }
+                _ => Ok(None),
+            },
             _ => Ok(None),
         }
     }
@@ -1085,6 +1083,7 @@ fn declare_variables(
     returns: &[String],
     stmts: &[Expr],
     entry_block: Block,
+    env: &[Declaration],
 ) -> anyhow::Result<HashMap<String, SVariable>> {
     //TODO we should create a list of the variables here with their expected type, so it can be referenced later
     let mut variables: HashMap<String, SVariable> = HashMap::new();
@@ -1126,7 +1125,8 @@ fn declare_variables(
             &mut variables,
             &mut index,
             expr,
-        );
+            env,
+        )?;
     }
 
     Ok(variables)
@@ -1141,12 +1141,15 @@ fn declare_variables_in_stmt(
     variables: &mut HashMap<String, SVariable>,
     index: &mut usize,
     expr: &Expr,
-) {
+    env: &[Declaration],
+) -> anyhow::Result<()> {
     match *expr {
         Expr::Assign(ref names, ref exprs) => {
             if exprs.len() == names.len() {
                 for (name, expr) in names.iter().zip(exprs.iter()) {
-                    declare_variable_from_expr(ptr_type, expr, builder, variables, index, name);
+                    declare_variable_from_expr(
+                        ptr_type, expr, builder, variables, index, name, env,
+                    )?;
                 }
             } else {
                 for name in names.iter() {
@@ -1156,19 +1159,20 @@ fn declare_variables_in_stmt(
         }
         Expr::IfElse(ref _condition, ref then_body, ref else_body) => {
             for stmt in then_body {
-                declare_variables_in_stmt(ptr_type, ty, builder, variables, index, &stmt);
+                declare_variables_in_stmt(ptr_type, ty, builder, variables, index, &stmt, env)?;
             }
             for stmt in else_body {
-                declare_variables_in_stmt(ptr_type, ty, builder, variables, index, &stmt);
+                declare_variables_in_stmt(ptr_type, ty, builder, variables, index, &stmt, env)?;
             }
         }
         Expr::WhileLoop(ref _condition, ref loop_body) => {
             for stmt in loop_body {
-                declare_variables_in_stmt(ptr_type, ty, builder, variables, index, &stmt);
+                declare_variables_in_stmt(ptr_type, ty, builder, variables, index, &stmt, env)?;
             }
         }
         _ => (),
     }
+    Ok(())
 }
 
 /// Declare a single variable declaration.
@@ -1179,65 +1183,12 @@ fn declare_variable_from_expr(
     variables: &mut HashMap<String, SVariable>,
     index: &mut usize,
     name: &str,
+    env: &[Declaration],
 ) -> anyhow::Result<Variable> {
     let var = Variable::new(*index);
     if !variables.contains_key(name) {
         match expr {
-            Expr::LiteralFloat(_) => {
-                variables.insert(name.into(), SVariable::Float(name.into(), var));
-                builder.declare_var(var, types::F64);
-            }
-            Expr::LiteralInt(_) => {
-                variables.insert(name.into(), SVariable::Int(name.into(), var));
-                builder.declare_var(var, types::I64);
-            }
-            Expr::Bool(_) => {
-                variables.insert(name.into(), SVariable::Bool(name.into(), var));
-                builder.declare_var(var, types::B1);
-            }
-            Expr::Identifier(id_name) => {
-                if name.starts_with("&") {
-                    variables.insert(name.into(), SVariable::Address(name.into(), var));
-                    builder.declare_var(var, ptr_type);
-                } else {
-                    if variables.contains_key(id_name) {
-                        match variables[id_name] {
-                            SVariable::Unknown(_, _) => {
-                                variables.insert(name.into(), SVariable::Unknown(name.into(), var));
-                                builder.declare_var(var, ptr_type);
-                            }
-                            SVariable::Bool(_, _) => {
-                                variables.insert(name.into(), SVariable::Bool(name.into(), var));
-                                builder.declare_var(var, types::B1);
-                            }
-                            SVariable::Float(_, _) => {
-                                variables.insert(name.into(), SVariable::Float(name.into(), var));
-                                builder.declare_var(var, types::F64);
-                            }
-                            SVariable::Int(_, _) => {
-                                variables.insert(name.into(), SVariable::Int(name.into(), var));
-                                builder.declare_var(var, types::I64);
-                            }
-                            SVariable::Address(_, _) => {
-                                variables.insert(name.into(), SVariable::Address(name.into(), var));
-                                builder.declare_var(var, ptr_type);
-                            }
-                        }
-                    } else {
-                        anyhow::bail!("couldn't find variable {}", id_name)
-                    }
-                }
-            }
-            Expr::Call(c, _) => {
-                if c == "int" {
-                    variables.insert(name.into(), SVariable::Int(name.into(), var));
-                    builder.declare_var(var, types::I64);
-                } else {
-                    variables.insert(name.into(), SVariable::Float(name.into(), var));
-                    builder.declare_var(var, types::F64);
-                }
-            }
-            Expr::IfElse(_condition, then_body, else_body) => {
+            Expr::IfElse(_condition, then_body, _else_body) => {
                 //TODO make sure then & else returns match
                 declare_variable_from_expr(
                     ptr_type,
@@ -1246,11 +1197,30 @@ fn declare_variable_from_expr(
                     variables,
                     index,
                     name,
+                    env,
                 )?;
             }
-            _ => {
-                variables.insert(name.into(), SVariable::Float(name.into(), var));
-                builder.declare_var(var, types::F64);
+            expr => {
+                match SType::of(expr, &env, variables)? {
+                    SType::Void => {}
+                    SType::Bool => {
+                        variables.insert(name.into(), SVariable::Bool(name.into(), var));
+                        builder.declare_var(var, types::B1);
+                    }
+                    SType::Float => {
+                        variables.insert(name.into(), SVariable::Float(name.into(), var));
+                        builder.declare_var(var, types::F64);
+                    }
+                    SType::Int => {
+                        variables.insert(name.into(), SVariable::Int(name.into(), var));
+                        builder.declare_var(var, types::I64);
+                    }
+                    SType::Address => {
+                        variables.insert(name.into(), SVariable::Address(name.into(), var));
+                        builder.declare_var(var, ptr_type);
+                    }
+                    SType::Tuple(_) => todo!(),
+                };
             }
         };
         *index += 1;

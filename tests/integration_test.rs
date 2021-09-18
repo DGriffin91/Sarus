@@ -484,7 +484,6 @@ fn int_to_float() -> anyhow::Result<()> {
 
 #[test]
 fn float_conversion() -> anyhow::Result<()> {
-    let mut jit = jit::JIT::default();
     let code = r#"
     fn main(a, b) -> (e) {
         i_a = int(a)
@@ -495,10 +494,14 @@ fn float_conversion() -> anyhow::Result<()> {
         }
     }
 "#;
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
 
     let a = 100.0f64;
     let b = 200.0f64;
-    let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
+    let result: f64 = unsafe { run_fn(&mut jit, "main", (a, b))? };
     assert_eq!(2.0, result);
     Ok(())
 }
@@ -518,7 +521,7 @@ fn float_as_bool_error() -> anyhow::Result<()> {
 "#;
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    //let ast = validate_program(ast)?;
+    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
 
     let a = 100.0f64;
@@ -544,10 +547,10 @@ fn main(&arr1,  b) -> () {
 "#;
 
     let mut arr1 = [1.0, 2.0, 3.0, 4.0];
-    let mut arr2 = [10.0, 20.0, 30.0, 40.0];
+    //let mut arr2 = [10.0, 20.0, 30.0, 40.0];
     let b = 200.0f64;
     unsafe { run_string(&mut jit, code, "main", (&mut arr1, b))? };
-    dbg!(arr1, arr2);
+    dbg!(arr1);
     Ok(())
 }
 
@@ -564,12 +567,36 @@ fn var_type_consistency() -> anyhow::Result<()> {
 "#;
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    //let ast = validate_program(ast)?;
+    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
 
     let a = 100.0f64;
     let b = 200.0f64;
     let result: f64 = unsafe { run_fn(&mut jit, "main", (a, b))? };
     assert_eq!(1.0, result);
+    Ok(())
+}
+
+#[test]
+fn int_min_max() -> anyhow::Result<()> {
+    //Not currently working: Unsupported type for imin instruction: i64
+    //https://github.com/bytecodealliance/wasmtime/issues/3370
+    let code = r#"
+    fn main() -> (e) {
+        c = imin(1, 2)
+        //d = imax(3, 4)
+        //f = c * d
+        e = float(c)
+    }
+"#;
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+
+    let a = 100.0f64;
+    let b = 200.0f64;
+    let result: f64 = unsafe { run_fn(&mut jit, "main", ())? };
+    assert_eq!(100.0, result);
     Ok(())
 }
