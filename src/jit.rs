@@ -892,7 +892,7 @@ impl<'a> FunctionTranslator<'a> {
                     SValue::Unknown(_) => anyhow::bail!("call not supported with {}", arg),
                     SValue::Bool(_) => anyhow::bail!("call not supported with {}", arg),
                     SValue::Float(v) => v,
-                    SValue::Int(_) => anyhow::bail!("call not supported with {}", arg),
+                    SValue::Int(_) => anyhow::bail!("call not supported with {}", arg), //TODO should we convert int to float here?
                     SValue::Address(_) => anyhow::bail!("call not supported with {}", arg),
                     SValue::Tuple(_) => anyhow::bail!("call not supported with {}", arg),
                 }
@@ -966,6 +966,7 @@ impl<'a> FunctionTranslator<'a> {
                 let v0 = float_only(self.translate_expr(&args[0])?)?;
                 let v1 = float_only(self.translate_expr(&args[1])?)?;
                 match name {
+                    //TODO int versions of this
                     "min" => Ok(Some(SValue::Float(self.builder.ins().fmin(v0, v1)))),
                     "max" => Ok(Some(SValue::Float(self.builder.ins().fmax(v0, v1)))),
                     _ => Ok(None),
