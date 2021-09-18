@@ -50,7 +50,8 @@ type NV<T> = non_empty_vec::NonEmpty<T>;
 /// The AST node for expressions.
 #[derive(Debug, Clone)]
 pub enum Expr {
-    Literal(String),
+    LiteralFloat(String),
+    LiteralInt(String),
     Identifier(String),
     Binop(Binop, Box<Expr>, Box<Expr>),
     Compare(Cmp, Box<Expr>, Box<Expr>),
@@ -72,7 +73,8 @@ pub enum Expr {
 impl Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Expr::Literal(s) => write!(f, "{}", s),
+            Expr::LiteralFloat(s) => write!(f, "{}", s),
+            Expr::LiteralInt(s) => write!(f, "{}", s),
             Expr::Identifier(s) => write!(f, "{}", s),
             Expr::Binop(op, e1, e2) => write!(f, "{} {} {}", e1, op, e2),
             Expr::Compare(cmp, e1, e2) => write!(f, "{} {} {}", e1, cmp, e2),
@@ -339,7 +341,8 @@ peg::parser!(pub grammar parser() for str {
         / expected!("identifier")
 
     rule literal() -> Expr
-        = _ n:$(['-']*['0'..='9']+"."['0'..='9']+) { Expr::Literal(n.to_owned()) }
+        = _ n:$(['-']*['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat(n.to_owned()) }
+        / _ n:$(['-']*['0'..='9']) { Expr::LiteralInt(n.to_owned()) }
         / "*" i:identifier() { Expr::GlobalDataAddr(i) }
         / _ "true" _ { Expr::Bool(true) }
         / _ "false" _ { Expr::Bool(false) }

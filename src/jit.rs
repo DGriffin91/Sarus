@@ -279,8 +279,14 @@ impl<'a> FunctionTranslator<'a> {
     /// can then use these references in other instructions.
     fn translate_expr(&mut self, expr: &Expr) -> Vec<Value> {
         match expr {
-            Expr::Literal(literal) => {
+            Expr::LiteralFloat(literal) => {
                 vec![self.builder.ins().f64const::<f64>(literal.parse().unwrap())]
+            }
+            Expr::LiteralInt(literal) => {
+                vec![self
+                    .builder
+                    .ins()
+                    .iconst::<i64>(types::I64, literal.parse().unwrap())]
             }
             Expr::Binop(op, lhs, rhs) => self.translate_binop(*op, lhs, rhs),
             Expr::Compare(cmp, lhs, rhs) => self.translate_cmp(*cmp, lhs, rhs),

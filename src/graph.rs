@@ -124,7 +124,7 @@ fn build_graph_func(
     main_body.push(Expr::Assign(
         //i = 0.0
         make_nonempty(vec!["i".to_string()]).unwrap(),
-        make_nonempty(vec![Expr::Literal("0.0".to_string())]).unwrap(),
+        make_nonempty(vec![Expr::LiteralFloat("0.0".to_string())]).unwrap(),
     ));
 
     body.push(Expr::Assign(
@@ -169,7 +169,7 @@ fn build_graph_func(
             } else {
                 println!("{}", format!("{}", node.port_defaults[param_name]));
                 // If there is no connection use the default val
-                param_names.push(Expr::Literal(format!(
+                param_names.push(Expr::LiteralFloat(format!(
                     "{:.10}",
                     node.port_defaults[param_name]
                 )))
@@ -212,14 +212,17 @@ fn build_graph_func(
         //i += 1.0
         Binop::Add,
         Box::new("i".to_string()),
-        Box::new(Expr::Literal("1.0".to_string())),
+        Box::new(Expr::LiteralFloat("1.0".to_string())),
     ));
 
     main_body.push(Expr::WhileLoop(
         Box::new(Expr::Compare(
             Cmp::Le,
             Box::new(Expr::Identifier("i".to_string())),
-            Box::new(Expr::Literal(format!("{:.1}", (block_size - 1) as f64))),
+            Box::new(Expr::LiteralFloat(format!(
+                "{:.1}",
+                (block_size - 1) as f64
+            ))),
         )),
         body,
     ));

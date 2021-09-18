@@ -36,6 +36,7 @@ pub enum Type {
     Void,
     Bool,
     Float,
+    Int,
     Address,
     Tuple(Vec<Type>),
 }
@@ -46,6 +47,7 @@ impl Display for Type {
             Type::Void => write!(f, "void"),
             Type::Bool => write!(f, "bool"),
             Type::Float => write!(f, "float"),
+            Type::Int => write!(f, "int"),
             Type::Address => write!(f, "address"),
             Type::Tuple(inner) => {
                 write!(f, "(")?;
@@ -62,7 +64,9 @@ impl Display for Type {
 impl Type {
     fn of(expr: &Expr, env: &[Declaration]) -> Result<Type, TypeError> {
         let res = match expr {
-            Expr::Literal(_) | Expr::Identifier(_) => Type::Float,
+            //TODO don't assume all identifiers are floats
+            Expr::LiteralFloat(_) | Expr::Identifier(_) => Type::Float,
+            Expr::LiteralInt(_) => Type::Int,
             Expr::Binop(_, l, r) => {
                 let lt = Type::of(l, env)?;
                 let rt = Type::of(r, env)?;
@@ -206,7 +210,7 @@ impl Type {
     pub fn tuple_size(&self) -> usize {
         match self {
             Type::Void => 0,
-            Type::Bool | Type::Float | Type::Address => 1,
+            Type::Bool | Type::Float | Type::Address | Type::Int => 1,
             Type::Tuple(v) => v.len(),
         }
     }
