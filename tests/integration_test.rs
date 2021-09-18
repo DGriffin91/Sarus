@@ -484,21 +484,24 @@ fn int_to_float() -> anyhow::Result<()> {
 
 #[test]
 fn float_conversion() -> anyhow::Result<()> {
-    let mut jit = jit::JIT::default();
     let code = r#"
     fn main(a, b) -> (e) {
         i_a = int(a)
         e = if i_a > int(b) {
             float(int(float(i_a)))
         } else {
-            float(2)
+            2.0
         }
     }
 "#;
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    //let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
 
     let a = 100.0f64;
     let b = 200.0f64;
-    let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
+    let result: f64 = unsafe { run_fn(&mut jit, "main", (a, b))? };
     assert_eq!(2.0, result);
     Ok(())
 }
