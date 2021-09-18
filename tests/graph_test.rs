@@ -122,7 +122,7 @@ fn sin_node(a) -> (c) {
     ];
 
     //initialize graph, will arrange graph, generate graph code, and compile
-    let mut graph = Graph::new(code.to_string(), nodes, connections, STEP_SIZE).unwrap();
+    let mut graph = Graph::new(code.to_string(), nodes, connections, STEP_SIZE)?;
 
     //print out the resulting code for fun
     for d in graph.ast {

@@ -122,9 +122,9 @@ fn build_graph_func(
     let mut body = Vec::new();
 
     main_body.push(Expr::Assign(
-        //i = 0.0
+        //i = 0
         make_nonempty(vec!["i".to_string()]).unwrap(),
-        make_nonempty(vec![Expr::LiteralFloat("0.0".to_string())]).unwrap(),
+        make_nonempty(vec![Expr::LiteralInt("0".to_string())]).unwrap(),
     ));
 
     body.push(Expr::Assign(
@@ -209,20 +209,17 @@ fn build_graph_func(
     ));
 
     body.push(Expr::AssignOp(
-        //i += 1.0
+        //i += 1
         Binop::Add,
         Box::new("i".to_string()),
-        Box::new(Expr::LiteralFloat("1.0".to_string())),
+        Box::new(Expr::LiteralInt("1".to_string())),
     ));
 
     main_body.push(Expr::WhileLoop(
         Box::new(Expr::Compare(
             Cmp::Le,
             Box::new(Expr::Identifier("i".to_string())),
-            Box::new(Expr::LiteralFloat(format!(
-                "{:.1}",
-                (block_size - 1) as f64
-            ))),
+            Box::new(Expr::LiteralInt(format!("{}", (block_size - 1) as f64))),
         )),
         body,
     ));

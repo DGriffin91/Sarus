@@ -255,6 +255,25 @@ fn bools() -> anyhow::Result<()> {
 }
 
 #[test]
+fn ifelse_assign() -> anyhow::Result<()> {
+    let mut jit = jit::JIT::default();
+    let code = r#"
+    fn main(a, b) -> (c) {
+        c = if a < b {
+            a * b
+        } else {
+            0.0
+        }
+    }
+"#;
+    let a = 100.0f64;
+    let b = 200.0f64;
+    let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
+    assert_eq!(20000.0, result);
+    Ok(())
+}
+
+#[test]
 fn order() -> anyhow::Result<()> {
     let mut jit = jit::JIT::default();
     let code = r#"
@@ -319,8 +338,8 @@ fn compiled_graph() -> anyhow::Result<()> {
     }
         
     fn graph (&audio) -> () {
-        i = 0.0
-        while i <= 7.0 {
+        i = 0
+        while i <= 7 {
             vINPUT_0 = &audio[i]
             vadd1_0 = add_node(vINPUT_0, 2.0000000000)
             vsin1_0 = sin_node(vadd1_0)
@@ -328,7 +347,7 @@ fn compiled_graph() -> anyhow::Result<()> {
             vsub1_0 = sub_node(vadd2_0, vadd1_0)
             vOUTPUT_0 = vsub1_0
             &audio[i] = vOUTPUT_0
-            i += 1.0
+            i += 1
         }
     }
 "#;
@@ -382,8 +401,8 @@ fn metadata() -> anyhow::Result<()> {
     }
         
     fn graph (&audio) -> () {
-        i = 0.0
-        while i <= 7.0 {
+        i = 0
+        while i <= 7 {
             vINPUT_0 = &audio[i]
             vadd1_0 = add_node(vINPUT_0, 2.0000000000)
             vsin1_0 = sin_node(vadd1_0)
@@ -391,7 +410,7 @@ fn metadata() -> anyhow::Result<()> {
             vsub1_0 = sub_node(vadd2_0, vadd1_0)
             vOUTPUT_0 = vsub1_0
             &audio[i] = vOUTPUT_0
-            i += 1.0
+            i += 1
         }
     }
 "#;
@@ -422,5 +441,64 @@ fn metadata() -> anyhow::Result<()> {
     unsafe { run_fn(&mut jit, "graph", &mut audio)? };
     dbg!(audio);
     //assert_eq!([200.0, 400.0, 600.0, 800.0], arr);
+    Ok(())
+}
+
+#[test]
+fn int_while_loop() -> anyhow::Result<()> {
+    let mut jit = jit::JIT::default();
+    let code = r#"
+    fn main(a, b) -> (e) {
+        e = 2.0
+        i = 0
+        while i < 10 {
+            e = e * 2.0
+            i += 1
+        }
+    }
+"#;
+
+    let a = 100.0f64;
+    let b = 200.0f64;
+    let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
+    assert_eq!(2048.0, result);
+    Ok(())
+}
+
+#[test]
+fn int_to_float() -> anyhow::Result<()> {
+    let mut jit = jit::JIT::default();
+    let code = r#"
+    fn main(a, b) -> (e) {
+        i = 2
+        e = i * a * b * 2 * 1.0 * 1
+    }
+"#;
+
+    let a = 100.0f64;
+    let b = 200.0f64;
+    let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
+    assert_eq!(80000.0, result);
+    Ok(())
+}
+
+#[test]
+fn float_conversion() -> anyhow::Result<()> {
+    let mut jit = jit::JIT::default();
+    let code = r#"
+    fn main(a, b) -> (e) {
+        i_a = int(a)
+        e = if i_a > int(b) {
+            float(int(float(i_a)))
+        } else {
+            float(2)
+        }
+    }
+"#;
+
+    let a = 100.0f64;
+    let b = 200.0f64;
+    let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
+    assert_eq!(2.0, result);
     Ok(())
 }

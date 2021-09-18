@@ -104,21 +104,23 @@ fn get_eq_jit() -> jit::JIT {
         f1_ic1eq, f1_ic2eq = 0.0, 0.0
         f2_ic1eq, f2_ic2eq = 0.0, 0.0
         f3_ic1eq, f3_ic2eq = 0.0, 0.0
-        
+        i_iterations = int(iterations)
         sum = 0.0
-        i = 0.0
-        while i < iterations {
-            n = sin(i*0.01)        
+        i = 0
+        f_i = 0.0
+        while i < i_iterations {
+            n = sin(f_i*0.01)        
             f1_a1, f1_a2, f1_a3, f1_m0, f1_m1, f1_m2 = highpass(n * 100.0 + 200.0, 1.0, fs)
             f2_a1, f2_a2, f2_a3, f2_m0, f2_m1, f2_m2 = lowpass(n * 100.0 + 2000.0, 1.0, fs)
             f3_a1, f3_a2, f3_a3, f3_m0, f3_m1, f3_m2 = highshelf(n * 100.0 + 1000.0, 6.0, 1.0, fs)
-            sample = floor(rand(i) * 100000.0) * 0.00001
+            sample = floor(rand(f_i) * 100000.0) * 0.00001
             sample, f1_ic1eq, f1_ic2eq = process(sample, f1_ic1eq, f1_ic2eq, f1_a1, f1_a2, f1_a3, f1_m0, f1_m1, f1_m2)
             sample, f2_ic1eq, f2_ic2eq = process(sample, f2_ic1eq, f2_ic2eq, f2_a1, f2_a2, f2_a3, f2_m0, f2_m1, f2_m2)
             sample, f3_ic1eq, f3_ic2eq = process(sample, f3_ic1eq, f3_ic2eq, f3_a1, f3_a2, f3_a3, f3_m0, f3_m1, f3_m2)    
             sum += sample
             &output_arr[i] = sample
-            i += 1.0
+            i += 1
+            f_i += 1.0
         }
         f3_a1, f3_a2, f3_a3, f3_m0, f3_m1, f3_m2 = highshelf(2000.0, 6.0, 1.0, fs)
     }

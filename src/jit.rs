@@ -151,8 +151,6 @@ impl JIT {
         stmts: Vec<Expr>,
         return_counts: HashMap<String, usize>,
     ) -> anyhow::Result<()> {
-        // Our toy language currently only supports I64 values, though Cranelift
-        // supports other types.
         let float = types::F64; //self.module.target_config().pointer_type();
 
         for p in &params {
@@ -205,26 +203,24 @@ impl JIT {
 
         // Now translate the statements of the function body.
         let mut trans = FunctionTranslator {
-            float,
+            ty: float,
             builder,
             variables,
             return_counts,
             module: &mut self.module,
         };
         for expr in &stmts {
-            trans.translate_expr(expr);
+            trans.translate_expr(expr)?;
         }
 
         // Set up the return variable of the function. Above, we declared a
         // variable to hold the return value. Here, we just do a use of that
         // variable.
-        let return_values: Vec<Value> = returns
-            .iter()
-            .map(|ret| {
-                let return_variable = trans.variables.get(ret).unwrap();
-                trans.builder.use_var(*return_variable)
-            })
-            .collect();
+        let mut return_values = Vec::new();
+        for ret in returns.iter() {
+            let return_variable = trans.variables.get(ret).unwrap();
+            return_values.push(trans.builder.use_var(return_variable.expect_float()?));
+        }
 
         // Emit the return instruction.
         trans.builder.ins().return_(&return_values);
@@ -264,12 +260,23 @@ impl JIT {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SValue {
+    Void,
+    Unknown(Value),
+    Bool(Value),
+    Float(Value),
+    Int(Value),
+    Address(Value),
+    Tuple(Vec<SValue>),
+}
+
 /// A collection of state used for translating from toy-language AST nodes
 /// into Cranelift IR.
 struct FunctionTranslator<'a> {
-    float: types::Type,
+    ty: types::Type,
     builder: FunctionBuilder<'a>,
-    variables: HashMap<String, Variable>,
+    variables: HashMap<String, SVariable>,
     return_counts: HashMap<String, usize>,
     module: &'a mut JITModule,
 }
@@ -277,60 +284,68 @@ struct FunctionTranslator<'a> {
 impl<'a> FunctionTranslator<'a> {
     /// When you write out instructions in Cranelift, you get back `Value`s. You
     /// can then use these references in other instructions.
-    fn translate_expr(&mut self, expr: &Expr) -> Vec<Value> {
+    fn translate_expr(&mut self, expr: &Expr) -> anyhow::Result<SValue> {
         match expr {
-            Expr::LiteralFloat(literal) => {
-                vec![self.builder.ins().f64const::<f64>(literal.parse().unwrap())]
-            }
-            Expr::LiteralInt(literal) => {
-                vec![self
-                    .builder
+            Expr::LiteralFloat(literal) => Ok(SValue::Float(
+                self.builder.ins().f64const::<f64>(literal.parse().unwrap()),
+            )),
+            Expr::LiteralInt(literal) => Ok(SValue::Int(
+                self.builder
                     .ins()
-                    .iconst::<i64>(types::I64, literal.parse().unwrap())]
-            }
+                    .iconst::<i64>(types::I64, literal.parse().unwrap()),
+            )),
             Expr::Binop(op, lhs, rhs) => self.translate_binop(*op, lhs, rhs),
             Expr::Compare(cmp, lhs, rhs) => self.translate_cmp(*cmp, lhs, rhs),
             Expr::Call(name, args) => self.translate_call(name, args),
-            Expr::GlobalDataAddr(name) => {
-                vec![self
-                    .translate_global_data_addr(self.module.target_config().pointer_type(), name)]
-            }
+            Expr::GlobalDataAddr(name) => Ok(SValue::Address(
+                self.translate_global_data_addr(self.module.target_config().pointer_type(), name),
+            )),
             Expr::Identifier(name) => {
                 //TODO should this be moved into pattern matching frontend?
                 if name.starts_with("&") {
                     let var = self
                         .variables
                         .get(name)
-                        .copied()
-                        .expect(&format!("variable {} not found", name));
-                    vec![self.builder.use_var(var)]
+                        .expect(&format!("variable {} not found", name))
+                        .expect_address()?;
+                    Ok(SValue::Address(self.builder.use_var(var)))
                 } else {
-                    vec![match self.variables.get(name).copied() {
-                        Some(v) => self.builder.use_var(v),
-                        None => self.translate_global_data_addr(self.float, name), //Try to load global
-                    }]
+                    match self.variables.get(name) {
+                        // TODO BLOCKER we need this to know what kind of var this probably is
+                        // For int in conditions to work this needs to work
+                        Some(var) => Ok(match var {
+                            SVariable::Unknown(v) => SValue::Unknown(self.builder.use_var(*v)),
+                            SVariable::Bool(v) => SValue::Bool(self.builder.use_var(*v)),
+                            SVariable::Float(v) => SValue::Float(self.builder.use_var(*v)),
+                            SVariable::Int(v) => SValue::Int(self.builder.use_var(*v)),
+                            SVariable::Address(v) => SValue::Address(self.builder.use_var(*v)),
+                        }), //TODO don't assume this is a float
+                        None => Ok(SValue::Float(
+                            //TODO Don't assume this is a float
+                            self.translate_global_data_addr(self.ty, name),
+                        )), //Try to load global
+                    }
                 }
             }
             Expr::Assign(names, expr) => self.translate_assign(names, expr),
             Expr::AssignOp(op, lhs, rhs) => self.translate_math_assign(*op, lhs, rhs),
             Expr::IfThen(condition, then_body) => {
-                vec![self.translate_if_then(condition, then_body)]
+                self.translate_if_then(condition, then_body)?;
+                Ok(SValue::Void)
             }
             Expr::IfElse(condition, then_body, else_body) => {
                 self.translate_if_else(condition, then_body, else_body)
             }
             Expr::WhileLoop(condition, loop_body) => {
-                vec![self.translate_while_loop(condition, loop_body)]
+                self.translate_while_loop(condition, loop_body)?;
+                Ok(SValue::Void)
             }
-            Expr::Block(b) => {
-                vec![b
-                    .into_iter()
-                    .map(|e| self.translate_expr(e))
-                    .last()
-                    .and_then(|v| v.first().cloned())
-                    .unwrap()]
-            }
-            Expr::Bool(b) => vec![self.builder.ins().bconst(types::B1, *b)],
+            Expr::Block(b) => b
+                .into_iter()
+                .map(|e| self.translate_expr(e))
+                .last()
+                .unwrap(),
+            Expr::Bool(b) => Ok(SValue::Bool(self.builder.ins().bconst(types::B1, *b))),
             Expr::Parentheses(expr) => self.translate_expr(expr),
             Expr::ArrayGet(name, idx_expr) => self.translate_array_get(name.to_string(), idx_expr),
             Expr::ArraySet(name, idx_expr, expr) => {
@@ -339,18 +354,75 @@ impl<'a> FunctionTranslator<'a> {
         }
     }
 
-    fn translate_binop(&mut self, op: Binop, lhs: &Expr, rhs: &Expr) -> Vec<Value> {
-        let lhs = *self.translate_expr(lhs).first().unwrap();
-        let rhs = *self.translate_expr(rhs).first().unwrap();
-        match op {
-            Binop::Add => vec![self.builder.ins().fadd(lhs, rhs)],
-            Binop::Sub => vec![self.builder.ins().fsub(lhs, rhs)],
-            Binop::Mul => vec![self.builder.ins().fmul(lhs, rhs)],
-            Binop::Div => vec![self.builder.ins().fdiv(lhs, rhs)],
+    fn translate_binop(&mut self, op: Binop, lhs: &Expr, rhs: &Expr) -> anyhow::Result<SValue> {
+        let lhs = self.translate_expr(lhs).unwrap();
+        let rhs = self.translate_expr(rhs).unwrap();
+        // if a or b is a float, convert to other to a float
+        match lhs {
+            SValue::Float(a) => match rhs {
+                SValue::Float(b) => Ok(SValue::Float(self.binop_float(op, a, b))),
+                SValue::Int(b) => {
+                    let f_b = self.builder.ins().fcvt_from_sint(types::F64, b);
+                    Ok(SValue::Float(self.binop_float(op, a, f_b)))
+                }
+                _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs),
+            },
+            SValue::Int(a) => match rhs {
+                SValue::Float(b) => {
+                    let f_a = self.builder.ins().fcvt_from_sint(types::F64, a);
+                    Ok(SValue::Float(self.binop_float(op, f_a, b)))
+                }
+                SValue::Int(b) => Ok(SValue::Float(self.binop_int(op, a, b))),
+                _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs),
+            },
+            _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs),
         }
     }
 
-    fn translate_cmp(&mut self, cmp: Cmp, lhs: &Expr, rhs: &Expr) -> Vec<Value> {
+    fn binop_float(&mut self, op: Binop, lhs: Value, rhs: Value) -> Value {
+        match op {
+            Binop::Add => self.builder.ins().fadd(lhs, rhs),
+            Binop::Sub => self.builder.ins().fsub(lhs, rhs),
+            Binop::Mul => self.builder.ins().fmul(lhs, rhs),
+            Binop::Div => self.builder.ins().fdiv(lhs, rhs),
+        }
+    }
+
+    fn binop_int(&mut self, op: Binop, lhs: Value, rhs: Value) -> Value {
+        match op {
+            Binop::Add => self.builder.ins().iadd(lhs, rhs),
+            Binop::Sub => self.builder.ins().isub(lhs, rhs),
+            Binop::Mul => self.builder.ins().imul(lhs, rhs),
+            Binop::Div => self.builder.ins().sdiv(lhs, rhs),
+        }
+    }
+
+    fn translate_cmp(&mut self, cmp: Cmp, lhs: &Expr, rhs: &Expr) -> anyhow::Result<SValue> {
+        let lhs = self.translate_expr(lhs).unwrap();
+        let rhs = self.translate_expr(rhs).unwrap();
+        // if a or b is a float, convert to other to a float
+        match lhs {
+            SValue::Float(a) => match rhs {
+                SValue::Float(b) => Ok(SValue::Bool(self.cmp_float(cmp, a, b))),
+                SValue::Int(b) => {
+                    let f_b = self.builder.ins().fcvt_from_sint(types::F64, b);
+                    Ok(SValue::Bool(self.cmp_float(cmp, f_b, b)))
+                }
+                _ => anyhow::bail!("compare not supported: {:?} {} {:?}", lhs, cmp, rhs),
+            },
+            SValue::Int(a) => match rhs {
+                SValue::Float(b) => {
+                    let f_a = self.builder.ins().fcvt_from_sint(types::F64, a);
+                    Ok(SValue::Bool(self.cmp_float(cmp, f_a, b)))
+                }
+                SValue::Int(b) => Ok(SValue::Bool(self.cmp_int(cmp, a, b))),
+                _ => anyhow::bail!("compare not supported: {:?} {} {:?}", lhs, cmp, rhs),
+            },
+            _ => anyhow::bail!("compare not supported: {:?} {} {:?}", lhs, cmp, rhs),
+        }
+    }
+
+    fn cmp_float(&mut self, cmp: Cmp, lhs: Value, rhs: Value) -> Value {
         let icmp = match cmp {
             Cmp::Eq => FloatCC::Equal,
             Cmp::Ne => FloatCC::NotEqual,
@@ -359,10 +431,22 @@ impl<'a> FunctionTranslator<'a> {
             Cmp::Gt => FloatCC::GreaterThan,
             Cmp::Ge => FloatCC::GreaterThanOrEqual,
         };
-        vec![self.translate_icmp(icmp, lhs, rhs)]
+        self.builder.ins().fcmp(icmp, lhs, rhs)
     }
 
-    fn translate_assign(&mut self, names: &[String], expr: &[Expr]) -> Vec<Value> {
+    fn cmp_int(&mut self, cmp: Cmp, lhs: Value, rhs: Value) -> Value {
+        let icmp = match cmp {
+            Cmp::Eq => IntCC::Equal,
+            Cmp::Ne => IntCC::NotEqual,
+            Cmp::Lt => IntCC::SignedLessThan,
+            Cmp::Le => IntCC::SignedLessThanOrEqual,
+            Cmp::Gt => IntCC::SignedGreaterThan,
+            Cmp::Ge => IntCC::SignedGreaterThanOrEqual,
+        };
+        self.builder.ins().icmp(icmp, lhs, rhs)
+    }
+
+    fn translate_assign(&mut self, names: &[String], expr: &[Expr]) -> anyhow::Result<SValue> {
         // `def_var` is used to write the value of a variable. Note that
         // variables can have multiple definitions. Cranelift will
         // convert them into SSA form for itself automatically.
@@ -374,32 +458,103 @@ impl<'a> FunctionTranslator<'a> {
         if names.len() == expr.len() {
             let mut values = Vec::new();
             for (i, name) in names.iter().enumerate() {
-                values.push(*self.translate_expr(expr.get(i).unwrap()).first().unwrap());
-                let variable = self.variables.get(name).unwrap();
-                self.builder.def_var(*variable, *values.last().unwrap());
+                let expr = self.translate_expr(expr.get(i).unwrap())?;
+                let var = match self.variables.get(name) {
+                    Some(v) => v,
+                    None => anyhow::bail!("variable {} not found", name),
+                };
+                match expr {
+                    SValue::Tuple(_) => anyhow::bail!("operation not supported: assign Tuple"),
+                    SValue::Void => anyhow::bail!("operation not supported: assign Void"),
+                    SValue::Unknown(v) => {
+                        values.push(SValue::Unknown(v));
+                        self.builder.def_var(var.inner(), v);
+                        v
+                    }
+                    SValue::Bool(v) => {
+                        values.push(SValue::Bool(v));
+                        self.builder.def_var(var.expect_bool()?, v);
+                        v
+                    }
+                    SValue::Float(v) => {
+                        values.push(SValue::Float(v));
+                        self.builder.def_var(var.expect_float()?, v);
+                        v
+                    }
+                    SValue::Int(v) => {
+                        values.push(SValue::Int(v));
+                        self.builder.def_var(var.expect_int()?, v);
+                        v
+                    }
+                    SValue::Address(v) => {
+                        values.push(SValue::Address(v));
+                        self.builder.def_var(var.expect_address()?, v);
+                        v
+                    }
+                };
             }
-            values
+            if values.len() > 1 {
+                Ok(SValue::Tuple(
+                    values.iter().map(|v| v.clone()).collect::<Vec<SValue>>(),
+                ))
+            } else if values.len() == 1 {
+                Ok(values.first().unwrap().clone())
+            } else {
+                Ok(SValue::Void)
+            }
         } else {
-            let new_value = self.translate_expr(expr.first().unwrap());
-            for (i, name) in names.iter().enumerate() {
-                let variable = self.variables.get(name).unwrap();
-                self.builder.def_var(*variable, new_value[i]);
+            match self.translate_expr(expr.first().unwrap())? {
+                SValue::Tuple(values) => {
+                    for (i, name) in names.iter().enumerate() {
+                        let variable = match self.variables.get(name) {
+                            Some(v) => v,
+                            None => anyhow::bail!("variable {} not found", name),
+                        };
+                        let sval = match values[i] {
+                            SValue::Tuple(_) => {
+                                anyhow::bail!("operation not supported {:?}", expr)
+                            }
+                            SValue::Void => anyhow::bail!("operation not supported {:?}", expr),
+                            SValue::Unknown(v) => v,
+                            SValue::Bool(v) => v,
+                            SValue::Float(v) => v,
+                            SValue::Int(v) => v,
+                            SValue::Address(v) => v,
+                        };
+                        self.builder.def_var(variable.inner(), sval);
+                    }
+                    if values.len() > 1 {
+                        Ok(SValue::Tuple(
+                            values.iter().map(|v| v.clone()).collect::<Vec<SValue>>(),
+                        ))
+                    } else if values.len() == 1 {
+                        Ok(values.first().unwrap().clone())
+                    } else {
+                        Ok(SValue::Void)
+                    }
+                }
+                SValue::Void => anyhow::bail!("operation not supported {:?}", expr),
+                SValue::Unknown(_) => anyhow::bail!("operation not supported {:?}", expr),
+                SValue::Bool(_) => anyhow::bail!("operation not supported {:?}", expr),
+                SValue::Float(_) => anyhow::bail!("operation not supported {:?}", expr),
+                SValue::Int(_) => anyhow::bail!("operation not supported {:?}", expr),
+                SValue::Address(_) => anyhow::bail!("operation not supported {:?}", expr),
             }
-            new_value
         }
     }
 
-    fn translate_array_get(&mut self, name: String, idx_expr: &Expr) -> Vec<Value> {
+    fn translate_array_get(&mut self, name: String, idx_expr: &Expr) -> anyhow::Result<SValue> {
         let ptr_ty = self.module.target_config().pointer_type();
 
         let variable = self.variables.get(&name).unwrap();
-        let array_ptr = self.builder.use_var(*variable);
+        let array_ptr = self.builder.use_var(variable.inner());
 
-        let idx_val = self.translate_expr(idx_expr);
-        let idx_val = self
-            .builder
-            .ins()
-            .fcvt_to_uint(ptr_ty, *idx_val.first().unwrap());
+        let idx_val = self.translate_expr(idx_expr).unwrap();
+        let idx_val = match idx_val {
+            SValue::Float(v) => self.builder.ins().fcvt_to_uint(ptr_ty, v),
+            SValue::Int(v) => v,
+            _ => anyhow::bail!("only int and float supported for array access"),
+        };
         let mult_n = self.builder.ins().iconst(ptr_ty, types::F64.bytes() as i64);
         let idx_val = self.builder.ins().imul(mult_n, idx_val);
         let idx_ptr = self.builder.ins().iadd(idx_val, array_ptr);
@@ -408,57 +563,110 @@ impl<'a> FunctionTranslator<'a> {
             self.builder
                 .ins()
                 .load(types::F64, MemFlags::trusted(), idx_ptr, Offset32::new(0));
-        vec![val]
+        Ok(SValue::Float(val)) //todo, don't assume this is a float
     }
 
-    fn translate_array_set(&mut self, name: String, idx_expr: &Expr, expr: &Expr) -> Vec<Value> {
+    fn translate_array_set(
+        &mut self,
+        name: String,
+        idx_expr: &Expr,
+        expr: &Expr,
+    ) -> anyhow::Result<SValue> {
         let ptr_ty = self.module.target_config().pointer_type();
 
-        let new_val = self.translate_expr(expr);
+        let new_val = self.translate_expr(expr)?;
 
-        let variable = self.variables.get(&name).unwrap();
+        let variable = match self.variables.get(&name).unwrap() {
+            SVariable::Unknown(_) => anyhow::bail!("incorrect type Unknown expected address"),
+            SVariable::Bool(_) => anyhow::bail!("incorrect type Bool expected address"),
+            SVariable::Float(_) => anyhow::bail!("incorrect type Float expected address"),
+            SVariable::Int(_) => anyhow::bail!("incorrect type Int expected address"),
+            SVariable::Address(v) => v,
+        };
+
         let array_ptr = self.builder.use_var(*variable);
 
-        let idx_val = self.translate_expr(idx_expr);
-        let idx_val = self
-            .builder
-            .ins()
-            .fcvt_to_uint(ptr_ty, *idx_val.first().unwrap());
+        let idx_val = self.translate_expr(idx_expr)?;
+        let idx_val = match idx_val {
+            SValue::Float(v) => self.builder.ins().fcvt_to_uint(ptr_ty, v),
+            SValue::Int(v) => v,
+            _ => anyhow::bail!("only int and float supported for array access"),
+        };
         let mult_n = self.builder.ins().iconst(ptr_ty, types::F64.bytes() as i64);
         let idx_val = self.builder.ins().imul(mult_n, idx_val);
         let idx_ptr = self.builder.ins().iadd(idx_val, array_ptr);
 
-        self.builder.ins().store(
-            MemFlags::trusted(),
-            *new_val.first().unwrap(),
-            idx_ptr,
-            Offset32::new(0),
-        );
-        vec![]
-    }
-
-    fn translate_math_assign(&mut self, op: Binop, name: &str, expr: &Expr) -> Vec<Value> {
-        let new_value = *self.translate_expr(expr).first().unwrap();
-        let orig_variable = self.variables.get(&*name).unwrap();
-        let orig_value = self.builder.use_var(*orig_variable);
-        let added_val = match op {
-            Binop::Add => self.builder.ins().fadd(orig_value, new_value),
-            Binop::Sub => self.builder.ins().fsub(orig_value, new_value),
-            Binop::Mul => self.builder.ins().fmul(orig_value, new_value),
-            Binop::Div => self.builder.ins().fdiv(orig_value, new_value),
+        let new_val = match new_val {
+            SValue::Float(v) => v,
+            SValue::Int(v) => v,
+            SValue::Void => anyhow::bail!("store Void not supported"),
+            SValue::Unknown(v) => v,
+            SValue::Bool(v) => v,
+            SValue::Address(v) => v,
+            SValue::Tuple(_) => anyhow::bail!("store tuple not supported"),
         };
-        self.builder.def_var(*orig_variable, added_val);
-        vec![added_val]
+
+        self.builder
+            .ins()
+            .store(MemFlags::trusted(), new_val, idx_ptr, Offset32::new(0));
+        Ok(SValue::Void)
     }
 
-    fn translate_icmp(&mut self, cmp: FloatCC, lhs: &Expr, rhs: &Expr) -> Value {
-        let lhs = *self.translate_expr(lhs).first().unwrap();
-        let rhs = *self.translate_expr(rhs).first().unwrap();
-        self.builder.ins().fcmp(cmp, lhs, rhs)
+    fn translate_math_assign(
+        &mut self,
+        op: Binop,
+        name: &str,
+        expr: &Expr,
+    ) -> anyhow::Result<SValue> {
+        //TODO Don't just assume that destination var is same type as set var
+        match self.translate_expr(expr)? {
+            SValue::Float(v) => {
+                let orig_variable = self.variables.get(&*name).unwrap();
+                let orig_value = self.builder.use_var(orig_variable.expect_float()?);
+                let added_val = match op {
+                    Binop::Add => self.builder.ins().fadd(orig_value, v),
+                    Binop::Sub => self.builder.ins().fsub(orig_value, v),
+                    Binop::Mul => self.builder.ins().fmul(orig_value, v),
+                    Binop::Div => self.builder.ins().fdiv(orig_value, v),
+                };
+                self.builder
+                    .def_var(orig_variable.expect_float()?, added_val);
+                Ok(SValue::Float(added_val))
+            }
+            SValue::Int(v) => {
+                let orig_variable = self.variables.get(&*name).unwrap();
+                let orig_value = self.builder.use_var(orig_variable.expect_int()?);
+                let added_val = match op {
+                    Binop::Add => self.builder.ins().iadd(orig_value, v),
+                    Binop::Sub => self.builder.ins().isub(orig_value, v),
+                    Binop::Mul => self.builder.ins().imul(orig_value, v),
+                    Binop::Div => self.builder.ins().sdiv(orig_value, v),
+                };
+                self.builder.def_var(orig_variable.expect_int()?, added_val);
+                Ok(SValue::Int(added_val))
+            }
+            SValue::Void => anyhow::bail!("math assign Void not supported"),
+            SValue::Unknown(_) => anyhow::bail!("math assign unknown not supported"),
+            SValue::Bool(_) => anyhow::bail!("math assign bool not supported"),
+            SValue::Address(_) => anyhow::bail!("math assign address not supported"),
+            SValue::Tuple(_) => anyhow::bail!("math assign tuple not supported"),
+        }
     }
 
-    fn translate_if_then(&mut self, condition: &Expr, then_body: &[Expr]) -> Value {
-        let b_condition_value = *self.translate_expr(condition).first().unwrap();
+    fn translate_if_then(
+        &mut self,
+        condition: &Expr,
+        then_body: &[Expr],
+    ) -> anyhow::Result<SValue> {
+        let b_condition_value = match self.translate_expr(condition).unwrap() {
+            SValue::Void => anyhow::bail!("if_then condition not supported {}", condition),
+            SValue::Unknown(_) => anyhow::bail!("if_then condition not supported {}", condition),
+            SValue::Bool(v) => v,
+            SValue::Float(_) => anyhow::bail!("if_then condition not supported {}", condition),
+            SValue::Int(_) => anyhow::bail!("if_then condition not supported {}", condition),
+            SValue::Address(_) => anyhow::bail!("if_then condition not supported {}", condition),
+            SValue::Tuple(_) => anyhow::bail!("if_then condition not supported {}", condition),
+        };
 
         let then_block = self.builder.create_block();
         let merge_block = self.builder.create_block();
@@ -471,7 +679,7 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.switch_to_block(then_block);
         self.builder.seal_block(then_block);
         for expr in then_body {
-            self.translate_expr(expr).first().unwrap();
+            self.translate_expr(expr).unwrap();
         }
 
         // Jump to the merge block, passing it the block return value.
@@ -480,7 +688,7 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.switch_to_block(merge_block);
         // We've now seen all the predecessors of the merge block.
         self.builder.seal_block(merge_block);
-        b_condition_value
+        Ok(SValue::Void)
     }
 
     fn translate_if_else(
@@ -488,24 +696,73 @@ impl<'a> FunctionTranslator<'a> {
         condition: &Expr,
         then_body: &[Expr],
         else_body: &[Expr],
-    ) -> Vec<Value> {
-        let b_condition_value = *self.translate_expr(condition).first().unwrap();
+    ) -> anyhow::Result<SValue> {
+        let b_condition_value = match self.translate_expr(condition).unwrap() {
+            SValue::Void => anyhow::bail!("if_else condition not supported {}", condition),
+            SValue::Unknown(_) => anyhow::bail!("if_else condition not supported {}", condition),
+            SValue::Bool(v) => v,
+            SValue::Float(_) => anyhow::bail!("if_else condition not supported {}", condition),
+            SValue::Int(_) => anyhow::bail!("if_else condition not supported {}", condition),
+            SValue::Address(_) => anyhow::bail!("if_else condition not supported {}", condition),
+            SValue::Tuple(_) => anyhow::bail!("if_else condition not supported {}", condition),
+        };
 
         let then_block = self.builder.create_block();
         let else_block = self.builder.create_block();
         let merge_block = self.builder.create_block();
 
-        let then_return = self.translate_expr(then_body.last().unwrap());
-        let else_return = self.translate_expr(else_body.last().unwrap());
+        // If-else constructs in the toy language have a return value.
+        // In traditional SSA form, this would produce a PHI between
+        // the then and else bodies. Cranelift uses block parameters,
+        // so set up a parameter in the merge block, and we'll pass
+        // the return values to it from the branches.
+        let then_return = match self.translate_expr(then_body.last().unwrap())? {
+            SValue::Tuple(t) => {
+                let mut vals = Vec::new();
+                for v in &t {
+                    self.builder.append_block_param(merge_block, self.ty);
+                    vals.push(anything_but_tuple_or_void(v.clone())?);
+                }
+                vals
+            }
+            SValue::Void => vec![],
+            SValue::Unknown(v) => {
+                self.builder.append_block_param(merge_block, self.ty);
+                vec![v]
+            }
+            SValue::Bool(v) => {
+                self.builder.append_block_param(merge_block, self.ty);
+                vec![v]
+            }
+            SValue::Float(v) => {
+                self.builder.append_block_param(merge_block, self.ty);
+                vec![v]
+            }
+            SValue::Int(v) => {
+                self.builder.append_block_param(merge_block, self.ty);
+                vec![v]
+            }
+            SValue::Address(v) => {
+                self.builder.append_block_param(merge_block, self.ty);
+                vec![v]
+            }
+        };
 
-        for _ in 0..then_return.len() {
-            // If-else constructs in the toy language have a return value.
-            // In traditional SSA form, this would produce a PHI between
-            // the then and else bodies. Cranelift uses block parameters,
-            // so set up a parameter in the merge block, and we'll pass
-            // the return values to it from the branches.
-            self.builder.append_block_param(merge_block, self.float);
-        }
+        let else_return = match self.translate_expr(else_body.last().unwrap())? {
+            SValue::Tuple(t) => {
+                let mut vals = Vec::new();
+                for v in &t {
+                    vals.push(anything_but_tuple_or_void(v.clone())?);
+                }
+                vals
+            }
+            SValue::Void => vec![],
+            SValue::Unknown(v) => vec![v],
+            SValue::Bool(v) => vec![v],
+            SValue::Float(v) => vec![v],
+            SValue::Int(v) => vec![v],
+            SValue::Address(v) => vec![v],
+        };
 
         // Test the if condition and conditionally branch.
         self.builder.ins().brz(b_condition_value, else_block, &[]);
@@ -534,10 +791,28 @@ impl<'a> FunctionTranslator<'a> {
         // parameter.
         let phi = self.builder.block_params(merge_block);
 
-        phi.to_vec()
+        // TODO stop assuming everything is a float
+        // to be able to do this here, we'll need a way to find where
+        // all these vars came from, and what their types would be
+
+        if phi.len() > 1 {
+            Ok(SValue::Tuple(
+                phi.iter()
+                    .map(|v| SValue::Float(*v))
+                    .collect::<Vec<SValue>>(),
+            ))
+        } else if phi.len() == 1 {
+            Ok(SValue::Float(*phi.first().unwrap()))
+        } else {
+            Ok(SValue::Void)
+        }
     }
 
-    fn translate_while_loop(&mut self, condition: &Expr, loop_body: &[Expr]) -> Value {
+    fn translate_while_loop(
+        &mut self,
+        condition: &Expr,
+        loop_body: &[Expr],
+    ) -> anyhow::Result<SValue> {
         let header_block = self.builder.create_block();
         let body_block = self.builder.create_block();
         let exit_block = self.builder.create_block();
@@ -545,7 +820,15 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.ins().jump(header_block, &[]);
         self.builder.switch_to_block(header_block);
 
-        let b_condition_value = *self.translate_expr(condition).first().unwrap();
+        let b_condition_value = match self.translate_expr(condition).unwrap() {
+            SValue::Void => anyhow::bail!("while_loop condition not supported {}", condition),
+            SValue::Unknown(_) => anyhow::bail!("while_loop condition not supported {}", condition),
+            SValue::Bool(v) => v,
+            SValue::Float(_) => anyhow::bail!("while_loop condition not supported {}", condition),
+            SValue::Int(_) => anyhow::bail!("while_loop condition not supported {}", condition),
+            SValue::Address(_) => anyhow::bail!("while_loop condition not supported {}", condition),
+            SValue::Tuple(_) => anyhow::bail!("while_loop condition not supported {}", condition),
+        };
 
         self.builder.ins().brz(b_condition_value, exit_block, &[]);
         self.builder.ins().jump(body_block, &[]);
@@ -554,7 +837,7 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.seal_block(body_block);
 
         for expr in loop_body {
-            self.translate_expr(expr);
+            self.translate_expr(expr)?;
         }
         self.builder.ins().jump(header_block, &[]);
 
@@ -565,28 +848,28 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.seal_block(header_block);
         self.builder.seal_block(exit_block);
 
-        b_condition_value
+        Ok(SValue::Void)
     }
 
-    fn translate_call(&mut self, name: &str, args: &[Expr]) -> Vec<Value> {
+    fn translate_call(&mut self, name: &str, args: &[Expr]) -> anyhow::Result<SValue> {
         let mut sig = self.module.make_signature();
 
         // Add a parameter for each argument.
         for _ in args {
-            sig.params.push(AbiParam::new(self.float));
+            sig.params.push(AbiParam::new(self.ty));
         }
 
         if self.return_counts.contains_key(name) {
             for _ in 0..self.return_counts[name] {
-                sig.returns.push(AbiParam::new(self.float));
+                sig.returns.push(AbiParam::new(self.ty));
             }
         } else {
-            match self.translate_std(name, args) {
-                Some(v) => return v,
+            match self.translate_std(name, args)? {
+                Some(v) => return Ok(v),
                 None => {
                     // If we can't find the function name, maybe it's a libc function.
                     // For now, assume it will return a float.
-                    sig.returns.push(AbiParam::new(self.float))
+                    sig.returns.push(AbiParam::new(self.ty))
                 }
             }
         }
@@ -602,10 +885,33 @@ impl<'a> FunctionTranslator<'a> {
 
         let mut arg_values = Vec::new();
         for arg in args {
-            arg_values.push(*self.translate_expr(arg).first().unwrap())
+            arg_values.push({
+                match self.translate_expr(arg)? {
+                    //TODO support returning more than just float
+                    SValue::Void => anyhow::bail!("call not supported with {}", arg),
+                    SValue::Unknown(_) => anyhow::bail!("call not supported with {}", arg),
+                    SValue::Bool(_) => anyhow::bail!("call not supported with {}", arg),
+                    SValue::Float(v) => v,
+                    SValue::Int(_) => anyhow::bail!("call not supported with {}", arg),
+                    SValue::Address(_) => anyhow::bail!("call not supported with {}", arg),
+                    SValue::Tuple(_) => anyhow::bail!("call not supported with {}", arg),
+                }
+            })
         }
         let call = self.builder.ins().call(local_callee, &arg_values);
-        self.builder.inst_results(call).to_vec()
+        let res = self.builder.inst_results(call);
+
+        if res.len() > 1 {
+            Ok(SValue::Tuple(
+                res.iter()
+                    .map(|v| SValue::Float(*v))
+                    .collect::<Vec<SValue>>(),
+            ))
+        } else if res.len() == 1 {
+            Ok(SValue::Float(*res.first().unwrap()))
+        } else {
+            Ok(SValue::Void)
+        }
     }
 
     fn translate_global_data_addr(&mut self, ptr_ty: Type, name: &str) -> Value {
@@ -629,45 +935,125 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.ins().global_value(ptr_ty, global_val)
     }
 
-    fn translate_std(&mut self, name: &str, args: &[Expr]) -> Option<Vec<Value>> {
-        match name {
-            "trunc" => {
-                let v = *self.translate_expr(&args[0]).first().unwrap();
-                Some(vec![self.builder.ins().trunc(v)])
+    fn translate_std(&mut self, name: &str, args: &[Expr]) -> anyhow::Result<Option<SValue>> {
+        match args.len() {
+            1 => match self.translate_expr(&args[0])? {
+                SValue::Float(v) => match name {
+                    "trunc" => Ok(Some(SValue::Float(self.builder.ins().trunc(v)))),
+                    "floor" => Ok(Some(SValue::Float(self.builder.ins().floor(v)))),
+                    "ceil" => Ok(Some(SValue::Float(self.builder.ins().ceil(v)))),
+                    "fract" => {
+                        let v_int = self.builder.ins().trunc(v);
+                        let v = self.builder.ins().fsub(v, v_int);
+                        Ok(Some(SValue::Float(v)))
+                    }
+                    "abs" => Ok(Some(SValue::Float(self.builder.ins().fabs(v)))),
+                    "round" => Ok(Some(SValue::Float(self.builder.ins().nearest(v)))),
+                    "int" => Ok(Some(SValue::Int(
+                        self.builder.ins().fcvt_to_sint(types::I64, v),
+                    ))),
+                    _ => Ok(None),
+                },
+                SValue::Int(v) => match name {
+                    "float" => Ok(Some(SValue::Float(
+                        self.builder.ins().fcvt_from_sint(types::F64, v),
+                    ))),
+                    _ => Ok(None),
+                },
+                t => anyhow::bail!("type {:?} not supported", t),
+            },
+            2 => {
+                let v0 = float_only(self.translate_expr(&args[0])?)?;
+                let v1 = float_only(self.translate_expr(&args[1])?)?;
+                match name {
+                    "min" => Ok(Some(SValue::Float(self.builder.ins().fmin(v0, v1)))),
+                    "max" => Ok(Some(SValue::Float(self.builder.ins().fmax(v0, v1)))),
+                    _ => Ok(None),
+                }
             }
-            "floor" => {
-                let v = *self.translate_expr(&args[0]).first().unwrap();
-                Some(vec![self.builder.ins().floor(v)])
-            }
-            "ceil" => {
-                let v = *self.translate_expr(&args[0]).first().unwrap();
-                Some(vec![self.builder.ins().ceil(v)])
-            }
-            "fract" => {
-                let v = *self.translate_expr(&args[0]).first().unwrap();
-                let v_int = self.builder.ins().trunc(v);
-                let v = self.builder.ins().fsub(v, v_int);
-                Some(vec![v])
-            }
-            "abs" => {
-                let v = *self.translate_expr(&args[0]).first().unwrap();
-                Some(vec![self.builder.ins().fabs(v)])
-            }
-            "round" => {
-                let v = *self.translate_expr(&args[0]).first().unwrap();
-                Some(vec![self.builder.ins().nearest(v)])
-            }
-            "min" => {
-                let v1 = *self.translate_expr(&args[0]).first().unwrap();
-                let v2 = *self.translate_expr(&args[1]).first().unwrap();
-                Some(vec![self.builder.ins().fmin(v1, v2)])
-            }
-            "max" => {
-                let v1 = *self.translate_expr(&args[0]).first().unwrap();
-                let v2 = *self.translate_expr(&args[1]).first().unwrap();
-                Some(vec![self.builder.ins().fmax(v1, v2)])
-            }
-            _ => None,
+            _ => Ok(None),
+        }
+    }
+}
+
+fn float_only(sval: SValue) -> anyhow::Result<Value> {
+    match sval {
+        //TODO support returning more than just float
+        SValue::Void => anyhow::bail!("operation not supported"),
+        SValue::Unknown(_) => anyhow::bail!("operation not supported"),
+        SValue::Bool(_) => anyhow::bail!("operation not supported"),
+        SValue::Float(v) => Ok(v),
+        SValue::Int(_) => anyhow::bail!("operation not supported"),
+        SValue::Address(_) => anyhow::bail!("operation not supported"),
+        SValue::Tuple(_) => anyhow::bail!("operation not supported"),
+    }
+}
+
+fn anything_but_tuple_or_void(sval: SValue) -> anyhow::Result<Value> {
+    match sval {
+        SValue::Float(v) => Ok(v),
+        SValue::Int(v) => Ok(v),
+        SValue::Void => anyhow::bail!("store Void not supported"),
+        SValue::Unknown(v) => Ok(v),
+        SValue::Bool(v) => Ok(v),
+        SValue::Address(v) => Ok(v),
+        SValue::Tuple(_) => anyhow::bail!("tuple Void not supported"),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SVariable {
+    Unknown(Variable),
+    Bool(Variable),
+    Float(Variable),
+    Int(Variable),
+    Address(Variable),
+}
+
+impl SVariable {
+    fn inner(&self) -> Variable {
+        match self {
+            SVariable::Unknown(v) => *v,
+            SVariable::Bool(v) => *v,
+            SVariable::Float(v) => *v,
+            SVariable::Int(v) => *v,
+            SVariable::Address(v) => *v,
+        }
+    }
+    fn expect_float(&self) -> anyhow::Result<Variable> {
+        match self {
+            SVariable::Unknown(_) => anyhow::bail!("incorrect type Unknown expected Float"),
+            SVariable::Bool(_) => anyhow::bail!("incorrect type Bool expected Float"),
+            SVariable::Float(v) => Ok(*v),
+            SVariable::Int(_) => anyhow::bail!("incorrect type Int expected Float"),
+            SVariable::Address(_) => anyhow::bail!("incorrect type Address expected Float"),
+        }
+    }
+    fn expect_int(&self) -> anyhow::Result<Variable> {
+        match self {
+            SVariable::Unknown(_) => anyhow::bail!("incorrect type Unknown expected Int"),
+            SVariable::Bool(_) => anyhow::bail!("incorrect type Bool expected Int"),
+            SVariable::Float(_) => anyhow::bail!("incorrect type Float expected Int"),
+            SVariable::Int(v) => Ok(*v),
+            SVariable::Address(_) => anyhow::bail!("incorrect type Address expected Int"),
+        }
+    }
+    fn expect_bool(&self) -> anyhow::Result<Variable> {
+        match self {
+            SVariable::Unknown(_) => anyhow::bail!("incorrect type Unknown expected Bool"),
+            SVariable::Bool(v) => Ok(*v),
+            SVariable::Float(_) => anyhow::bail!("incorrect type Float expected Bool"),
+            SVariable::Int(_) => anyhow::bail!("incorrect type Int expected Bool"),
+            SVariable::Address(_) => anyhow::bail!("incorrect type Address expected Bool"),
+        }
+    }
+    fn expect_address(&self) -> anyhow::Result<Variable> {
+        match self {
+            SVariable::Unknown(_) => anyhow::bail!("incorrect type Unknown expected Address"),
+            SVariable::Bool(_) => anyhow::bail!("incorrect type Bool expected Address"),
+            SVariable::Float(_) => anyhow::bail!("incorrect type Float expected Address"),
+            SVariable::Int(_) => anyhow::bail!("incorrect type Int expected Address"),
+            SVariable::Address(v) => Ok(*v),
         }
     }
 }
@@ -680,17 +1066,18 @@ fn declare_variables(
     returns: &[String],
     stmts: &[Expr],
     entry_block: Block,
-) -> HashMap<String, Variable> {
-    let mut variables = HashMap::new();
+) -> HashMap<String, SVariable> {
+    //TODO we should create a list of the variables here with their expected type, so it can be referenced later
+    let mut variables: HashMap<String, SVariable> = HashMap::new();
     let mut index = 0;
 
     for (i, name) in params.iter().enumerate() {
-        // TODO: cranelift_frontend should really have an API to make it easy to set
-        // up param variables.
         let val = builder.block_params(entry_block)[i];
 
+        // for now all function parameters are either float or array
         let var = if name.starts_with("&") {
             declare_variable(
+                true,
                 module.target_config().pointer_type(),
                 builder,
                 &mut variables,
@@ -698,21 +1085,29 @@ fn declare_variables(
                 name,
             )
         } else {
-            declare_variable(float, builder, &mut variables, &mut index, name)
+            declare_variable(false, float, builder, &mut variables, &mut index, name)
         };
-        builder.def_var(var, val);
+        builder.def_var(var.inner(), val);
     }
 
     for name in returns {
         let zero = builder.ins().f64const(0.0);
-        let var = declare_variable(float, builder, &mut variables, &mut index, name);
+        let var = declare_variable(false, float, builder, &mut variables, &mut index, name);
         //TODO: should we check if there is an input var with the same name and use that instead? (like with params)
-        builder.def_var(var, zero);
+        // for now all function returns are either float or array
+        builder.def_var(var.inner(), zero);
     }
 
     //builder.def_var(return_variable, zero);
     for expr in stmts {
-        declare_variables_in_stmt(float, builder, &mut variables, &mut index, expr);
+        declare_variables_in_stmt(
+            module.target_config().pointer_type(),
+            float,
+            builder,
+            &mut variables,
+            &mut index,
+            expr,
+        );
     }
 
     variables
@@ -721,29 +1116,36 @@ fn declare_variables(
 /// Recursively descend through the AST, translating all implicit
 /// variable declarations.
 fn declare_variables_in_stmt(
-    int: types::Type,
+    ptr_type: types::Type,
+    ty: types::Type,
     builder: &mut FunctionBuilder,
-    variables: &mut HashMap<String, Variable>,
+    variables: &mut HashMap<String, SVariable>,
     index: &mut usize,
     expr: &Expr,
 ) {
     match *expr {
-        Expr::Assign(ref names, _) => {
-            for name in names.iter() {
-                declare_variable(int, builder, variables, index, name);
+        Expr::Assign(ref names, ref exprs) => {
+            if exprs.len() == names.len() {
+                for (name, expr) in names.iter().zip(exprs.iter()) {
+                    declare_variable_from_expr(expr, builder, variables, index, name);
+                }
+            } else {
+                for name in names.iter() {
+                    declare_variable(false, ty, builder, variables, index, name);
+                }
             }
         }
         Expr::IfElse(ref _condition, ref then_body, ref else_body) => {
             for stmt in then_body {
-                declare_variables_in_stmt(int, builder, variables, index, &stmt);
+                declare_variables_in_stmt(ptr_type, ty, builder, variables, index, &stmt);
             }
             for stmt in else_body {
-                declare_variables_in_stmt(int, builder, variables, index, &stmt);
+                declare_variables_in_stmt(ptr_type, ty, builder, variables, index, &stmt);
             }
         }
         Expr::WhileLoop(ref _condition, ref loop_body) => {
             for stmt in loop_body {
-                declare_variables_in_stmt(int, builder, variables, index, &stmt);
+                declare_variables_in_stmt(ptr_type, ty, builder, variables, index, &stmt);
             }
         }
         _ => (),
@@ -751,17 +1153,69 @@ fn declare_variables_in_stmt(
 }
 
 /// Declare a single variable declaration.
-fn declare_variable(
-    float: types::Type,
+fn declare_variable_from_expr(
+    expr: &Expr,
     builder: &mut FunctionBuilder,
-    variables: &mut HashMap<String, Variable>,
+    variables: &mut HashMap<String, SVariable>,
     index: &mut usize,
     name: &str,
 ) -> Variable {
     let var = Variable::new(*index);
     if !variables.contains_key(name) {
-        variables.insert(name.into(), var);
-        builder.declare_var(var, float);
+        match expr {
+            Expr::LiteralFloat(_) => {
+                variables.insert(name.into(), SVariable::Float(var));
+                builder.declare_var(var, types::F64);
+            }
+            Expr::LiteralInt(_) => {
+                variables.insert(name.into(), SVariable::Int(var));
+                builder.declare_var(var, types::I64);
+            }
+            Expr::Bool(_) => {
+                variables.insert(name.into(), SVariable::Bool(var));
+                builder.declare_var(var, types::B1);
+            }
+            Expr::Call(c, _) => {
+                if c == "int" {
+                    variables.insert(name.into(), SVariable::Int(var));
+                    builder.declare_var(var, types::I64);
+                } else {
+                    variables.insert(name.into(), SVariable::Float(var));
+                    builder.declare_var(var, types::F64);
+                }
+            }
+            _ => {
+                variables.insert(name.into(), SVariable::Float(var));
+                builder.declare_var(var, types::F64);
+            }
+        };
+        *index += 1;
+    }
+    var
+}
+
+fn declare_variable(
+    is_pointer: bool,
+    ty: types::Type,
+    builder: &mut FunctionBuilder,
+    variables: &mut HashMap<String, SVariable>,
+    index: &mut usize,
+    name: &str,
+) -> SVariable {
+    let mut var = SVariable::Float(Variable::new(*index));
+    if !variables.contains_key(name) {
+        var = if is_pointer {
+            SVariable::Address(Variable::new(*index))
+        } else {
+            match ty {
+                types::F64 => SVariable::Float(Variable::new(*index)),
+                types::B1 => SVariable::Bool(Variable::new(*index)),
+                types::I64 => SVariable::Int(Variable::new(*index)),
+                _ => SVariable::Float(Variable::new(*index)),
+            }
+        };
+        variables.insert(name.into(), var.clone());
+        builder.declare_var(var.inner(), ty);
         *index += 1;
     }
     var

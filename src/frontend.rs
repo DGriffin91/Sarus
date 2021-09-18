@@ -342,7 +342,7 @@ peg::parser!(pub grammar parser() for str {
 
     rule literal() -> Expr
         = _ n:$(['-']*['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat(n.to_owned()) }
-        / _ n:$(['-']*['0'..='9']) { Expr::LiteralInt(n.to_owned()) }
+        / _ n:$(['-']*['0'..='9']+) { Expr::LiteralInt(n.to_owned()) }
         / "*" i:identifier() { Expr::GlobalDataAddr(i) }
         / _ "true" _ { Expr::Bool(true) }
         / _ "false" _ { Expr::Bool(false) }

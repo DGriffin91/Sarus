@@ -9,10 +9,10 @@ use thiserror::Error;
 
 //couldn't get to work (STATUS_ACCESS_VIOLATION):
 // "asinh", "acosh", "atanh", "erf", "erfc", "lgamma", "gamma", "tgamma", "exp2", "exp10", "log2"
-const STD_1ARG: [&str; 20] = [
+const STD_1ARG: [&str; 22] = [
     "sin", "cos", "tan", "asin", "acos", "atan", "exp", "log", "log10", "sqrt", "sinh", "cosh",
     "exp10", "tanh", // libc
-    "ceil", "floor", "trunc", "fract", "abs", "round", // built in std
+    "ceil", "floor", "trunc", "fract", "abs", "round", "int", "float", // built in std
 ];
 //couldn't get to work (STATUS_ACCESS_VIOLATION):
 // "hypot", "expm1", "log1p"
@@ -70,13 +70,37 @@ impl Type {
             Expr::Binop(_, l, r) => {
                 let lt = Type::of(l, env)?;
                 let rt = Type::of(r, env)?;
-                if lt == rt {
-                    lt
-                } else {
-                    return Err(TypeError::TypeMismatch {
-                        expected: lt,
-                        actual: rt,
-                    });
+                match lt {
+                    Type::Float => match rt {
+                        Type::Float => Type::Float,
+                        Type::Int => Type::Float,
+                        _ => {
+                            return Err(TypeError::TypeMismatch {
+                                expected: lt,
+                                actual: rt,
+                            })
+                        }
+                    },
+                    Type::Int => match rt {
+                        Type::Float => Type::Float,
+                        Type::Int => Type::Int,
+                        _ => {
+                            return Err(TypeError::TypeMismatch {
+                                expected: lt,
+                                actual: rt,
+                            })
+                        }
+                    },
+                    _ => {
+                        if lt == rt {
+                            lt
+                        } else {
+                            return Err(TypeError::TypeMismatch {
+                                expected: lt,
+                                actual: rt,
+                            });
+                        }
+                    }
                 }
             }
             Expr::Compare(_, _, _) => Type::Bool,
@@ -130,8 +154,8 @@ impl Type {
                 };
                 if usize::from(vars.len()) != tlen {
                     return Err(TypeError::TupleLengthMismatch {
-                        actual: vars.len().into(),
-                        expected: e.len().into(),
+                        actual: usize::from(vars.len()),
+                        expected: tlen,
                     });
                 }
                 Type::Tuple(
