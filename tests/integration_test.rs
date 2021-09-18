@@ -550,3 +550,26 @@ fn main(&arr1,  b) -> () {
     dbg!(arr1, arr2);
     Ok(())
 }
+
+#[test]
+fn var_type_consistency() -> anyhow::Result<()> {
+    let code = r#"
+    fn main(a, b) -> (e) {
+        n = 1
+        n1 = n
+        n2 = n1
+        n3 = n2
+        e = float(n3)
+    }
+"#;
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    //let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+
+    let a = 100.0f64;
+    let b = 200.0f64;
+    let result: f64 = unsafe { run_fn(&mut jit, "main", (a, b))? };
+    assert_eq!(1.0, result);
+    Ok(())
+}

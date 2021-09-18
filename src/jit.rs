@@ -4,7 +4,7 @@ use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataContext, Linkage, Module};
 use std::collections::HashMap;
-use std::fmt::{format, Display};
+use std::fmt::Display;
 use std::slice;
 
 /// The basic JIT class.
@@ -200,7 +200,7 @@ impl JIT {
             &returns,
             &stmts,
             entry_block,
-        );
+        )?;
 
         // Now translate the statements of the function body.
         let mut trans = FunctionTranslator {
@@ -1085,7 +1085,7 @@ fn declare_variables(
     returns: &[String],
     stmts: &[Expr],
     entry_block: Block,
-) -> HashMap<String, SVariable> {
+) -> anyhow::Result<HashMap<String, SVariable>> {
     //TODO we should create a list of the variables here with their expected type, so it can be referenced later
     let mut variables: HashMap<String, SVariable> = HashMap::new();
     let mut index = 0;
@@ -1129,7 +1129,7 @@ fn declare_variables(
         );
     }
 
-    variables
+    Ok(variables)
 }
 
 /// Recursively descend through the AST, translating all implicit
@@ -1179,7 +1179,7 @@ fn declare_variable_from_expr(
     variables: &mut HashMap<String, SVariable>,
     index: &mut usize,
     name: &str,
-) -> Variable {
+) -> anyhow::Result<Variable> {
     let var = Variable::new(*index);
     if !variables.contains_key(name) {
         match expr {
@@ -1195,14 +1195,37 @@ fn declare_variable_from_expr(
                 variables.insert(name.into(), SVariable::Bool(name.into(), var));
                 builder.declare_var(var, types::B1);
             }
-            Expr::Identifier(_) => {
+            Expr::Identifier(id_name) => {
                 if name.starts_with("&") {
                     variables.insert(name.into(), SVariable::Address(name.into(), var));
                     builder.declare_var(var, ptr_type);
                 } else {
-                    //Don't assume this is a float. (maybe look at types of existing vars?)
-                    variables.insert(name.into(), SVariable::Float(name.into(), var));
-                    builder.declare_var(var, types::F64);
+                    if variables.contains_key(id_name) {
+                        match variables[id_name] {
+                            SVariable::Unknown(_, _) => {
+                                variables.insert(name.into(), SVariable::Unknown(name.into(), var));
+                                builder.declare_var(var, ptr_type);
+                            }
+                            SVariable::Bool(_, _) => {
+                                variables.insert(name.into(), SVariable::Bool(name.into(), var));
+                                builder.declare_var(var, types::B1);
+                            }
+                            SVariable::Float(_, _) => {
+                                variables.insert(name.into(), SVariable::Float(name.into(), var));
+                                builder.declare_var(var, types::F64);
+                            }
+                            SVariable::Int(_, _) => {
+                                variables.insert(name.into(), SVariable::Int(name.into(), var));
+                                builder.declare_var(var, types::I64);
+                            }
+                            SVariable::Address(_, _) => {
+                                variables.insert(name.into(), SVariable::Address(name.into(), var));
+                                builder.declare_var(var, ptr_type);
+                            }
+                        }
+                    } else {
+                        anyhow::bail!("couldn't find variable {}", id_name)
+                    }
                 }
             }
             Expr::Call(c, _) => {
@@ -1223,7 +1246,7 @@ fn declare_variable_from_expr(
                     variables,
                     index,
                     name,
-                );
+                )?;
             }
             _ => {
                 variables.insert(name.into(), SVariable::Float(name.into(), var));
@@ -1232,7 +1255,7 @@ fn declare_variable_from_expr(
         };
         *index += 1;
     }
-    var
+    Ok(var)
 }
 
 fn declare_variable(
