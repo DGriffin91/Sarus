@@ -484,6 +484,7 @@ fn int_to_float() -> anyhow::Result<()> {
 
 #[test]
 fn float_conversion() -> anyhow::Result<()> {
+    let mut jit = jit::JIT::default();
     let code = r#"
     fn main(a, b) -> (e) {
         i_a = int(a)
@@ -494,6 +495,27 @@ fn float_conversion() -> anyhow::Result<()> {
         }
     }
 "#;
+
+    let a = 100.0f64;
+    let b = 200.0f64;
+    let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
+    assert_eq!(2.0, result);
+    Ok(())
+}
+
+#[test]
+fn float_as_bool_error() -> anyhow::Result<()> {
+    let code = r#"
+    fn main(a, b) -> (e) {
+        i_a = a
+        e_i = if true {
+            1
+        } else {
+            2
+        }
+        e = float(e_i)
+    }
+"#;
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     //let ast = validate_program(ast)?;
@@ -502,6 +524,29 @@ fn float_conversion() -> anyhow::Result<()> {
     let a = 100.0f64;
     let b = 200.0f64;
     let result: f64 = unsafe { run_fn(&mut jit, "main", (a, b))? };
-    assert_eq!(2.0, result);
+    assert_eq!(1.0, result);
+    Ok(())
+}
+
+#[test]
+fn array_return_from_if() -> anyhow::Result<()> {
+    let mut jit = jit::JIT::default();
+    //TODO using multiple arrays resulting in access violation
+    let code = r#"
+fn main(&arr1,  b) -> () {
+    &arr2 = if b < 100.0 {
+        &arr1
+    } else {
+        &arr1
+    }
+    &arr2[0] = &arr2[0] * 20.0
+}
+"#;
+
+    let mut arr1 = [1.0, 2.0, 3.0, 4.0];
+    let mut arr2 = [10.0, 20.0, 30.0, 40.0];
+    let b = 200.0f64;
+    unsafe { run_string(&mut jit, code, "main", (&mut arr1, b))? };
+    dbg!(arr1, arr2);
     Ok(())
 }

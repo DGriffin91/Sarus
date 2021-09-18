@@ -291,15 +291,15 @@ impl Display for SValue {
 }
 
 impl SValue {
-    fn inner(&self) -> anyhow::Result<Value> {
+    fn inner(&self, ctx: &str) -> anyhow::Result<Value> {
         match self {
             SValue::Unknown(v) => Ok(*v),
             SValue::Bool(v) => Ok(*v),
             SValue::Float(v) => Ok(*v),
             SValue::Int(v) => Ok(*v),
             SValue::Address(v) => Ok(*v),
-            SValue::Void => anyhow::bail!("void has no inner"),
-            SValue::Tuple(v) => anyhow::bail!("inner does not support tuple {:?}", v),
+            SValue::Void => anyhow::bail!("void has no inner {}", ctx),
+            SValue::Tuple(v) => anyhow::bail!("inner does not support tuple {:?} {}", v, ctx),
         }
     }
     fn expect_float(&self, ctx: &str) -> anyhow::Result<Value> {
@@ -324,18 +324,6 @@ impl SValue {
         match self {
             SValue::Address(v) => Ok(*v),
             v => anyhow::bail!("incorrect type {} expected Address {}", v, ctx),
-        }
-    }
-
-    fn anything_but_tuple_or_void(&self, ctx: &str) -> anyhow::Result<Value> {
-        match self {
-            SValue::Float(v) => Ok(*v),
-            SValue::Int(v) => Ok(*v),
-            SValue::Unknown(v) => Ok(*v),
-            SValue::Bool(v) => Ok(*v),
-            SValue::Address(v) => Ok(*v),
-            SValue::Void => anyhow::bail!("store Void not supported {}", ctx),
-            SValue::Tuple(_) => anyhow::bail!("tuple Void not supported {}", ctx),
         }
     }
 }
@@ -422,8 +410,8 @@ impl<'a> FunctionTranslator<'a> {
     }
 
     fn translate_binop(&mut self, op: Binop, lhs: &Expr, rhs: &Expr) -> anyhow::Result<SValue> {
-        let lhs = self.translate_expr(lhs).unwrap();
-        let rhs = self.translate_expr(rhs).unwrap();
+        let lhs = self.translate_expr(lhs)?;
+        let rhs = self.translate_expr(rhs)?;
         // if a or b is a float, convert to other to a float
         match lhs {
             SValue::Float(a) => match rhs {
@@ -613,7 +601,10 @@ impl<'a> FunctionTranslator<'a> {
     fn translate_array_get(&mut self, name: String, idx_expr: &Expr) -> anyhow::Result<SValue> {
         let ptr_ty = self.module.target_config().pointer_type();
 
-        let variable = self.variables.get(&name).unwrap();
+        let variable = match self.variables.get(&name) {
+            Some(v) => v,
+            None => anyhow::bail!("variable {} not found", name),
+        };
         let array_ptr = self.builder.use_var(variable.inner());
 
         let idx_val = self.translate_expr(idx_expr).unwrap();
@@ -770,43 +761,32 @@ impl<'a> FunctionTranslator<'a> {
         // the then and else bodies. Cranelift uses block parameters,
         // so set up a parameter in the merge block, and we'll pass
         // the return values to it from the branches.
-        let then_return = match self.translate_expr(then_body.last().unwrap())? {
+        let then_value = self.translate_expr(then_body.last().unwrap())?;
+        let then_return = match then_value.clone() {
             SValue::Tuple(t) => {
                 let mut vals = Vec::new();
                 for v in &t {
-                    self.builder.append_block_param(merge_block, self.ty);
-                    vals.push(v.clone().anything_but_tuple_or_void("then_return")?);
+                    self.builder
+                        .append_block_param(merge_block, self.value_type(v.inner("then_return")?));
+                    vals.push(v.clone().inner("then_return")?);
                 }
                 vals
             }
             SValue::Void => vec![],
-            SValue::Unknown(v) => {
-                self.builder.append_block_param(merge_block, self.ty);
-                vec![v]
-            }
-            SValue::Bool(v) => {
-                self.builder.append_block_param(merge_block, self.ty);
-                vec![v]
-            }
-            SValue::Float(v) => {
-                self.builder.append_block_param(merge_block, self.ty);
-                vec![v]
-            }
-            SValue::Int(v) => {
-                self.builder.append_block_param(merge_block, self.ty);
-                vec![v]
-            }
-            SValue::Address(v) => {
-                self.builder.append_block_param(merge_block, self.ty);
+            sv => {
+                let v = sv.inner("then_return")?;
+                self.builder
+                    .append_block_param(merge_block, self.value_type(v));
                 vec![v]
             }
         };
 
-        let else_return = match self.translate_expr(else_body.last().unwrap())? {
+        let else_value = self.translate_expr(else_body.last().unwrap())?;
+        let else_return = match else_value.clone() {
             SValue::Tuple(t) => {
                 let mut vals = Vec::new();
                 for v in &t {
-                    vals.push(v.clone().anything_but_tuple_or_void("else_return")?);
+                    vals.push(v.clone().inner("else_return")?);
                 }
                 vals
             }
@@ -817,6 +797,14 @@ impl<'a> FunctionTranslator<'a> {
             SValue::Int(v) => vec![v],
             SValue::Address(v) => vec![v],
         };
+
+        if then_value.to_string() != else_value.to_string() {
+            anyhow::bail!(
+                "if_else return types don't match {:?} {:?}",
+                then_value,
+                else_value
+            )
+        }
 
         // Test the if condition and conditionally branch.
         self.builder.ins().brz(b_condition_value, else_block, &[]);
@@ -856,7 +844,15 @@ impl<'a> FunctionTranslator<'a> {
                     .collect::<Vec<SValue>>(),
             ))
         } else if phi.len() == 1 {
-            Ok(SValue::Float(*phi.first().unwrap()))
+            match then_value {
+                SValue::Void => Ok(SValue::Void),
+                SValue::Unknown(_) => Ok(SValue::Unknown(*phi.first().unwrap())),
+                SValue::Bool(_) => Ok(SValue::Bool(*phi.first().unwrap())),
+                SValue::Float(_) => Ok(SValue::Float(*phi.first().unwrap())),
+                SValue::Int(_) => Ok(SValue::Int(*phi.first().unwrap())),
+                SValue::Address(_) => Ok(SValue::Address(*phi.first().unwrap())),
+                SValue::Tuple(_) => anyhow::bail!("not supported"),
+            }
         } else {
             Ok(SValue::Void)
         }
@@ -1018,6 +1014,10 @@ impl<'a> FunctionTranslator<'a> {
             _ => Ok(None),
         }
     }
+
+    fn value_type(&self, val: Value) -> Type {
+        self.builder.func.dfg.value_type(val)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1146,7 +1146,7 @@ fn declare_variables_in_stmt(
         Expr::Assign(ref names, ref exprs) => {
             if exprs.len() == names.len() {
                 for (name, expr) in names.iter().zip(exprs.iter()) {
-                    declare_variable_from_expr(expr, builder, variables, index, name);
+                    declare_variable_from_expr(ptr_type, expr, builder, variables, index, name);
                 }
             } else {
                 for name in names.iter() {
@@ -1173,6 +1173,7 @@ fn declare_variables_in_stmt(
 
 /// Declare a single variable declaration.
 fn declare_variable_from_expr(
+    ptr_type: Type,
     expr: &Expr,
     builder: &mut FunctionBuilder,
     variables: &mut HashMap<String, SVariable>,
@@ -1194,6 +1195,16 @@ fn declare_variable_from_expr(
                 variables.insert(name.into(), SVariable::Bool(name.into(), var));
                 builder.declare_var(var, types::B1);
             }
+            Expr::Identifier(_) => {
+                if name.starts_with("&") {
+                    variables.insert(name.into(), SVariable::Address(name.into(), var));
+                    builder.declare_var(var, ptr_type);
+                } else {
+                    //Don't assume this is a float. (maybe look at types of existing vars?)
+                    variables.insert(name.into(), SVariable::Float(name.into(), var));
+                    builder.declare_var(var, types::F64);
+                }
+            }
             Expr::Call(c, _) => {
                 if c == "int" {
                     variables.insert(name.into(), SVariable::Int(name.into(), var));
@@ -1202,6 +1213,17 @@ fn declare_variable_from_expr(
                     variables.insert(name.into(), SVariable::Float(name.into(), var));
                     builder.declare_var(var, types::F64);
                 }
+            }
+            Expr::IfElse(_condition, then_body, else_body) => {
+                //TODO make sure then & else returns match
+                declare_variable_from_expr(
+                    ptr_type,
+                    then_body.last().unwrap(),
+                    builder,
+                    variables,
+                    index,
+                    name,
+                );
             }
             _ => {
                 variables.insert(name.into(), SVariable::Float(name.into(), var));
