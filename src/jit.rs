@@ -1148,13 +1148,23 @@ fn declare_variables_in_stmt(
             if exprs.len() == names.len() {
                 for (name, expr) in names.iter().zip(exprs.iter()) {
                     declare_variable_from_expr(
-                        ptr_type, expr, builder, variables, index, name, env,
+                        ptr_type,
+                        expr,
+                        builder,
+                        variables,
+                        index,
+                        &[name],
+                        env,
                     )?;
                 }
             } else {
-                for name in names.iter() {
-                    declare_variable(false, ty, builder, variables, index, name);
+                let mut snames = Vec::new();
+                for sname in names.iter() {
+                    snames.push(sname.as_str());
                 }
+                declare_variable_from_expr(
+                    ptr_type, expr, builder, variables, index, &snames, env,
+                )?;
             }
         }
         Expr::IfElse(ref _condition, ref then_body, ref else_body) => {
@@ -1182,50 +1192,106 @@ fn declare_variable_from_expr(
     builder: &mut FunctionBuilder,
     variables: &mut HashMap<String, SVariable>,
     index: &mut usize,
-    name: &str,
+    names: &[&str],
     env: &[Declaration],
-) -> anyhow::Result<Variable> {
-    let var = Variable::new(*index);
-    if !variables.contains_key(name) {
-        match expr {
-            Expr::IfElse(_condition, then_body, _else_body) => {
-                //TODO make sure then & else returns match
-                declare_variable_from_expr(
+) -> anyhow::Result<()> {
+    match expr {
+        Expr::IfElse(_condition, then_body, _else_body) => {
+            //TODO make sure then & else returns match
+            declare_variable_from_expr(
+                ptr_type,
+                then_body.last().unwrap(),
+                builder,
+                variables,
+                index,
+                names,
+                env,
+            )?;
+        }
+        expr => {
+            let stype = SType::of(expr, &env, variables)?;
+            declare_variable_from_type(ptr_type, &stype, builder, variables, index, names, env)?;
+        }
+    };
+    Ok(())
+}
+
+fn declare_variable_from_type(
+    ptr_type: Type,
+    stype: &SType,
+    builder: &mut FunctionBuilder,
+    variables: &mut HashMap<String, SVariable>,
+    index: &mut usize,
+    names: &[&str],
+    env: &[Declaration],
+) -> anyhow::Result<()> {
+    let name = *names.first().unwrap();
+    match stype {
+        SType::Void => anyhow::bail!("can't assign void type to {}", name),
+        SType::Bool => {
+            if !variables.contains_key(name) {
+                let var = Variable::new(*index);
+                variables.insert(name.into(), SVariable::Bool(name.into(), var));
+                builder.declare_var(var, types::B1);
+                *index += 1;
+            }
+        }
+        SType::Float => {
+            if !variables.contains_key(name) {
+                let var = Variable::new(*index);
+                variables.insert(name.into(), SVariable::Float(name.into(), var));
+                builder.declare_var(var, types::F64);
+                *index += 1;
+            }
+        }
+        SType::Int => {
+            if !variables.contains_key(name) {
+                let var = Variable::new(*index);
+                variables.insert(name.into(), SVariable::Int(name.into(), var));
+                builder.declare_var(var, types::I64);
+                *index += 1;
+            }
+        }
+        SType::Address => {
+            if !variables.contains_key(name) {
+                let var = Variable::new(*index);
+                variables.insert(name.into(), SVariable::Address(name.into(), var));
+                builder.declare_var(var, ptr_type);
+                *index += 1;
+            }
+        }
+        SType::Tuple(stypes) => {
+            if stypes.len() == 1 {
+                //Single nested tuple
+                if let SType::Tuple(stypes) = stypes.first().unwrap() {
+                    for (stype, sname) in stypes.iter().zip(names.iter()) {
+                        declare_variable_from_type(
+                            ptr_type,
+                            stype,
+                            builder,
+                            variables,
+                            index,
+                            &[sname],
+                            env,
+                        )?
+                    }
+                    return Ok(());
+                }
+            }
+            for (stype, sname) in stypes.iter().zip(names.iter()) {
+                declare_variable_from_type(
                     ptr_type,
-                    then_body.last().unwrap(),
+                    stype,
                     builder,
                     variables,
                     index,
-                    name,
+                    &[sname],
                     env,
-                )?;
+                )?
             }
-            expr => {
-                match SType::of(expr, &env, variables)? {
-                    SType::Void => {}
-                    SType::Bool => {
-                        variables.insert(name.into(), SVariable::Bool(name.into(), var));
-                        builder.declare_var(var, types::B1);
-                    }
-                    SType::Float => {
-                        variables.insert(name.into(), SVariable::Float(name.into(), var));
-                        builder.declare_var(var, types::F64);
-                    }
-                    SType::Int => {
-                        variables.insert(name.into(), SVariable::Int(name.into(), var));
-                        builder.declare_var(var, types::I64);
-                    }
-                    SType::Address => {
-                        variables.insert(name.into(), SVariable::Address(name.into(), var));
-                        builder.declare_var(var, ptr_type);
-                    }
-                    SType::Tuple(_) => todo!(),
-                };
-            }
-        };
-        *index += 1;
+        }
     }
-    Ok(var)
+    Ok(())
 }
 
 fn declare_variable(
