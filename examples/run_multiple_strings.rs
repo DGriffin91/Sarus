@@ -1,33 +1,48 @@
-use sarus::{compile_string, jit, run_fn};
+use std::mem;
+
+use sarus::{jit, parser, validate_program};
 
 fn main() -> anyhow::Result<()> {
     // Create the JIT instance, which manages all generated functions and data.
     let mut jit = jit::JIT::default();
 
-    //Compiles the code, add it to the current JIT instance
-    compile_string(
-        &mut jit,
+    // Generate AST from string
+    let ast = parser::program(
         r#"
 fn add(a, b) -> (c) {
     c = a + b
 }
-    "#,
+"#,
     )?;
+    // Validate type useage
+    let ast = validate_program(ast)?;
+    // Pass the AST to the JIT to compile
+    jit.translate(ast)?;
 
-    let res: f64 = unsafe { run_fn(&mut jit, "add", (3.0f64, 5.0f64))? };
-    println!("the answer is: {}", res);
+    //Get the function, returns a raw pointer to machine code.
+    let func_ptr = jit.get_func("add")?;
 
-    compile_string(
-        &mut jit,
+    // Cast the raw pointer to a typed function pointer. This is unsafe, because
+    // this is the critical point where you have to trust that the generated code
+    // is safe to be called.
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+
+    println!("the answer is: {}", func(3.0f64, 5.0f64));
+
+    // Generate AST from 2nd string
+    let ast = parser::program(
         r#"
 fn mult(a, b) -> (c) {
     c = a * b
 }
-    "#,
+"#,
     )?;
 
-    let res: f64 = unsafe { run_fn(&mut jit, "mult", (3.0f64, 5.0f64))? };
-    println!("the answer is: {}", res);
+    let ast = validate_program(ast)?;
+    jit.translate(ast)?;
+    let func_ptr = jit.get_func("mult")?;
+    let func = unsafe { mem::transmute::<_, fn(f64, f64) -> f64>(func_ptr) };
+    println!("the answer is: {}", func(3.0f64, 5.0f64));
 
     // TODO allow validator to look at previously compiled strings to allow this:
     /*

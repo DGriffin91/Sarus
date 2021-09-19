@@ -1,4 +1,6 @@
-use sarus::{jit, parser, run_fn, validate_program};
+use std::mem;
+
+use sarus::{jit, parser, validate_program};
 
 use mitosis::{self, JoinHandle};
 
@@ -18,7 +20,13 @@ fn subprocess_code<I, O>(input: (String, I)) -> Result<O, String> {
         .map_err(|e| format!("jit translate failed: {}", e))?;
 
     // Run compiled code
-    unsafe { run_fn(&mut jit, "main", values).map_err(|e| format!("run_fn main failed: {}", e)) }
+    //unsafe { run_fn(&mut jit, "main", values).map_err(|e| format!("run_fn main failed: {}", e)) }
+
+    let func_ptr = jit
+        .get_func("main")
+        .map_err(|e| format!("get_func failed: {}", e))?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(I) -> O>(func_ptr) };
+    Ok(func(values))
 }
 
 fn main() -> anyhow::Result<()> {

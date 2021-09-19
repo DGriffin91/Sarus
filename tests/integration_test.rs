@@ -1,11 +1,10 @@
 use serde::Deserialize;
-use std::{collections::HashMap, f64::consts::*};
+use std::{collections::HashMap, f64::consts::*, mem};
 
 use sarus::*;
 
 #[test]
 fn parentheses() -> anyhow::Result<()> {
-    let mut jit = jit::JIT::default();
     let code = r#"
 fn main(a, b) -> (c) {
     c = a * (a - b) * (a * (2.0 + b))
@@ -14,15 +13,18 @@ fn main(a, b) -> (c) {
 
     let a = 100.0f64;
     let b = 200.0f64;
-    let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
-    assert_eq!(a * (a - b) * (a * (2.0 + b)), result);
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    assert_eq!(a * (a - b) * (a * (2.0 + b)), func(a, b));
     Ok(())
 }
 
 #[test]
 fn libc_math() -> anyhow::Result<()> {
-    let mut jit = jit::JIT::default();
-    jit.add_math_constants()?;
     let code = r#"
 fn main(a, b) -> (c) {
     c = b
@@ -86,15 +88,20 @@ fn nums() -> (r) {
         + TAU;
 
     let epsilon = 0.00000000000001;
-    let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
+    let mut jit = jit::JIT::default();
+    jit.add_math_constants()?;
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let result = func(a, b);
     assert!(result >= c - epsilon && result <= c + epsilon);
     Ok(())
 }
 
 #[test]
 fn rounding() -> anyhow::Result<()> {
-    let mut jit = jit::JIT::default();
-
     let code = r#"
 fn main(a, b) -> (c) {
     c = ceil(a) * floor(b) * trunc(a) * fract(a * b * -1.234) * round(1.5)
@@ -103,54 +110,56 @@ fn main(a, b) -> (c) {
 
     let a = 100.0f64;
     let b = 200.0f64;
-    let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(
         a.ceil() * b.floor() * a.trunc() * (a * b * -1.234).fract() * 1.5f64.round(),
-        result
+        func(a, b)
     );
     Ok(())
 }
 
 #[test]
 fn minmax() -> anyhow::Result<()> {
-    let mut jit = jit::JIT::default();
-
+    let ast = parser::program(
+        r#"
+    fn main(a, b) -> (c) {
+        c = min(a, b)
+    }
+    "#,
+    )?;
     let a = 100.0f64;
     let b = 200.0f64;
-    let result: f64 = unsafe {
-        run_string(
-            &mut jit,
-            r#"
-            fn main(a, b) -> (c) {
-                c = min(a, b)
-            }
-            "#,
-            "main",
-            (a, b),
-        )?
-    };
-    assert_eq!(result, a);
     let mut jit = jit::JIT::default();
-    let result: f64 = unsafe {
-        run_string(
-            &mut jit,
-            r#"
-            fn main(a, b) -> (c) {
-                c = max(a, b)
-            }
-            "#,
-            "main",
-            (a, b),
-        )?
-    };
-    assert_eq!(result, b);
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    assert_eq!(a, func(a, b));
+
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(
+        r#"
+    fn main(a, b) -> (c) {
+        c = max(a, b)
+    }
+    "#,
+    )?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    assert_eq!(b, func(a, b));
 
     Ok(())
 }
 
 #[test]
 fn comments() -> anyhow::Result<()> {
-    let mut jit = jit::JIT::default();
     let code = r#"
 //test
 fn main(a, b) -> (c) {//test
@@ -185,14 +194,18 @@ fn foodd(a, b) -> (c) {
 
     let a = 100.0f64;
     let b = 200.0f64;
-    let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
-    assert_eq!(601.0, result);
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    assert_eq!(601.0, func(a, b));
     Ok(())
 }
 
 #[test]
 fn multiple_returns() -> anyhow::Result<()> {
-    let mut jit = jit::JIT::default();
     let code = r#"
     fn main(a, b) -> (e) {
         c, d = stuff(a, b)
@@ -227,14 +240,18 @@ fn multiple_returns() -> anyhow::Result<()> {
 
     let a = 100.0f64;
     let b = 200.0f64;
-    let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
-    assert_eq!(6893909.333333333, result);
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    assert_eq!(6893909.333333333, func(a, b));
     Ok(())
 }
 
 #[test]
 fn bools() -> anyhow::Result<()> {
-    let mut jit = jit::JIT::default();
     let code = r#"
     fn main(a, b) -> (c) {
         c = if true {
@@ -249,14 +266,18 @@ fn bools() -> anyhow::Result<()> {
 "#;
     let a = 100.0f64;
     let b = 200.0f64;
-    let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
-    assert_eq!(20000.0, result);
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    assert_eq!(20000.0, func(a, b));
     Ok(())
 }
 
 #[test]
 fn ifelse_assign() -> anyhow::Result<()> {
-    let mut jit = jit::JIT::default();
     let code = r#"
     fn main(a, b) -> (c) {
         c = if a < b {
@@ -268,14 +289,18 @@ fn ifelse_assign() -> anyhow::Result<()> {
 "#;
     let a = 100.0f64;
     let b = 200.0f64;
-    let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
-    assert_eq!(20000.0, result);
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    assert_eq!(20000.0, func(a, b));
     Ok(())
 }
 
 #[test]
 fn order() -> anyhow::Result<()> {
-    let mut jit = jit::JIT::default();
     let code = r#"
     fn main(a, b) -> (c) {
         c = a
@@ -283,15 +308,18 @@ fn order() -> anyhow::Result<()> {
 "#;
     let a = 100.0f64;
     let b = 200.0f64;
-    let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
-    assert_eq!(100.0, result);
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    assert_eq!(100.0, func(a, b));
     Ok(())
 }
 
 #[test]
 fn array_read_write() -> anyhow::Result<()> {
-    let mut jit = jit::JIT::default();
-
     let code = r#"
 fn main(&arr, b) -> () {
     &arr[0.0] = &arr[0.0] * b
@@ -303,22 +331,32 @@ fn main(&arr, b) -> () {
 
     let mut arr = [1.0, 2.0, 3.0, 4.0];
     let b = 200.0f64;
-    unsafe { run_string(&mut jit, code, "main", (&mut arr, b))? };
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [f64; 4], f64)>(func_ptr) };
+    func(&mut arr, b);
     assert_eq!([200.0, 400.0, 600.0, 800.0], arr);
     Ok(())
 }
 
 #[test]
 fn negative() -> anyhow::Result<()> {
-    let mut jit = jit::JIT::default();
     let code = r#"
     fn main(a) -> (c) {
         c = -1.0 + a
     }
 "#;
     let a = -100.0f64;
-    let result: f64 = unsafe { run_string(&mut jit, code, "main", a)? };
-    assert_eq!(-101.0, result);
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
+    assert_eq!(-101.0, func(a));
     Ok(())
 }
 
@@ -352,11 +390,14 @@ fn compiled_graph() -> anyhow::Result<()> {
     }
 "#;
 
-    let mut jit = jit::JIT::default();
     let mut audio = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
-    unsafe { run_string(&mut jit, code, "graph", &mut audio)? };
-    dbg!(audio);
-    //assert_eq!([200.0, 400.0, 600.0, 800.0], arr);
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("graph")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [f64; 8])>(func_ptr) };
+    dbg!(func(&mut audio));
     Ok(())
 }
 
@@ -438,15 +479,15 @@ fn metadata() -> anyhow::Result<()> {
     dbg!(&func_meta);
 
     let mut audio = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
-    unsafe { run_fn(&mut jit, "graph", &mut audio)? };
-    dbg!(audio);
+    let func_ptr = jit.get_func("graph")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [f64; 8])>(func_ptr) };
+    dbg!(func(&mut audio));
     //assert_eq!([200.0, 400.0, 600.0, 800.0], arr);
     Ok(())
 }
 
 #[test]
 fn int_while_loop() -> anyhow::Result<()> {
-    let mut jit = jit::JIT::default();
     let code = r#"
     fn main(a, b) -> (e) {
         e = 2.0
@@ -460,14 +501,18 @@ fn int_while_loop() -> anyhow::Result<()> {
 
     let a = 100.0f64;
     let b = 200.0f64;
-    let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
-    assert_eq!(2048.0, result);
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    assert_eq!(2048.0, func(a, b));
     Ok(())
 }
 
 #[test]
 fn int_to_float() -> anyhow::Result<()> {
-    let mut jit = jit::JIT::default();
     let code = r#"
     fn main(a, b) -> (e) {
         i = 2
@@ -477,8 +522,13 @@ fn int_to_float() -> anyhow::Result<()> {
 
     let a = 100.0f64;
     let b = 200.0f64;
-    let result: f64 = unsafe { run_string(&mut jit, code, "main", (a, b))? };
-    assert_eq!(80000.0, result);
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    assert_eq!(80000.0, func(a, b));
     Ok(())
 }
 
@@ -487,22 +537,23 @@ fn float_conversion() -> anyhow::Result<()> {
     let code = r#"
     fn main(a, b) -> (e) {
         i_a = int(a)
-        e = if i_a > int(b) {
+        e = if i_a < int(b) {
             float(int(float(i_a)))
         } else {
             2.0
         }
     }
 "#;
+    let a = 100.0f64;
+    let b = 200.0f64;
+
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
-
-    let a = 100.0f64;
-    let b = 200.0f64;
-    let result: f64 = unsafe { run_fn(&mut jit, "main", (a, b))? };
-    assert_eq!(2.0, result);
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    assert_eq!(100.0, func(a, b));
     Ok(())
 }
 
@@ -519,38 +570,45 @@ fn float_as_bool_error() -> anyhow::Result<()> {
         e = float(e_i)
     }
 "#;
+    let a = 100.0f64;
+    let b = 200.0f64;
+
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
-
-    let a = 100.0f64;
-    let b = 200.0f64;
-    let result: f64 = unsafe { run_fn(&mut jit, "main", (a, b))? };
-    assert_eq!(1.0, result);
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    assert_eq!(1.0, func(a, b));
     Ok(())
 }
 
 #[test]
 fn array_return_from_if() -> anyhow::Result<()> {
-    let mut jit = jit::JIT::default();
     //TODO using multiple arrays resulting in access violation
     let code = r#"
-fn main(&arr1,  b) -> () {
-    &arr2 = if b < 100.0 {
+fn main(&arr1, &arr2, b) -> () {
+    &arr3 = if b < 100.0 {
         &arr1
     } else {
-        &arr1
+        &arr2
     }
-    &arr2[0] = &arr2[0] * 20.0
+    &arr3[0] = &arr3[0] * 20.0
 }
 "#;
 
     let mut arr1 = [1.0, 2.0, 3.0, 4.0];
-    //let mut arr2 = [10.0, 20.0, 30.0, 40.0];
+    let mut arr2 = [10.0, 20.0, 30.0, 40.0];
     let b = 200.0f64;
-    unsafe { run_string(&mut jit, code, "main", (&mut arr1, b))? };
-    dbg!(arr1);
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func =
+        unsafe { mem::transmute::<_, extern "C" fn(&mut [f64; 4], &mut [f64; 4], f64)>(func_ptr) };
+    func(&mut arr1, &mut arr2, b);
+    assert_eq!(200.0, arr2[0]);
     Ok(())
 }
 
@@ -565,15 +623,38 @@ fn var_type_consistency() -> anyhow::Result<()> {
         e = float(n3)
     }
 "#;
+    let a = 100.0f64;
+    let b = 200.0f64;
+
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    assert_eq!(1.0, func(a, b));
+    Ok(())
+}
+
+#[test]
+fn three_inputs() -> anyhow::Result<()> {
+    let code = r#"
+    fn main(a, b, c) -> (e) {
+        e = a + b + c
+    }
+"#;
 
     let a = 100.0f64;
     let b = 200.0f64;
-    let result: f64 = unsafe { run_fn(&mut jit, "main", (a, b))? };
-    assert_eq!(1.0, result);
+    let c = 300.0f64;
+
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64, f64) -> f64>(func_ptr) };
+    assert_eq!(600.0, func(a, b, c));
     Ok(())
 }
 

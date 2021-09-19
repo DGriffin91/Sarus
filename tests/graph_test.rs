@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, mem};
 
 use sarus::{
     frontend::pretty_indent,
     graph::{Connection, Graph, Node},
-    hashmap, run_fn,
+    hashmap,
 };
 
 const STEP_SIZE: usize = 16usize;
@@ -141,7 +141,10 @@ fn sin_node(a) -> (c) {
             audio_buffer[j] = ((n as f64).powi(2) * 0.000001).sin(); //sound source is sine sweep
             n += 1;
         }
-        unsafe { run_fn(&mut graph.jit, "graph", &mut audio_buffer)? };
+
+        let func_ptr = graph.jit.get_func("graph")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [f64; STEP_SIZE])>(func_ptr) };
+        func(&mut audio_buffer);
 
         //Collect output audio
         output_arr[i] = audio_buffer;

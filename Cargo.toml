@@ -30,10 +30,4 @@ mitosis = "0.1.1"
 name = "run_file"
 
 [[example]]
-name = "run_file_no_validate"
-
-[[example]]
-name = "run_string"
-
-[[example]]
 name = "run_multiple_strings"

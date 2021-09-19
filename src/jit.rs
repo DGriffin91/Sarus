@@ -1090,6 +1090,7 @@ fn declare_variables(
     let mut index = 0;
 
     for (i, name) in params.iter().enumerate() {
+        dbg!(i, name);
         let val = builder.block_params(entry_block)[i];
 
         // for now all function parameters are either float or array

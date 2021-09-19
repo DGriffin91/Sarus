@@ -1,6 +1,8 @@
 #![feature(test)]
 extern crate test; //rust-analyser complains, but this should work in nightly
 
+use std::mem;
+
 use basic_audio_filters::second_order_iir::{IIR2Coefficients, IIR2};
 use mitosis::JoinHandle;
 use sarus::*;
@@ -142,8 +144,13 @@ fn eq_compile(b: &mut Bencher) {
         test::black_box({
             let mut jit = get_eq_jit();
             let mut output_arr = [0.0f64; 128];
-            let result: f64 = unsafe { run_fn(&mut jit, "main", (2.0, &mut output_arr)).unwrap() };
-            sum += result;
+
+            let func_ptr = jit.get_func("main").unwrap();
+            let func = unsafe {
+                mem::transmute::<_, extern "C" fn(f64, &mut [f64; 128]) -> f64>(func_ptr)
+            };
+
+            sum += func(2.0, &mut output_arr);
         });
     });
     dbg!(sum);
@@ -155,8 +162,12 @@ fn eq(b: &mut Bencher) {
     let mut result = 0.0;
     let mut output_arr = [0.0f64; 48000];
     b.iter(|| {
-        test::black_box(unsafe {
-            result = run_fn(&mut jit, "main", (48000.0, &mut output_arr)).unwrap();
+        test::black_box({
+            let func_ptr = jit.get_func("main").unwrap();
+            let func = unsafe {
+                mem::transmute::<_, extern "C" fn(f64, &mut [f64; 48000]) -> f64>(func_ptr)
+            };
+            result = func(48000.0, &mut output_arr)
         });
     });
     dbg!((result, output_arr.iter().sum::<f64>()));
@@ -167,7 +178,10 @@ fn compare_eq() {
     let iterations = 48000.0;
     let mut output_arr = [0.0f64; 48000];
     let mut jit = get_eq_jit();
-    let result: f64 = unsafe { run_fn(&mut jit, "main", (iterations, &mut output_arr)).unwrap() };
+    let func_ptr = jit.get_func("main").unwrap();
+    let func =
+        unsafe { mem::transmute::<_, extern "C" fn(f64, &mut [f64; 48000]) -> f64>(func_ptr) };
+    let result: f64 = func(iterations, &mut output_arr);
     //println!("{:?}", &output_arr[0..10]);
     let mut output_arr2 = [0.0f64; 48000];
     let result2 = filter_benchmark_1(iterations, &mut output_arr2);
@@ -203,8 +217,12 @@ fn subprocess_code(_: Option<()>) -> Result<f64, String> {
     let mut output_arr = [0.0f64; 128];
 
     // Run compiled code
-    unsafe { run_fn(&mut jit, "main", (2.0, &mut output_arr)) }
-        .map_err(|e| format!("run_fn main failed: {}", e))
+
+    let func_ptr = jit
+        .get_func("main")
+        .map_err(|e| format!("get_func main failed: {}", e))?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, &mut [f64; 128]) -> f64>(func_ptr) };
+    Ok(func(2.0, &mut output_arr))
 }
 
 #[bench]
