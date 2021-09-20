@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Debug};
 use toposort_scc::IndexGraph;
 
 use crate::{
-    frontend::{make_nonempty, parser, Binop, Cmp, Declaration, Expr, Function},
+    frontend::{make_nonempty, parser, Arg, Binop, Cmp, Declaration, Expr, Function, Type_},
     jit,
     validator::validate_program,
 };
@@ -128,10 +128,10 @@ fn build_graph_func(
     ));
 
     body.push(Expr::Assign(
-        //vINPUT_0 = &audio[i]
+        //vINPUT_0 = audio[i]
         make_nonempty(vec!["vINPUT_src".to_string()]).unwrap(),
         make_nonempty(vec![Expr::ArrayGet(
-            "&audio".to_string(),
+            "audio".to_string(),
             Box::new(Expr::Identifier("i".to_string())),
         )])
         .unwrap(),
@@ -152,11 +152,11 @@ fn build_graph_func(
 
         let mut param_names = Vec::new();
 
-        for param_name in node_src_ast.params.iter() {
+        for param in node_src_ast.params.iter() {
             // find the connection that has this node and port as a dst
             let connection = connections
                 .into_iter()
-                .filter(|c| c.dst_node == *node_id && c.dst_port == *param_name)
+                .filter(|c| c.dst_node == *node_id && c.dst_port == *param.name)
                 .collect::<Vec<&Connection>>();
 
             if connection.len() > 0 {
@@ -167,11 +167,11 @@ fn build_graph_func(
                     &connection.src_node, connection.src_port
                 )))
             } else {
-                println!("{}", format!("{}", node.port_defaults[param_name]));
+                println!("{}", format!("{}", node.port_defaults[&param.name]));
                 // If there is no connection use the default val
                 param_names.push(Expr::LiteralFloat(format!(
                     "{:.10}",
-                    node.port_defaults[param_name]
+                    node.port_defaults[&param.name]
                 )))
                 //TODO arbitrary precision while always printing decimal?
             }
@@ -203,7 +203,7 @@ fn build_graph_func(
     ));
 
     body.push(Expr::ArraySet(
-        "&audio".to_string(),
+        "audio".to_string(),
         Box::new(Expr::Identifier("i".to_string())),
         Box::new(Expr::Identifier("vOUTPUT_dst".to_string())),
     ));
@@ -226,7 +226,10 @@ fn build_graph_func(
 
     Ok(Declaration::Function(Function {
         name: "graph".to_string(),
-        params: vec!["&audio".to_string()],
+        params: vec![Arg {
+            name: "audio".into(),
+            type_: Some(Type_::UnboundedArrayF64),
+        }],
         returns: vec![],
         body: main_body,
     }))

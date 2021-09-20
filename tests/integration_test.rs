@@ -321,11 +321,11 @@ fn order() -> anyhow::Result<()> {
 #[test]
 fn array_read_write() -> anyhow::Result<()> {
     let code = r#"
-fn main(&arr, b) -> () {
-    &arr[0.0] = &arr[0.0] * b
-    &arr[1.0] = &arr[1.0] * b
-    &arr[2.0] = &arr[2.0] * b
-    &arr[3.0] = &arr[3.0] * b
+fn main(arr: &[f64], b) -> () {
+    arr[0.0] = arr[0.0] * b
+    arr[1.0] = arr[1.0] * b
+    arr[2.0] = arr[2.0] * b
+    arr[3.0] = arr[3.0] * b
 }
 "#;
 
@@ -375,16 +375,16 @@ fn compiled_graph() -> anyhow::Result<()> {
         c = sin(a)
     }
         
-    fn graph (&audio) -> () {
+    fn graph (audio: &[f64]) -> () {
         i = 0
         while i <= 7 {
-            vINPUT_0 = &audio[i]
+            vINPUT_0 = audio[i]
             vadd1_0 = add_node(vINPUT_0, 2.0000000000)
             vsin1_0 = sin_node(vadd1_0)
             vadd2_0 = add_node(vsin1_0, 4.0000000000)
             vsub1_0 = sub_node(vadd2_0, vadd1_0)
             vOUTPUT_0 = vsub1_0
-            &audio[i] = vOUTPUT_0
+            audio[i] = vOUTPUT_0
             i += 1
         }
     }
@@ -441,16 +441,16 @@ fn metadata() -> anyhow::Result<()> {
         c = sin(a)
     }
         
-    fn graph (&audio) -> () {
+    fn graph (audio: &[f64]) -> () {
         i = 0
         while i <= 7 {
-            vINPUT_0 = &audio[i]
+            vINPUT_0 = audio[i]
             vadd1_0 = add_node(vINPUT_0, 2.0000000000)
             vsin1_0 = sin_node(vadd1_0)
             vadd2_0 = add_node(vsin1_0, 4.0000000000)
             vsub1_0 = sub_node(vadd2_0, vadd1_0)
             vOUTPUT_0 = vsub1_0
-            &audio[i] = vOUTPUT_0
+            audio[i] = vOUTPUT_0
             i += 1
         }
     }
@@ -587,13 +587,13 @@ fn float_as_bool_error() -> anyhow::Result<()> {
 fn array_return_from_if() -> anyhow::Result<()> {
     //TODO using multiple arrays resulting in access violation
     let code = r#"
-fn main(&arr1, &arr2, b) -> () {
-    &arr3 = if b < 100.0 {
-        &arr1
+fn main(arr1: &[f64], arr2: &[f64], b) -> () {
+    arr3 = if b < 100.0 {
+        arr1
     } else {
-        &arr2
+        arr2
     }
-    &arr3[0] = &arr3[0] * 20.0
+    arr3[0] = arr3[0] * 20.0
 }
 "#;
 
@@ -657,6 +657,67 @@ fn three_inputs() -> anyhow::Result<()> {
     assert_eq!(600.0, func(a, b, c));
     Ok(())
 }
+
+#[test]
+fn manual_types() -> anyhow::Result<()> {
+    let code = r#"
+fn main(a: f64, b: f64) -> (c: f64) {
+    c = a * (a - b) * (a * (2.0 + b))
+}
+"#;
+    let a = 100.0f64;
+    let b = 200.0f64;
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    assert_eq!(a * (a - b) * (a * (2.0 + b)), func(a, b));
+    Ok(())
+}
+
+#[test]
+fn i64_params() -> anyhow::Result<()> {
+    let code = r#"
+fn main(a: f64, b: i64) -> (c: i64) {
+    c = int(a * (a - float(b)) * (a * (2.0 + float(b))))
+}
+"#;
+    let a = 100.0f64;
+    let b = 200.0f64;
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, i64) -> i64>(func_ptr) };
+    assert_eq!((a * (a - b) * (a * (2.0 + b))) as i64, func(a, b as i64));
+    Ok(())
+}
+
+//#[test]
+//fn i64_params_multifunc() -> anyhow::Result<()> {
+//  //Not currently working, see BLOCKERs in jit.rs
+//    let code = r#"
+//fn main(a: f64, b: i64) -> (c: i64) {
+//    c = foo(a, b, 2)
+//}
+//fn foo(a: f64, b: i64, c: i64) -> (d: i64) {
+//    d = int(a) + b + c
+//}
+//"#;
+//    let a = 100.0f64;
+//    let b = 200.0f64;
+//    let mut jit = jit::JIT::default();
+//    let ast = parser::program(&code)?;
+//    //let ast = validate_program(ast)?;
+//    jit.translate(ast.clone())?;
+//    let func_ptr = jit.get_func("main")?;
+//    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, i64) -> i64>(func_ptr) };
+//    assert_eq!((a * (a - b) * (a * (2.0 + b))) as i64, func(a, b as i64));
+//    Ok(())
+//}
 
 //#[test]
 //fn int_min_max() -> anyhow::Result<()> {

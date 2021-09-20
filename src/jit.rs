@@ -43,12 +43,20 @@ impl Default for JIT {
 impl JIT {
     /// Compile a string in the toy language into machine code.
     pub fn translate(&mut self, prog: Vec<Declaration>) -> anyhow::Result<()> {
-        let mut return_counts = HashMap::new();
+        //let mut return_counts = HashMap::new();
+        //for func in prog.iter().filter_map(|d| match d {
+        //    Declaration::Function(func) => Some(func.clone()),
+        //    _ => None,
+        //}) {
+        //    return_counts.insert(func.name.to_string(), func.returns.len());
+        //}
+
+        let mut funcs = HashMap::new();
         for func in prog.iter().filter_map(|d| match d {
             Declaration::Function(func) => Some(func.clone()),
             _ => None,
         }) {
-            return_counts.insert(func.name.to_string(), func.returns.len());
+            funcs.insert(func.name.clone(), func);
         }
 
         // First, parse the string, producing AST nodes.
@@ -64,7 +72,7 @@ impl JIT {
                         func.params,
                         func.returns,
                         func.body,
-                        return_counts.to_owned(),
+                        funcs.to_owned(),
                         &prog,
                     )?;
                     // Next, declare the function to jit. Functions must be declared
@@ -145,28 +153,39 @@ impl JIT {
     // Translate from toy-language AST nodes into Cranelift IR.
     fn codegen(
         &mut self,
-        params: Vec<String>,
-        returns: Vec<String>,
+        params: Vec<Arg>,
+        returns: Vec<Arg>,
         stmts: Vec<Expr>,
-        return_counts: HashMap<String, usize>,
+        funcs: HashMap<String, Function>,
         env: &[Declaration],
     ) -> anyhow::Result<()> {
         let float = types::F64; //self.module.target_config().pointer_type();
 
         for p in &params {
-            if p.starts_with("&") {
-                self.ctx
-                    .func
-                    .signature
-                    .params
-                    .push(AbiParam::new(self.module.target_config().pointer_type()));
-            } else {
-                self.ctx.func.signature.params.push(AbiParam::new(float));
-            }
+            self.ctx.func.signature.params.push({
+                match p.type_ {
+                    Some(t) => match t {
+                        Type_::F64 => AbiParam::new(types::F64),
+                        Type_::I64 => AbiParam::new(types::I64),
+                        Type_::UnboundedArrayF64 => {
+                            AbiParam::new(self.module.target_config().pointer_type())
+                        }
+                        Type_::UnboundedArrayI64 => {
+                            AbiParam::new(self.module.target_config().pointer_type())
+                        }
+                    },
+                    None => AbiParam::new(float),
+                }
+            });
         }
 
-        for _p in &returns {
-            self.ctx.func.signature.returns.push(AbiParam::new(float));
+        for ret_arg in &returns {
+            self.ctx.func.signature.returns.push(AbiParam::new(
+                ret_arg
+                    .type_
+                    .unwrap_or(Type_::F64)
+                    .cranelift_type(self.module.target_config().pointer_type()),
+            ));
         }
 
         // Create the builder to build a function.
@@ -202,11 +221,11 @@ impl JIT {
 
         // Now translate the statements of the function body.
         let mut trans = FunctionTranslator {
-            ty: float,
             builder,
             variables,
-            return_counts,
+            funcs,
             module: &mut self.module,
+            env,
         };
         for expr in &stmts {
             trans.translate_expr(expr)?;
@@ -217,12 +236,27 @@ impl JIT {
         // variable.
         let mut return_values = Vec::new();
         for ret in returns.iter() {
-            let return_variable = trans.variables.get(ret).unwrap();
-            return_values.push(
-                trans
+            let return_variable = trans.variables.get(&ret.name).unwrap();
+            let v = match ret.type_ {
+                Some(t) => match t {
+                    Type_::F64 => trans
+                        .builder
+                        .use_var(return_variable.expect_float("return_variable")?),
+                    Type_::I64 => trans
+                        .builder
+                        .use_var(return_variable.expect_int("return_variable")?),
+                    Type_::UnboundedArrayF64 => trans
+                        .builder
+                        .use_var(return_variable.expect_address("return_variable")?),
+                    Type_::UnboundedArrayI64 => trans
+                        .builder
+                        .use_var(return_variable.expect_address("return_variable")?),
+                },
+                None => trans
                     .builder
                     .use_var(return_variable.expect_float("return_variable")?),
-            );
+            };
+            return_values.push(v);
         }
 
         // Emit the return instruction.
@@ -329,11 +363,11 @@ impl SValue {
 /// A collection of state used for translating from toy-language AST nodes
 /// into Cranelift IR.
 struct FunctionTranslator<'a> {
-    ty: types::Type,
     builder: FunctionBuilder<'a>,
     variables: HashMap<String, SVariable>,
-    return_counts: HashMap<String, usize>,
+    funcs: HashMap<String, Function>,
     module: &'a mut JITModule,
+    env: &'a [Declaration],
 }
 
 impl<'a> FunctionTranslator<'a> {
@@ -357,27 +391,18 @@ impl<'a> FunctionTranslator<'a> {
             )),
             Expr::Identifier(name) => {
                 //TODO should this be moved into pattern matching frontend?
-                if name.starts_with("&") {
-                    let var = self
-                        .variables
-                        .get(name)
-                        .expect(&format!("variable {} not found", name))
-                        .expect_address("address Identifier")?;
-                    Ok(SValue::Address(self.builder.use_var(var)))
-                } else {
-                    match self.variables.get(name) {
-                        Some(var) => Ok(match var {
-                            SVariable::Unknown(_, v) => SValue::Unknown(self.builder.use_var(*v)),
-                            SVariable::Bool(_, v) => SValue::Bool(self.builder.use_var(*v)),
-                            SVariable::Float(_, v) => SValue::Float(self.builder.use_var(*v)),
-                            SVariable::Int(_, v) => SValue::Int(self.builder.use_var(*v)),
-                            SVariable::Address(_, v) => SValue::Address(self.builder.use_var(*v)),
-                        }),
-                        None => Ok(SValue::Float(
-                            //TODO Don't assume this is a float (this is used for math const)
-                            self.translate_global_data_addr(self.ty, name),
-                        )), //Try to load global
-                    }
+                match self.variables.get(name) {
+                    Some(var) => Ok(match var {
+                        SVariable::Unknown(_, v) => SValue::Unknown(self.builder.use_var(*v)),
+                        SVariable::Bool(_, v) => SValue::Bool(self.builder.use_var(*v)),
+                        SVariable::Float(_, v) => SValue::Float(self.builder.use_var(*v)),
+                        SVariable::Int(_, v) => SValue::Int(self.builder.use_var(*v)),
+                        SVariable::Address(_, v) => SValue::Address(self.builder.use_var(*v)),
+                    }),
+                    None => Ok(SValue::Float(
+                        //TODO Don't assume this is a float (this is used for math const)
+                        self.translate_global_data_addr(types::F64, name),
+                    )), //Try to load global
                 }
             }
             Expr::Assign(names, expr) => self.translate_assign(names, expr),
@@ -410,7 +435,6 @@ impl<'a> FunctionTranslator<'a> {
     fn translate_binop(&mut self, op: Binop, lhs: &Expr, rhs: &Expr) -> anyhow::Result<SValue> {
         let lhs = self.translate_expr(lhs)?;
         let rhs = self.translate_expr(rhs)?;
-        // if a or b is a float, convert to other to a float
         match lhs {
             SValue::Float(a) => match rhs {
                 SValue::Float(b) => Ok(SValue::Float(self.binop_float(op, a, b))),
@@ -882,22 +906,40 @@ impl<'a> FunctionTranslator<'a> {
     fn translate_call(&mut self, name: &str, args: &[Expr]) -> anyhow::Result<SValue> {
         let mut sig = self.module.make_signature();
 
-        // Add a parameter for each argument.
-        for _ in args {
-            sig.params.push(AbiParam::new(self.ty));
-        }
+        let ptr_ty = self.module.target_config().pointer_type();
 
-        if self.return_counts.contains_key(name) {
-            for _ in 0..self.return_counts[name] {
-                sig.returns.push(AbiParam::new(self.ty));
+        if self.funcs.contains_key(name) {
+            let func = self.funcs[name].clone();
+            if func.params.len() != args.len() {
+                anyhow::bail!(
+                    "function call to {} has {} args, but function description has {}",
+                    name,
+                    args.len(),
+                    func.params.len()
+                )
+            }
+            for arg in func.params {
+                //let tp = SType::of(arg, self.env, &self.variables)?;
+                sig.params.push(AbiParam::new(
+                    arg.type_.unwrap_or(Type_::F64).cranelift_type(ptr_ty),
+                ));
+            }
+            for ret_arg in func.returns {
+                sig.returns.push(AbiParam::new(
+                    ret_arg.type_.unwrap_or(Type_::F64).cranelift_type(ptr_ty),
+                ));
             }
         } else {
+            for (_i, _arg) in args.iter().enumerate() {
+                //BLOCKER TODO don't assume float, check params count
+                sig.params.push(AbiParam::new(types::F64));
+            }
             match self.translate_std(name, args)? {
                 Some(v) => return Ok(v),
                 None => {
                     // If we can't find the function name, maybe it's a libc function.
                     // For now, assume it will return a float.
-                    sig.returns.push(AbiParam::new(self.ty))
+                    sig.returns.push(AbiParam::new(types::F64))
                 }
             }
         }
@@ -913,7 +955,7 @@ impl<'a> FunctionTranslator<'a> {
         let mut arg_values = Vec::new();
         for (i, arg) in args.iter().enumerate() {
             arg_values.push({
-                //TODO support returning more than just float
+                //BLOCKER TODO support returning more than just float
                 self.translate_expr(arg)?
                     .expect_float(&format!("{} arg {}", name, i))?
             })
@@ -1071,8 +1113,8 @@ fn declare_variables(
     float: types::Type,
     builder: &mut FunctionBuilder,
     module: &mut dyn Module,
-    params: &[String],
-    returns: &[String],
+    params: &[Arg],
+    returns: &[Arg],
     stmts: &[Expr],
     entry_block: Block,
     env: &[Declaration],
@@ -1081,34 +1123,18 @@ fn declare_variables(
     let mut variables: HashMap<String, SVariable> = HashMap::new();
     let mut index = 0;
 
-    for (i, name) in params.iter().enumerate() {
+    for (i, arg) in params.iter().enumerate() {
         let val = builder.block_params(entry_block)[i];
-
-        // for now all function parameters are either float or array
-        let var = if name.starts_with("&") {
-            declare_variable(
-                true,
-                module.target_config().pointer_type(),
-                builder,
-                &mut variables,
-                &mut index,
-                name,
-            )
-        } else {
-            declare_variable(false, float, builder, &mut variables, &mut index, name)
-        };
-        builder.def_var(var.inner(), val);
+        let var = declare_variable(module, builder, &mut variables, &mut index, arg);
+        if let Some(var) = var {
+            builder.def_var(var.inner(), val);
+        }
     }
 
-    for name in returns {
-        let zero = builder.ins().f64const(0.0);
-        let var = declare_variable(false, float, builder, &mut variables, &mut index, name);
-        //TODO: should we check if there is an input var with the same name and use that instead? (like with params)
-        // for now all function returns are either float or array
-        builder.def_var(var.inner(), zero);
+    for arg in returns {
+        declare_variable(module, builder, &mut variables, &mut index, arg);
     }
 
-    //builder.def_var(return_variable, zero);
     for expr in stmts {
         declare_variables_in_stmt(
             module.target_config().pointer_type(),
@@ -1287,28 +1313,43 @@ fn declare_variable_from_type(
 }
 
 fn declare_variable(
-    is_pointer: bool,
-    ty: types::Type,
+    module: &mut dyn Module,
     builder: &mut FunctionBuilder,
     variables: &mut HashMap<String, SVariable>,
     index: &mut usize,
-    name: &str,
-) -> SVariable {
-    let mut var = SVariable::Float(name.into(), Variable::new(*index));
-    if !variables.contains_key(name) {
-        var = if is_pointer {
-            SVariable::Address(name.into(), Variable::new(*index))
-        } else {
-            match ty {
-                types::F64 => SVariable::Float(name.into(), Variable::new(*index)),
-                types::B1 => SVariable::Bool(name.into(), Variable::new(*index)),
-                types::I64 => SVariable::Int(name.into(), Variable::new(*index)),
-                _ => SVariable::Float(name.into(), Variable::new(*index)),
-            }
+    arg: &Arg,
+) -> Option<SVariable> {
+    let ptr_ty = module.target_config().pointer_type();
+    if !variables.contains_key(&arg.name) {
+        let (var, ty) = match arg.type_ {
+            Some(t) => match t {
+                Type_::F64 => (
+                    SVariable::Float(arg.name.clone(), Variable::new(*index)),
+                    types::F64,
+                ),
+                Type_::I64 => (
+                    SVariable::Int(arg.name.clone(), Variable::new(*index)),
+                    types::I64,
+                ),
+                Type_::UnboundedArrayF64 => (
+                    SVariable::Address(arg.name.clone(), Variable::new(*index)),
+                    ptr_ty,
+                ),
+                Type_::UnboundedArrayI64 => (
+                    SVariable::Address(arg.name.clone(), Variable::new(*index)),
+                    ptr_ty,
+                ),
+            },
+            None => (
+                SVariable::Float(arg.name.clone(), Variable::new(*index)),
+                types::F64,
+            ),
         };
-        variables.insert(name.into(), var.clone());
+        variables.insert(arg.name.clone(), var.clone());
         builder.declare_var(var.inner(), ty);
         *index += 1;
+        Some(var)
+    } else {
+        None
     }
-    var
 }

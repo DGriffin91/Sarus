@@ -35,6 +35,8 @@ const STD_2ARG_I: [&str; 2] = [
 pub enum TypeError {
     #[error("Type mismatch; expected {expected}, found {actual}")]
     TypeMismatch { expected: SType, actual: SType },
+    #[error("Type mismatch; {s}")]
+    TypeMismatchSpecific { s: String },
     #[error("Tuple length mismatch; expected {expected} found {actual}")]
     TupleLengthMismatch { expected: usize, actual: usize },
     #[error("Function \"{0}\" does not exist")]
@@ -189,6 +191,7 @@ impl SType {
                     _ => None,
                 }) {
                     if d.params.len() == args.len() {
+                        //TODO make sure types match too
                         let targs: Result<Vec<_>, _> =
                             args.iter().map(|e| SType::of(e, env, variables)).collect();
                         match targs {
@@ -259,6 +262,24 @@ impl SType {
             SType::Void => 0,
             SType::Bool | SType::Float | SType::Address | SType::Int => 1,
             SType::Tuple(v) => v.len(),
+        }
+    }
+
+    pub fn cranelift_type(
+        &self,
+        ptr_type: cranelift::prelude::Type,
+    ) -> Result<cranelift::prelude::Type, TypeError> {
+        match self {
+            SType::Void => Err(TypeError::TypeMismatchSpecific {
+                s: "Void has no cranelift analog".to_string(),
+            }),
+            SType::Bool => Ok(cranelift::prelude::types::B1),
+            SType::Float => Ok(cranelift::prelude::types::B64),
+            SType::Int => Ok(cranelift::prelude::types::I64),
+            SType::Address => Ok(ptr_type),
+            SType::Tuple(_) => Err(TypeError::TypeMismatchSpecific {
+                s: "Tuple has no cranelift analog".to_string(),
+            }),
         }
     }
 }

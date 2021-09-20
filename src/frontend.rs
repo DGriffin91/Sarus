@@ -181,11 +181,56 @@ impl Display for Declaration {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+pub enum Type_ {
+    F64,
+    I64,
+    UnboundedArrayF64,
+    UnboundedArrayI64,
+}
+
+impl Type_ {
+    pub fn cranelift_type(&self, ptr_type: cranelift::prelude::Type) -> cranelift::prelude::Type {
+        match self {
+            Type_::F64 => cranelift::prelude::types::F64,
+            Type_::I64 => cranelift::prelude::types::I64,
+            Type_::UnboundedArrayF64 => ptr_type,
+            Type_::UnboundedArrayI64 => ptr_type,
+        }
+    }
+}
+
+impl Display for Type_ {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type_::F64 => write!(f, "f64"),
+            Type_::I64 => write!(f, "i64"),
+            Type_::UnboundedArrayF64 => write!(f, "&[f64]"),
+            Type_::UnboundedArrayI64 => write!(f, "&[i64]"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Arg {
+    pub name: String,
+    pub type_: Option<Type_>, //Type is F64 if not specified
+}
+
+impl Display for Arg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.type_ {
+            Some(t) => write!(f, "{}: {}", self.name, t),
+            None => write!(f, "{}", self.name),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: String,
-    pub params: Vec<String>,
-    pub returns: Vec<String>,
+    pub params: Vec<Arg>,
+    pub returns: Vec<Arg>,
     pub body: Vec<Expr>,
 }
 
@@ -252,14 +297,14 @@ peg::parser!(pub grammar parser() for str {
 
 
     rule metadata_identifier() -> String
-        = quiet!{ _ n:$(['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.to_owned() } }
+        = quiet!{ _ n:$(['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.into() } }
         / expected!("identifier")
 
     rule function() -> Declaration
         = _ "fn" name:identifier() _
-        "(" params:(i:identifier() ** comma()) ")" _
+        "(" params:(i:arg() ** comma()) ")" _
         "->" _
-        "(" returns:(i:identifier() ** comma()) _ ")"
+        "(" returns:(i:arg() ** comma()) _ ")"
         body:block()
         { Declaration::Function(Function {
             name,
@@ -267,6 +312,16 @@ peg::parser!(pub grammar parser() for str {
             returns,
             body,
         }) }
+
+    rule arg() -> Arg
+        = _ i:identifier() _ ":" _ t:type_label() _ { Arg {name: i.into(), type_: Some(t.into()) } }
+        / _ i:identifier() _ { Arg {name: i.into(), type_: None } }
+
+    rule type_label() -> Type_
+        = _ n:$("f64") _ { Type_::F64 }
+        / _ n:$("i64") _ { Type_::I64 }
+        / _ n:$("&[f64]") _ { Type_::UnboundedArrayF64 }
+        / _ n:$("&[i64]") _ { Type_::UnboundedArrayI64 }
 
     rule block() -> Vec<Expr>
         = _ "{" b:(statement() ** _) _ "}" { b }
@@ -284,7 +339,7 @@ peg::parser!(pub grammar parser() for str {
         / binary_op()
 
     rule if_then() -> Expr
-        = "if" _ e:expression() then_body:block() "\n"
+        = _ "if" _ e:expression() then_body:block() "\n"
         { Expr::IfThen(Box::new(e), then_body) }
 
     rule if_else() -> Expr
@@ -336,13 +391,12 @@ peg::parser!(pub grammar parser() for str {
     }
 
     rule identifier() -> String
-        = quiet!{ _ n:$((!"true"!"false")['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.to_owned() } }
-        / _ "&" i:identifier() _ { "&".to_owned()+&i } //TODO Should this be a seperate type?
+        = quiet!{ _ n:$((!"true"!"false")['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.into() } }
         / expected!("identifier")
 
     rule literal() -> Expr
-        = _ n:$(['-']*['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat(n.to_owned()) }
-        / _ n:$(['-']*['0'..='9']+) { Expr::LiteralInt(n.to_owned()) }
+        = _ n:$(['-']*['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat(n.into()) }
+        / _ n:$(['-']*['0'..='9']+) { Expr::LiteralInt(n.into()) }
         / "*" i:identifier() { Expr::GlobalDataAddr(i) }
         / _ "true" _ { Expr::Bool(true) }
         / _ "false" _ { Expr::Bool(false) }
