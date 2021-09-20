@@ -99,37 +99,13 @@ impl SType {
             Expr::Binop(_, l, r) => {
                 let lt = SType::of(l, env, variables)?;
                 let rt = SType::of(r, env, variables)?;
-                match lt {
-                    SType::Float => match rt {
-                        SType::Float => SType::Float,
-                        SType::Int => SType::Float,
-                        _ => {
-                            return Err(TypeError::TypeMismatch {
-                                expected: lt,
-                                actual: rt,
-                            })
-                        }
-                    },
-                    SType::Int => match rt {
-                        SType::Float => SType::Float,
-                        SType::Int => SType::Int,
-                        _ => {
-                            return Err(TypeError::TypeMismatch {
-                                expected: lt,
-                                actual: rt,
-                            })
-                        }
-                    },
-                    _ => {
-                        if lt == rt {
-                            lt
-                        } else {
-                            return Err(TypeError::TypeMismatch {
-                                expected: lt,
-                                actual: rt,
-                            });
-                        }
-                    }
+                if lt == rt {
+                    lt
+                } else {
+                    return Err(TypeError::TypeMismatch {
+                        expected: lt,
+                        actual: rt,
+                    });
                 }
             }
             Expr::Compare(_, _, _) => SType::Bool,

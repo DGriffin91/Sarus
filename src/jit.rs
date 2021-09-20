@@ -414,17 +414,9 @@ impl<'a> FunctionTranslator<'a> {
         match lhs {
             SValue::Float(a) => match rhs {
                 SValue::Float(b) => Ok(SValue::Float(self.binop_float(op, a, b))),
-                SValue::Int(b) => {
-                    let f_b = self.builder.ins().fcvt_from_sint(types::F64, b);
-                    Ok(SValue::Float(self.binop_float(op, a, f_b)))
-                }
                 _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs),
             },
             SValue::Int(a) => match rhs {
-                SValue::Float(b) => {
-                    let f_a = self.builder.ins().fcvt_from_sint(types::F64, a);
-                    Ok(SValue::Float(self.binop_float(op, f_a, b)))
-                }
                 SValue::Int(b) => Ok(SValue::Int(self.binop_int(op, a, b))),
                 _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs),
             },
@@ -1090,7 +1082,6 @@ fn declare_variables(
     let mut index = 0;
 
     for (i, name) in params.iter().enumerate() {
-        dbg!(i, name);
         let val = builder.block_params(entry_block)[i];
 
         // for now all function parameters are either float or array

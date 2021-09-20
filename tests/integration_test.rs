@@ -516,7 +516,7 @@ fn int_to_float() -> anyhow::Result<()> {
     let code = r#"
     fn main(a, b) -> (e) {
         i = 2
-        e = i * a * b * 2 * 1.0 * 1
+        e = float(i) * a * b * float(2) * 1.0 * float(1)
     }
 "#;
 
