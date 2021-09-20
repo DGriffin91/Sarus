@@ -918,18 +918,43 @@ impl<'a> FunctionTranslator<'a> {
                     func.params.len()
                 )
             }
-            for arg in func.params {
+            let mut arg_values = Vec::new();
+            for (arg, expr) in func.params.iter().zip(args.iter()) {
                 //let tp = SType::of(arg, self.env, &self.variables)?;
                 sig.params.push(AbiParam::new(
                     arg.type_.unwrap_or(Type_::F64).cranelift_type(ptr_ty),
                 ));
+                arg_values.push(self.translate_expr(expr)?.inner("translate_call")?)
             }
             for ret_arg in func.returns {
                 sig.returns.push(AbiParam::new(
                     ret_arg.type_.unwrap_or(Type_::F64).cranelift_type(ptr_ty),
                 ));
             }
+            let callee = self
+                .module
+                .declare_function(&name, Linkage::Import, &sig)
+                .expect("problem declaring function");
+            let local_callee = self
+                .module
+                .declare_func_in_func(callee, &mut self.builder.func);
+            let call = self.builder.ins().call(local_callee, &arg_values);
+            let res = self.builder.inst_results(call);
+            if res.len() > 1 {
+                Ok(SValue::Tuple(
+                    res.iter()
+                        .map(|v| SValue::Float(*v))
+                        .collect::<Vec<SValue>>(),
+                ))
+            } else if res.len() == 1 {
+                Ok(SValue::Float(*res.first().unwrap()))
+            } else {
+                Ok(SValue::Void)
+            }
         } else {
+            // Function not found, maybe it's libc or std
+            // TODO This whole else should be able to be replaced
+            // when libc & std function defs are in funcs
             for (_i, _arg) in args.iter().enumerate() {
                 //BLOCKER TODO don't assume float, check params count
                 sig.params.push(AbiParam::new(types::F64));
@@ -942,37 +967,34 @@ impl<'a> FunctionTranslator<'a> {
                     sig.returns.push(AbiParam::new(types::F64))
                 }
             }
-        }
-
-        let callee = self
-            .module
-            .declare_function(&name, Linkage::Import, &sig)
-            .expect("problem declaring function");
-        let local_callee = self
-            .module
-            .declare_func_in_func(callee, &mut self.builder.func);
-
-        let mut arg_values = Vec::new();
-        for (i, arg) in args.iter().enumerate() {
-            arg_values.push({
-                //BLOCKER TODO support returning more than just float
-                self.translate_expr(arg)?
-                    .expect_float(&format!("{} arg {}", name, i))?
-            })
-        }
-        let call = self.builder.ins().call(local_callee, &arg_values);
-        let res = self.builder.inst_results(call);
-
-        if res.len() > 1 {
-            Ok(SValue::Tuple(
-                res.iter()
-                    .map(|v| SValue::Float(*v))
-                    .collect::<Vec<SValue>>(),
-            ))
-        } else if res.len() == 1 {
-            Ok(SValue::Float(*res.first().unwrap()))
-        } else {
-            Ok(SValue::Void)
+            let callee = self
+                .module
+                .declare_function(&name, Linkage::Import, &sig)
+                .expect("problem declaring function");
+            let local_callee = self
+                .module
+                .declare_func_in_func(callee, &mut self.builder.func);
+            let mut arg_values = Vec::new();
+            for (i, arg) in args.iter().enumerate() {
+                arg_values.push({
+                    //BLOCKER TODO support returning more than just float
+                    self.translate_expr(arg)?
+                        .expect_float(&format!("{} arg {}", name, i))?
+                })
+            }
+            let call = self.builder.ins().call(local_callee, &arg_values);
+            let res = self.builder.inst_results(call);
+            if res.len() > 1 {
+                Ok(SValue::Tuple(
+                    res.iter()
+                        .map(|v| SValue::Float(*v))
+                        .collect::<Vec<SValue>>(),
+                ))
+            } else if res.len() == 1 {
+                Ok(SValue::Float(*res.first().unwrap()))
+            } else {
+                Ok(SValue::Void)
+            }
         }
     }
 

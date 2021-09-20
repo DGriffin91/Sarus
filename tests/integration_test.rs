@@ -696,28 +696,28 @@ fn main(a: f64, b: i64) -> (c: i64) {
     Ok(())
 }
 
-//#[test]
-//fn i64_params_multifunc() -> anyhow::Result<()> {
-//  //Not currently working, see BLOCKERs in jit.rs
-//    let code = r#"
-//fn main(a: f64, b: i64) -> (c: i64) {
-//    c = foo(a, b, 2)
-//}
-//fn foo(a: f64, b: i64, c: i64) -> (d: i64) {
-//    d = int(a) + b + c
-//}
-//"#;
-//    let a = 100.0f64;
-//    let b = 200.0f64;
-//    let mut jit = jit::JIT::default();
-//    let ast = parser::program(&code)?;
-//    //let ast = validate_program(ast)?;
-//    jit.translate(ast.clone())?;
-//    let func_ptr = jit.get_func("main")?;
-//    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, i64) -> i64>(func_ptr) };
-//    assert_eq!((a * (a - b) * (a * (2.0 + b))) as i64, func(a, b as i64));
-//    Ok(())
-//}
+#[test]
+fn i64_params_multifunc() -> anyhow::Result<()> {
+  //Not currently working, see BLOCKERs in jit.rs
+    let code = r#"
+fn main(a: f64, b: i64) -> (c: i64) {
+    c = foo(a, b, 2)
+}
+fn foo(a: f64, b: i64, c: i64) -> (d: i64) {
+    d = int(a) + b + c
+}
+"#;
+    let a = 100.0f64;
+    let b = 200.0f64;
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    //let ast = validate_program(ast)?;
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, i64) -> i64>(func_ptr) };
+    assert_eq!((a * (a - b) * (a * (2.0 + b))) as i64, func(a, b as i64));
+    Ok(())
+}
 
 //#[test]
 //fn int_min_max() -> anyhow::Result<()> {
