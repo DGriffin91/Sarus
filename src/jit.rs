@@ -1,5 +1,5 @@
 use crate::frontend::*;
-use crate::validator::SType;
+use crate::validator::ExprType;
 use cranelift::codegen::ir::immediates::Offset32;
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
@@ -163,16 +163,19 @@ impl JIT {
 
         for p in &params {
             self.ctx.func.signature.params.push({
-                match p.type_ {
+                match &p.expr_type {
                     Some(t) => match t {
-                        Type_::F64 => AbiParam::new(types::F64),
-                        Type_::I64 => AbiParam::new(types::I64),
-                        Type_::UnboundedArrayF64 => {
+                        ExprType::F64 => AbiParam::new(types::F64),
+                        ExprType::I64 => AbiParam::new(types::I64),
+                        ExprType::UnboundedArrayF64 => {
                             AbiParam::new(self.module.target_config().pointer_type())
                         }
-                        Type_::UnboundedArrayI64 => {
+                        ExprType::UnboundedArrayI64 => {
                             AbiParam::new(self.module.target_config().pointer_type())
                         }
+                        ExprType::Void => continue,
+                        ExprType::Bool => AbiParam::new(types::B1),
+                        ExprType::Tuple(_) => anyhow::bail!("Tuple as parameter not supported"),
                     },
                     None => AbiParam::new(float),
                 }
@@ -182,9 +185,10 @@ impl JIT {
         for ret_arg in &returns {
             self.ctx.func.signature.returns.push(AbiParam::new(
                 ret_arg
-                    .type_
-                    .unwrap_or(Type_::F64)
-                    .cranelift_type(self.module.target_config().pointer_type()),
+                    .expr_type
+                    .as_ref()
+                    .unwrap_or(&ExprType::F64)
+                    .cranelift_type(self.module.target_config().pointer_type())?,
             ));
         }
 
@@ -237,24 +241,29 @@ impl JIT {
         let mut return_values = Vec::new();
         for ret in returns.iter() {
             let return_variable = trans.variables.get(&ret.name).unwrap();
-            let v = match ret.type_ {
+            let v = match &ret.expr_type {
                 Some(t) => match t {
-                    Type_::F64 => trans
+                    ExprType::F64 => trans
                         .builder
-                        .use_var(return_variable.expect_float("return_variable")?),
-                    Type_::I64 => trans
+                        .use_var(return_variable.expect_f64("return_variable")?),
+                    ExprType::I64 => trans
                         .builder
-                        .use_var(return_variable.expect_int("return_variable")?),
-                    Type_::UnboundedArrayF64 => trans
+                        .use_var(return_variable.expect_i64("return_variable")?),
+                    ExprType::UnboundedArrayF64 => trans
                         .builder
-                        .use_var(return_variable.expect_address("return_variable")?),
-                    Type_::UnboundedArrayI64 => trans
+                        .use_var(return_variable.expect_unbounded_array_f64("return_variable")?),
+                    ExprType::UnboundedArrayI64 => trans
                         .builder
-                        .use_var(return_variable.expect_address("return_variable")?),
+                        .use_var(return_variable.expect_unbounded_array_f64("return_variable")?),
+                    ExprType::Void => continue,
+                    ExprType::Bool => trans
+                        .builder
+                        .use_var(return_variable.expect_bool("return_variable")?),
+                    ExprType::Tuple(_) => anyhow::bail!("tuple not supported in return"),
                 },
                 None => trans
                     .builder
-                    .use_var(return_variable.expect_float("return_variable")?),
+                    .use_var(return_variable.expect_f64("return_variable")?),
             };
             return_values.push(v);
         }
@@ -302,48 +311,63 @@ pub enum SValue {
     Void,
     Unknown(Value),
     Bool(Value),
-    Float(Value),
-    Int(Value),
-    Address(Value),
+    F64(Value),
+    I64(Value),
+    UnboundedArrayF64(Value),
+    UnboundedArrayI64(Value),
     Tuple(Vec<SValue>),
 }
 
 impl Display for SValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SValue::Unknown(_) => write!(f, "Unknown"),
-            SValue::Bool(_) => write!(f, "Bool"),
-            SValue::Float(_) => write!(f, "Float"),
-            SValue::Int(_) => write!(f, "Int"),
-            SValue::Address(_) => write!(f, "Address"),
-            SValue::Void => write!(f, "Void"),
+            SValue::Unknown(_) => write!(f, "unknown"),
+            SValue::Bool(_) => write!(f, "bool"),
+            SValue::F64(_) => write!(f, "f64"),
+            SValue::I64(_) => write!(f, "i64"),
+            SValue::UnboundedArrayF64(_) => write!(f, "&[f64]"),
+            SValue::UnboundedArrayI64(_) => write!(f, "&[i64]"),
+            SValue::Void => write!(f, "void"),
             SValue::Tuple(v) => write!(f, "Tuple ({})", v.len()),
         }
     }
 }
 
 impl SValue {
+    fn from(expr_type: &ExprType, value: Value) -> anyhow::Result<SValue> {
+        Ok(match expr_type {
+            ExprType::Void => SValue::Void,
+            ExprType::Bool => SValue::Bool(value),
+            ExprType::F64 => SValue::F64(value),
+            ExprType::I64 => SValue::I64(value),
+            ExprType::UnboundedArrayF64 => SValue::UnboundedArrayF64(value),
+            ExprType::UnboundedArrayI64 => SValue::UnboundedArrayI64(value),
+            ExprType::Tuple(_) => anyhow::bail!("use SValue::from_tuple"),
+        })
+    }
+
     fn inner(&self, ctx: &str) -> anyhow::Result<Value> {
         match self {
             SValue::Unknown(v) => Ok(*v),
             SValue::Bool(v) => Ok(*v),
-            SValue::Float(v) => Ok(*v),
-            SValue::Int(v) => Ok(*v),
-            SValue::Address(v) => Ok(*v),
+            SValue::F64(v) => Ok(*v),
+            SValue::I64(v) => Ok(*v),
+            SValue::UnboundedArrayF64(v) => Ok(*v),
+            SValue::UnboundedArrayI64(v) => Ok(*v),
             SValue::Void => anyhow::bail!("void has no inner {}", ctx),
             SValue::Tuple(v) => anyhow::bail!("inner does not support tuple {:?} {}", v, ctx),
         }
     }
-    fn expect_float(&self, ctx: &str) -> anyhow::Result<Value> {
+    fn expect_f64(&self, ctx: &str) -> anyhow::Result<Value> {
         match self {
-            SValue::Float(v) => Ok(*v),
-            v => anyhow::bail!("incorrect type {} expected Float {}", v, ctx),
+            SValue::F64(v) => Ok(*v),
+            v => anyhow::bail!("incorrect type {} expected F64 {}", v, ctx),
         }
     }
-    fn expect_int(&self, ctx: &str) -> anyhow::Result<Value> {
+    fn expect_i64(&self, ctx: &str) -> anyhow::Result<Value> {
         match self {
-            SValue::Int(v) => Ok(*v),
-            v => anyhow::bail!("incorrect type {} expected Int {}", v, ctx),
+            SValue::I64(v) => Ok(*v),
+            v => anyhow::bail!("incorrect type {} expected I64 {}", v, ctx),
         }
     }
     fn expect_bool(&self, ctx: &str) -> anyhow::Result<Value> {
@@ -352,10 +376,16 @@ impl SValue {
             v => anyhow::bail!("incorrect type {} expected Bool {}", v, ctx),
         }
     }
-    fn expect_address(&self, ctx: &str) -> anyhow::Result<Value> {
+    fn expect_unbounded_array_f64(&self, ctx: &str) -> anyhow::Result<Value> {
         match self {
-            SValue::Address(v) => Ok(*v),
-            v => anyhow::bail!("incorrect type {} expected Address {}", v, ctx),
+            SValue::UnboundedArrayF64(v) => Ok(*v),
+            v => anyhow::bail!("incorrect type {} expected UnboundedArrayF64 {}", v, ctx),
+        }
+    }
+    fn expect_unbounded_array_i64(&self, ctx: &str) -> anyhow::Result<Value> {
+        match self {
+            SValue::UnboundedArrayI64(v) => Ok(*v),
+            v => anyhow::bail!("incorrect type {} expected UnboundedArrayI64 {}", v, ctx),
         }
     }
 }
@@ -375,10 +405,10 @@ impl<'a> FunctionTranslator<'a> {
     /// can then use these references in other instructions.
     fn translate_expr(&mut self, expr: &Expr) -> anyhow::Result<SValue> {
         match expr {
-            Expr::LiteralFloat(literal) => Ok(SValue::Float(
+            Expr::LiteralFloat(literal) => Ok(SValue::F64(
                 self.builder.ins().f64const::<f64>(literal.parse().unwrap()),
             )),
-            Expr::LiteralInt(literal) => Ok(SValue::Int(
+            Expr::LiteralInt(literal) => Ok(SValue::I64(
                 self.builder
                     .ins()
                     .iconst::<i64>(types::I64, literal.parse().unwrap()),
@@ -386,7 +416,7 @@ impl<'a> FunctionTranslator<'a> {
             Expr::Binop(op, lhs, rhs) => self.translate_binop(*op, lhs, rhs),
             Expr::Compare(cmp, lhs, rhs) => self.translate_cmp(*cmp, lhs, rhs),
             Expr::Call(name, args) => self.translate_call(name, args),
-            Expr::GlobalDataAddr(name) => Ok(SValue::Address(
+            Expr::GlobalDataAddr(name) => Ok(SValue::UnboundedArrayF64(
                 self.translate_global_data_addr(self.module.target_config().pointer_type(), name),
             )),
             Expr::Identifier(name) => {
@@ -395,11 +425,16 @@ impl<'a> FunctionTranslator<'a> {
                     Some(var) => Ok(match var {
                         SVariable::Unknown(_, v) => SValue::Unknown(self.builder.use_var(*v)),
                         SVariable::Bool(_, v) => SValue::Bool(self.builder.use_var(*v)),
-                        SVariable::Float(_, v) => SValue::Float(self.builder.use_var(*v)),
-                        SVariable::Int(_, v) => SValue::Int(self.builder.use_var(*v)),
-                        SVariable::Address(_, v) => SValue::Address(self.builder.use_var(*v)),
+                        SVariable::F64(_, v) => SValue::F64(self.builder.use_var(*v)),
+                        SVariable::I64(_, v) => SValue::I64(self.builder.use_var(*v)),
+                        SVariable::UnboundedArrayF64(_, v) => {
+                            SValue::UnboundedArrayF64(self.builder.use_var(*v))
+                        }
+                        SVariable::UnboundedArrayI64(_, v) => {
+                            SValue::UnboundedArrayF64(self.builder.use_var(*v))
+                        }
                     }),
-                    None => Ok(SValue::Float(
+                    None => Ok(SValue::F64(
                         //TODO Don't assume this is a float (this is used for math const)
                         self.translate_global_data_addr(types::F64, name),
                     )), //Try to load global
@@ -436,12 +471,12 @@ impl<'a> FunctionTranslator<'a> {
         let lhs = self.translate_expr(lhs)?;
         let rhs = self.translate_expr(rhs)?;
         match lhs {
-            SValue::Float(a) => match rhs {
-                SValue::Float(b) => Ok(SValue::Float(self.binop_float(op, a, b))),
+            SValue::F64(a) => match rhs {
+                SValue::F64(b) => Ok(SValue::F64(self.binop_float(op, a, b))),
                 _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs),
             },
-            SValue::Int(a) => match rhs {
-                SValue::Int(b) => Ok(SValue::Int(self.binop_int(op, a, b))),
+            SValue::I64(a) => match rhs {
+                SValue::I64(b) => Ok(SValue::I64(self.binop_int(op, a, b))),
                 _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs),
             },
             _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs),
@@ -471,20 +506,20 @@ impl<'a> FunctionTranslator<'a> {
         let rhs = self.translate_expr(rhs).unwrap();
         // if a or b is a float, convert to other to a float
         match lhs {
-            SValue::Float(a) => match rhs {
-                SValue::Float(b) => Ok(SValue::Bool(self.cmp_float(cmp, a, b))),
-                SValue::Int(b) => {
+            SValue::F64(a) => match rhs {
+                SValue::F64(b) => Ok(SValue::Bool(self.cmp_float(cmp, a, b))),
+                SValue::I64(b) => {
                     let f_b = self.builder.ins().fcvt_from_sint(types::F64, b);
                     Ok(SValue::Bool(self.cmp_float(cmp, f_b, b)))
                 }
                 _ => anyhow::bail!("compare not supported: {:?} {} {:?}", lhs, cmp, rhs),
             },
-            SValue::Int(a) => match rhs {
-                SValue::Float(b) => {
+            SValue::I64(a) => match rhs {
+                SValue::F64(b) => {
                     let f_a = self.builder.ins().fcvt_from_sint(types::F64, a);
                     Ok(SValue::Bool(self.cmp_float(cmp, f_a, b)))
                 }
-                SValue::Int(b) => Ok(SValue::Bool(self.cmp_int(cmp, a, b))),
+                SValue::I64(b) => Ok(SValue::Bool(self.cmp_int(cmp, a, b))),
                 _ => anyhow::bail!("compare not supported: {:?} {} {:?}", lhs, cmp, rhs),
             },
             _ => anyhow::bail!("compare not supported: {:?} {} {:?}", lhs, cmp, rhs),
@@ -545,19 +580,26 @@ impl<'a> FunctionTranslator<'a> {
                         self.builder.def_var(var.expect_bool("assign")?, v);
                         v
                     }
-                    SValue::Float(v) => {
-                        values.push(SValue::Float(v));
-                        self.builder.def_var(var.expect_float("assign")?, v);
+                    SValue::F64(v) => {
+                        values.push(SValue::F64(v));
+                        self.builder.def_var(var.expect_f64("assign")?, v);
                         v
                     }
-                    SValue::Int(v) => {
-                        values.push(SValue::Int(v));
-                        self.builder.def_var(var.expect_int("assign")?, v);
+                    SValue::I64(v) => {
+                        values.push(SValue::I64(v));
+                        self.builder.def_var(var.expect_i64("assign")?, v);
                         v
                     }
-                    SValue::Address(v) => {
-                        values.push(SValue::Address(v));
-                        self.builder.def_var(var.expect_address("assign")?, v);
+                    SValue::UnboundedArrayF64(v) => {
+                        values.push(SValue::UnboundedArrayF64(v));
+                        self.builder
+                            .def_var(var.expect_unbounded_array_f64("assign")?, v);
+                        v
+                    }
+                    SValue::UnboundedArrayI64(v) => {
+                        values.push(SValue::UnboundedArrayI64(v));
+                        self.builder
+                            .def_var(var.expect_unbounded_array_i64("assign")?, v);
                         v
                     }
                 };
@@ -579,18 +621,9 @@ impl<'a> FunctionTranslator<'a> {
                             Some(v) => v,
                             None => anyhow::bail!("variable {} not found", name),
                         };
-                        let sval = match values[i] {
-                            SValue::Tuple(_) => {
-                                anyhow::bail!("operation not supported {:?}", expr)
-                            }
-                            SValue::Void => anyhow::bail!("operation not supported {:?}", expr),
-                            SValue::Unknown(v) => v,
-                            SValue::Bool(v) => v,
-                            SValue::Float(v) => v,
-                            SValue::Int(v) => v,
-                            SValue::Address(v) => v,
-                        };
-                        self.builder.def_var(variable.inner(), sval);
+
+                        self.builder
+                            .def_var(variable.inner(), values[i].inner("assign")?);
                     }
                     if values.len() > 1 {
                         Ok(SValue::Tuple(
@@ -605,9 +638,10 @@ impl<'a> FunctionTranslator<'a> {
                 SValue::Void => anyhow::bail!("operation not supported {:?}", expr),
                 SValue::Unknown(_) => anyhow::bail!("operation not supported {:?}", expr),
                 SValue::Bool(_) => anyhow::bail!("operation not supported {:?}", expr),
-                SValue::Float(_) => anyhow::bail!("operation not supported {:?}", expr),
-                SValue::Int(_) => anyhow::bail!("operation not supported {:?}", expr),
-                SValue::Address(_) => anyhow::bail!("operation not supported {:?}", expr),
+                SValue::F64(_) => anyhow::bail!("operation not supported {:?}", expr),
+                SValue::I64(_) => anyhow::bail!("operation not supported {:?}", expr),
+                SValue::UnboundedArrayF64(_) => anyhow::bail!("operation not supported {:?}", expr),
+                SValue::UnboundedArrayI64(_) => anyhow::bail!("operation not supported {:?}", expr),
             }
         }
     }
@@ -623,8 +657,8 @@ impl<'a> FunctionTranslator<'a> {
 
         let idx_val = self.translate_expr(idx_expr).unwrap();
         let idx_val = match idx_val {
-            SValue::Float(v) => self.builder.ins().fcvt_to_uint(ptr_ty, v),
-            SValue::Int(v) => v,
+            SValue::F64(v) => self.builder.ins().fcvt_to_uint(ptr_ty, v),
+            SValue::I64(v) => v,
             _ => anyhow::bail!("only int and float supported for array access"),
         };
         let mult_n = self.builder.ins().iconst(ptr_ty, types::F64.bytes() as i64);
@@ -635,7 +669,7 @@ impl<'a> FunctionTranslator<'a> {
             self.builder
                 .ins()
                 .load(types::F64, MemFlags::trusted(), idx_ptr, Offset32::new(0));
-        Ok(SValue::Float(val)) //todo, don't assume this is a float
+        Ok(SValue::F64(val)) //todo, don't assume this is a float
     }
 
     fn translate_array_set(
@@ -652,33 +686,26 @@ impl<'a> FunctionTranslator<'a> {
             .variables
             .get(&name)
             .unwrap()
-            .expect_address("array_set")?;
+            .expect_unbounded_array_f64("array_set")?;
 
         let array_ptr = self.builder.use_var(variable);
 
         let idx_val = self.translate_expr(idx_expr)?;
         let idx_val = match idx_val {
-            SValue::Float(v) => self.builder.ins().fcvt_to_uint(ptr_ty, v),
-            SValue::Int(v) => v,
+            SValue::F64(v) => self.builder.ins().fcvt_to_uint(ptr_ty, v),
+            SValue::I64(v) => v,
             _ => anyhow::bail!("only int and float supported for array access"),
         };
         let mult_n = self.builder.ins().iconst(ptr_ty, types::F64.bytes() as i64);
         let idx_val = self.builder.ins().imul(mult_n, idx_val);
         let idx_ptr = self.builder.ins().iadd(idx_val, array_ptr);
 
-        let new_val = match new_val {
-            SValue::Float(v) => v,
-            SValue::Int(v) => v,
-            SValue::Void => anyhow::bail!("store Void not supported"),
-            SValue::Unknown(v) => v,
-            SValue::Bool(v) => v,
-            SValue::Address(v) => v,
-            SValue::Tuple(_) => anyhow::bail!("store tuple not supported"),
-        };
-
-        self.builder
-            .ins()
-            .store(MemFlags::trusted(), new_val, idx_ptr, Offset32::new(0));
+        self.builder.ins().store(
+            MemFlags::trusted(),
+            new_val.inner("array set")?,
+            idx_ptr,
+            Offset32::new(0),
+        );
         Ok(SValue::Void)
     }
 
@@ -689,11 +716,11 @@ impl<'a> FunctionTranslator<'a> {
         expr: &Expr,
     ) -> anyhow::Result<SValue> {
         match self.translate_expr(expr)? {
-            SValue::Float(v) => {
+            SValue::F64(v) => {
                 let orig_variable = self.variables.get(&*name).unwrap();
                 let orig_value = self
                     .builder
-                    .use_var(orig_variable.expect_float("math_assign")?);
+                    .use_var(orig_variable.expect_f64("math_assign")?);
                 let added_val = match op {
                     Binop::Add => self.builder.ins().fadd(orig_value, v),
                     Binop::Sub => self.builder.ins().fsub(orig_value, v),
@@ -701,14 +728,14 @@ impl<'a> FunctionTranslator<'a> {
                     Binop::Div => self.builder.ins().fdiv(orig_value, v),
                 };
                 self.builder
-                    .def_var(orig_variable.expect_float("math_assign")?, added_val);
-                Ok(SValue::Float(added_val))
+                    .def_var(orig_variable.expect_f64("math_assign")?, added_val);
+                Ok(SValue::F64(added_val))
             }
-            SValue::Int(v) => {
+            SValue::I64(v) => {
                 let orig_variable = self.variables.get(&*name).unwrap();
                 let orig_value = self
                     .builder
-                    .use_var(orig_variable.expect_int("math_assign")?);
+                    .use_var(orig_variable.expect_i64("math_assign")?);
                 let added_val = match op {
                     Binop::Add => self.builder.ins().iadd(orig_value, v),
                     Binop::Sub => self.builder.ins().isub(orig_value, v),
@@ -716,14 +743,19 @@ impl<'a> FunctionTranslator<'a> {
                     Binop::Div => self.builder.ins().sdiv(orig_value, v),
                 };
                 self.builder
-                    .def_var(orig_variable.expect_int("math_assign")?, added_val);
-                Ok(SValue::Int(added_val))
+                    .def_var(orig_variable.expect_i64("math_assign")?, added_val);
+                Ok(SValue::I64(added_val))
             }
             SValue::Void => anyhow::bail!("math assign Void not supported"),
             SValue::Unknown(_) => anyhow::bail!("math assign unknown not supported"),
             SValue::Bool(_) => anyhow::bail!("math assign bool not supported"),
-            SValue::Address(_) => anyhow::bail!("math assign address not supported"),
             SValue::Tuple(_) => anyhow::bail!("math assign tuple not supported"),
+            SValue::UnboundedArrayF64(_) => {
+                anyhow::bail!("math assign UnboundedArrayF64 not supported")
+            }
+            SValue::UnboundedArrayI64(_) => {
+                anyhow::bail!("math assign UnboundedArrayI64 not supported")
+            }
         }
     }
 
@@ -806,9 +838,10 @@ impl<'a> FunctionTranslator<'a> {
             SValue::Void => vec![],
             SValue::Unknown(v) => vec![v],
             SValue::Bool(v) => vec![v],
-            SValue::Float(v) => vec![v],
-            SValue::Int(v) => vec![v],
-            SValue::Address(v) => vec![v],
+            SValue::F64(v) => vec![v],
+            SValue::I64(v) => vec![v],
+            SValue::UnboundedArrayF64(v) => vec![v],
+            SValue::UnboundedArrayI64(v) => vec![v],
         };
 
         if then_value.to_string() != else_value.to_string() {
@@ -849,19 +882,22 @@ impl<'a> FunctionTranslator<'a> {
         if phi.len() > 1 {
             // TODO don't assume these are floats
             Ok(SValue::Tuple(
-                phi.iter()
-                    .map(|v| SValue::Float(*v))
-                    .collect::<Vec<SValue>>(),
+                phi.iter().map(|v| SValue::F64(*v)).collect::<Vec<SValue>>(),
             ))
         } else if phi.len() == 1 {
             match then_value {
                 SValue::Void => Ok(SValue::Void),
                 SValue::Unknown(_) => Ok(SValue::Unknown(*phi.first().unwrap())),
                 SValue::Bool(_) => Ok(SValue::Bool(*phi.first().unwrap())),
-                SValue::Float(_) => Ok(SValue::Float(*phi.first().unwrap())),
-                SValue::Int(_) => Ok(SValue::Int(*phi.first().unwrap())),
-                SValue::Address(_) => Ok(SValue::Address(*phi.first().unwrap())),
+                SValue::F64(_) => Ok(SValue::F64(*phi.first().unwrap())),
+                SValue::I64(_) => Ok(SValue::I64(*phi.first().unwrap())),
                 SValue::Tuple(_) => anyhow::bail!("not supported"),
+                SValue::UnboundedArrayF64(_) => {
+                    Ok(SValue::UnboundedArrayF64(*phi.first().unwrap()))
+                }
+                SValue::UnboundedArrayI64(_) => {
+                    Ok(SValue::UnboundedArrayI64(*phi.first().unwrap()))
+                }
             }
         } else {
             Ok(SValue::Void)
@@ -920,15 +956,22 @@ impl<'a> FunctionTranslator<'a> {
             }
             let mut arg_values = Vec::new();
             for (arg, expr) in func.params.iter().zip(args.iter()) {
-                //let tp = SType::of(arg, self.env, &self.variables)?;
+                //let tp = ExprType::of(arg, self.env, &self.variables)?;
                 sig.params.push(AbiParam::new(
-                    arg.type_.unwrap_or(Type_::F64).cranelift_type(ptr_ty),
+                    arg.expr_type
+                        .as_ref()
+                        .unwrap_or(&ExprType::F64)
+                        .cranelift_type(ptr_ty)?,
                 ));
                 arg_values.push(self.translate_expr(expr)?.inner("translate_call")?)
             }
-            for ret_arg in func.returns {
+            for ret_arg in &func.returns {
                 sig.returns.push(AbiParam::new(
-                    ret_arg.type_.unwrap_or(Type_::F64).cranelift_type(ptr_ty),
+                    ret_arg
+                        .expr_type
+                        .as_ref()
+                        .unwrap_or(&ExprType::F64)
+                        .cranelift_type(ptr_ty)?,
                 ));
             }
             let callee = self
@@ -943,11 +986,24 @@ impl<'a> FunctionTranslator<'a> {
             if res.len() > 1 {
                 Ok(SValue::Tuple(
                     res.iter()
-                        .map(|v| SValue::Float(*v))
+                        .zip(func.returns.iter())
+                        .map(|(v, arg)| {
+                            SValue::from(arg.expr_type.as_ref().unwrap_or(&ExprType::F64), *v)
+                                .unwrap()
+                        })
                         .collect::<Vec<SValue>>(),
                 ))
             } else if res.len() == 1 {
-                Ok(SValue::Float(*res.first().unwrap()))
+                Ok(SValue::from(
+                    &func
+                        .returns
+                        .first()
+                        .unwrap()
+                        .expr_type
+                        .as_ref()
+                        .unwrap_or(&ExprType::F64),
+                    *res.first().unwrap(),
+                )?)
             } else {
                 Ok(SValue::Void)
             }
@@ -979,19 +1035,17 @@ impl<'a> FunctionTranslator<'a> {
                 arg_values.push({
                     //BLOCKER TODO support returning more than just float
                     self.translate_expr(arg)?
-                        .expect_float(&format!("{} arg {}", name, i))?
+                        .expect_f64(&format!("{} arg {}", name, i))?
                 })
             }
             let call = self.builder.ins().call(local_callee, &arg_values);
             let res = self.builder.inst_results(call);
             if res.len() > 1 {
                 Ok(SValue::Tuple(
-                    res.iter()
-                        .map(|v| SValue::Float(*v))
-                        .collect::<Vec<SValue>>(),
+                    res.iter().map(|v| SValue::F64(*v)).collect::<Vec<SValue>>(),
                 ))
             } else if res.len() == 1 {
-                Ok(SValue::Float(*res.first().unwrap()))
+                Ok(SValue::F64(*res.first().unwrap()))
             } else {
                 Ok(SValue::Void)
             }
@@ -1020,24 +1074,24 @@ impl<'a> FunctionTranslator<'a> {
     fn translate_std(&mut self, name: &str, args: &[Expr]) -> anyhow::Result<Option<SValue>> {
         match args.len() {
             1 => match self.translate_expr(&args[0])? {
-                SValue::Float(v) => match name {
-                    "trunc" => Ok(Some(SValue::Float(self.builder.ins().trunc(v)))),
-                    "floor" => Ok(Some(SValue::Float(self.builder.ins().floor(v)))),
-                    "ceil" => Ok(Some(SValue::Float(self.builder.ins().ceil(v)))),
+                SValue::F64(v) => match name {
+                    "trunc" => Ok(Some(SValue::F64(self.builder.ins().trunc(v)))),
+                    "floor" => Ok(Some(SValue::F64(self.builder.ins().floor(v)))),
+                    "ceil" => Ok(Some(SValue::F64(self.builder.ins().ceil(v)))),
                     "fract" => {
                         let v_int = self.builder.ins().trunc(v);
                         let v = self.builder.ins().fsub(v, v_int);
-                        Ok(Some(SValue::Float(v)))
+                        Ok(Some(SValue::F64(v)))
                     }
-                    "abs" => Ok(Some(SValue::Float(self.builder.ins().fabs(v)))),
-                    "round" => Ok(Some(SValue::Float(self.builder.ins().nearest(v)))),
-                    "int" => Ok(Some(SValue::Int(
+                    "abs" => Ok(Some(SValue::F64(self.builder.ins().fabs(v)))),
+                    "round" => Ok(Some(SValue::F64(self.builder.ins().nearest(v)))),
+                    "int" => Ok(Some(SValue::I64(
                         self.builder.ins().fcvt_to_sint(types::I64, v),
                     ))),
                     _ => Ok(None),
                 },
-                SValue::Int(v) => match name {
-                    "float" => Ok(Some(SValue::Float(
+                SValue::I64(v) => match name {
+                    "float" => Ok(Some(SValue::F64(
                         self.builder.ins().fcvt_from_sint(types::F64, v),
                     ))),
                     _ => Ok(None),
@@ -1045,21 +1099,19 @@ impl<'a> FunctionTranslator<'a> {
                 t => anyhow::bail!("type {:?} not supported", t),
             },
             2 => match self.translate_expr(&args[0])? {
-                SValue::Float(v0) => {
-                    let v1 = self
-                        .translate_expr(&args[1])?
-                        .expect_float("translate_std")?;
+                SValue::F64(v0) => {
+                    let v1 = self.translate_expr(&args[1])?.expect_f64("translate_std")?;
                     match name {
-                        "min" => Ok(Some(SValue::Float(self.builder.ins().fmin(v0, v1)))),
-                        "max" => Ok(Some(SValue::Float(self.builder.ins().fmax(v0, v1)))),
+                        "min" => Ok(Some(SValue::F64(self.builder.ins().fmin(v0, v1)))),
+                        "max" => Ok(Some(SValue::F64(self.builder.ins().fmax(v0, v1)))),
                         _ => Ok(None),
                     }
                 }
-                SValue::Int(v0) => {
-                    let v1 = self.translate_expr(&args[1])?.expect_int("translate_std")?;
+                SValue::I64(v0) => {
+                    let v1 = self.translate_expr(&args[1])?.expect_i64("translate_std")?;
                     match name {
-                        "imin" => Ok(Some(SValue::Int(self.builder.ins().imin(v0, v1)))),
-                        "imax" => Ok(Some(SValue::Int(self.builder.ins().imax(v0, v1)))),
+                        "imin" => Ok(Some(SValue::I64(self.builder.ins().imin(v0, v1)))),
+                        "imax" => Ok(Some(SValue::I64(self.builder.ins().imax(v0, v1)))),
                         _ => Ok(None),
                     }
                 }
@@ -1078,9 +1130,10 @@ impl<'a> FunctionTranslator<'a> {
 pub enum SVariable {
     Unknown(String, Variable),
     Bool(String, Variable),
-    Float(String, Variable),
-    Int(String, Variable),
-    Address(String, Variable),
+    F64(String, Variable),
+    I64(String, Variable),
+    UnboundedArrayF64(String, Variable),
+    UnboundedArrayI64(String, Variable),
 }
 
 impl Display for SVariable {
@@ -1088,9 +1141,10 @@ impl Display for SVariable {
         match self {
             SVariable::Unknown(name, _) => write!(f, "Unknown {}", name),
             SVariable::Bool(name, _) => write!(f, "Bool {}", name),
-            SVariable::Float(name, _) => write!(f, "Float {}", name),
-            SVariable::Int(name, _) => write!(f, "Int {}", name),
-            SVariable::Address(name, _) => write!(f, "Address {}", name),
+            SVariable::F64(name, _) => write!(f, "Float {}", name),
+            SVariable::I64(name, _) => write!(f, "Int {}", name),
+            SVariable::UnboundedArrayF64(name, _) => write!(f, "UnboundedArrayF64 {}", name),
+            SVariable::UnboundedArrayI64(name, _) => write!(f, "UnboundedArrayI64 {}", name),
         }
     }
 }
@@ -1100,20 +1154,21 @@ impl SVariable {
         match self {
             SVariable::Unknown(_, v) => *v,
             SVariable::Bool(_, v) => *v,
-            SVariable::Float(_, v) => *v,
-            SVariable::Int(_, v) => *v,
-            SVariable::Address(_, v) => *v,
+            SVariable::F64(_, v) => *v,
+            SVariable::I64(_, v) => *v,
+            SVariable::UnboundedArrayF64(_, v) => *v,
+            SVariable::UnboundedArrayI64(_, v) => *v,
         }
     }
-    fn expect_float(&self, ctx: &str) -> anyhow::Result<Variable> {
+    fn expect_f64(&self, ctx: &str) -> anyhow::Result<Variable> {
         match self {
-            SVariable::Float(_, v) => Ok(*v),
+            SVariable::F64(_, v) => Ok(*v),
             v => anyhow::bail!("incorrect type {} expected Float {}", v, ctx),
         }
     }
-    fn expect_int(&self, ctx: &str) -> anyhow::Result<Variable> {
+    fn expect_i64(&self, ctx: &str) -> anyhow::Result<Variable> {
         match self {
-            SVariable::Int(_, v) => Ok(*v),
+            SVariable::I64(_, v) => Ok(*v),
             v => anyhow::bail!("incorrect type {} expected Int {}", v, ctx),
         }
     }
@@ -1123,9 +1178,15 @@ impl SVariable {
             v => anyhow::bail!("incorrect type {} expected Bool {}", v, ctx),
         }
     }
-    fn expect_address(&self, ctx: &str) -> anyhow::Result<Variable> {
+    fn expect_unbounded_array_f64(&self, ctx: &str) -> anyhow::Result<Variable> {
         match self {
-            SVariable::Address(_, v) => Ok(*v),
+            SVariable::UnboundedArrayF64(_, v) => Ok(*v),
+            v => anyhow::bail!("incorrect type {} expected Address {}", v, ctx),
+        }
+    }
+    fn expect_unbounded_array_i64(&self, ctx: &str) -> anyhow::Result<Variable> {
+        match self {
+            SVariable::UnboundedArrayI64(_, v) => Ok(*v),
             v => anyhow::bail!("incorrect type {} expected Address {}", v, ctx),
         }
     }
@@ -1249,8 +1310,10 @@ fn declare_variable_from_expr(
             )?;
         }
         expr => {
-            let stype = SType::of(expr, &env, variables)?;
-            declare_variable_from_type(ptr_type, &stype, builder, variables, index, names, env)?;
+            let expr_type = ExprType::of(expr, &env, variables)?;
+            declare_variable_from_type(
+                ptr_type, &expr_type, builder, variables, index, names, env,
+            )?;
         }
     };
     Ok(())
@@ -1258,7 +1321,7 @@ fn declare_variable_from_expr(
 
 fn declare_variable_from_type(
     ptr_type: Type,
-    stype: &SType,
+    expr_type: &ExprType,
     builder: &mut FunctionBuilder,
     variables: &mut HashMap<String, SVariable>,
     index: &mut usize,
@@ -1266,9 +1329,9 @@ fn declare_variable_from_type(
     env: &[Declaration],
 ) -> anyhow::Result<()> {
     let name = *names.first().unwrap();
-    match stype {
-        SType::Void => anyhow::bail!("can't assign void type to {}", name),
-        SType::Bool => {
+    match expr_type {
+        ExprType::Void => anyhow::bail!("can't assign void type to {}", name),
+        ExprType::Bool => {
             if !variables.contains_key(name) {
                 let var = Variable::new(*index);
                 variables.insert(name.into(), SVariable::Bool(name.into(), var));
@@ -1276,38 +1339,38 @@ fn declare_variable_from_type(
                 *index += 1;
             }
         }
-        SType::Float => {
+        ExprType::F64 => {
             if !variables.contains_key(name) {
                 let var = Variable::new(*index);
-                variables.insert(name.into(), SVariable::Float(name.into(), var));
+                variables.insert(name.into(), SVariable::F64(name.into(), var));
                 builder.declare_var(var, types::F64);
                 *index += 1;
             }
         }
-        SType::Int => {
+        ExprType::I64 => {
             if !variables.contains_key(name) {
                 let var = Variable::new(*index);
-                variables.insert(name.into(), SVariable::Int(name.into(), var));
+                variables.insert(name.into(), SVariable::I64(name.into(), var));
                 builder.declare_var(var, types::I64);
                 *index += 1;
             }
         }
-        SType::Address => {
+        ExprType::UnboundedArrayF64 | ExprType::UnboundedArrayI64 => {
             if !variables.contains_key(name) {
                 let var = Variable::new(*index);
-                variables.insert(name.into(), SVariable::Address(name.into(), var));
+                variables.insert(name.into(), SVariable::UnboundedArrayF64(name.into(), var));
                 builder.declare_var(var, ptr_type);
                 *index += 1;
             }
         }
-        SType::Tuple(stypes) => {
-            if stypes.len() == 1 {
+        ExprType::Tuple(expr_types) => {
+            if expr_types.len() == 1 {
                 //Single nested tuple
-                if let SType::Tuple(stypes) = stypes.first().unwrap() {
-                    for (stype, sname) in stypes.iter().zip(names.iter()) {
+                if let ExprType::Tuple(expr_types) = expr_types.first().unwrap() {
+                    for (expr_type, sname) in expr_types.iter().zip(names.iter()) {
                         declare_variable_from_type(
                             ptr_type,
-                            stype,
+                            expr_type,
                             builder,
                             variables,
                             index,
@@ -1318,10 +1381,10 @@ fn declare_variable_from_type(
                     return Ok(());
                 }
             }
-            for (stype, sname) in stypes.iter().zip(names.iter()) {
+            for (expr_type, sname) in expr_types.iter().zip(names.iter()) {
                 declare_variable_from_type(
                     ptr_type,
-                    stype,
+                    expr_type,
                     builder,
                     variables,
                     index,
@@ -1343,27 +1406,33 @@ fn declare_variable(
 ) -> Option<SVariable> {
     let ptr_ty = module.target_config().pointer_type();
     if !variables.contains_key(&arg.name) {
-        let (var, ty) = match arg.type_ {
+        let (var, ty) = match &arg.expr_type {
             Some(t) => match t {
-                Type_::F64 => (
-                    SVariable::Float(arg.name.clone(), Variable::new(*index)),
+                ExprType::F64 => (
+                    SVariable::F64(arg.name.clone(), Variable::new(*index)),
                     types::F64,
                 ),
-                Type_::I64 => (
-                    SVariable::Int(arg.name.clone(), Variable::new(*index)),
+                ExprType::I64 => (
+                    SVariable::I64(arg.name.clone(), Variable::new(*index)),
                     types::I64,
                 ),
-                Type_::UnboundedArrayF64 => (
-                    SVariable::Address(arg.name.clone(), Variable::new(*index)),
+                ExprType::UnboundedArrayF64 => (
+                    SVariable::UnboundedArrayF64(arg.name.clone(), Variable::new(*index)),
                     ptr_ty,
                 ),
-                Type_::UnboundedArrayI64 => (
-                    SVariable::Address(arg.name.clone(), Variable::new(*index)),
+                ExprType::UnboundedArrayI64 => (
+                    SVariable::UnboundedArrayF64(arg.name.clone(), Variable::new(*index)),
                     ptr_ty,
                 ),
+                ExprType::Void => return None,
+                ExprType::Bool => (
+                    SVariable::Bool(arg.name.clone(), Variable::new(*index)),
+                    types::B1,
+                ),
+                ExprType::Tuple(_) => return None, //anyhow::bail!("single variable tuple not supported"),
             },
             None => (
-                SVariable::Float(arg.name.clone(), Variable::new(*index)),
+                SVariable::F64(arg.name.clone(), Variable::new(*index)),
                 types::F64,
             ),
         };

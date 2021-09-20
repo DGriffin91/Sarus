@@ -1,4 +1,6 @@
+use crate::validator::ExprType;
 use std::fmt::Display;
+
 use std::fmt::Write;
 
 /// "Mathematical" binary operations variants
@@ -181,45 +183,15 @@ impl Display for Declaration {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum Type_ {
-    F64,
-    I64,
-    UnboundedArrayF64,
-    UnboundedArrayI64,
-}
-
-impl Type_ {
-    pub fn cranelift_type(&self, ptr_type: cranelift::prelude::Type) -> cranelift::prelude::Type {
-        match self {
-            Type_::F64 => cranelift::prelude::types::F64,
-            Type_::I64 => cranelift::prelude::types::I64,
-            Type_::UnboundedArrayF64 => ptr_type,
-            Type_::UnboundedArrayI64 => ptr_type,
-        }
-    }
-}
-
-impl Display for Type_ {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Type_::F64 => write!(f, "f64"),
-            Type_::I64 => write!(f, "i64"),
-            Type_::UnboundedArrayF64 => write!(f, "&[f64]"),
-            Type_::UnboundedArrayI64 => write!(f, "&[i64]"),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Arg {
     pub name: String,
-    pub type_: Option<Type_>, //Type is F64 if not specified
+    pub expr_type: Option<ExprType>, //Type is F64 if not specified
 }
 
 impl Display for Arg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.type_ {
+        match &self.expr_type {
             Some(t) => write!(f, "{}: {}", self.name, t),
             None => write!(f, "{}", self.name),
         }
@@ -314,14 +286,14 @@ peg::parser!(pub grammar parser() for str {
         }) }
 
     rule arg() -> Arg
-        = _ i:identifier() _ ":" _ t:type_label() _ { Arg {name: i.into(), type_: Some(t.into()) } }
-        / _ i:identifier() _ { Arg {name: i.into(), type_: None } }
+        = _ i:identifier() _ ":" _ t:type_label() _ { Arg {name: i.into(), expr_type: Some(t.into()) } }
+        / _ i:identifier() _ { Arg {name: i.into(), expr_type: None } }
 
-    rule type_label() -> Type_
-        = _ n:$("f64") _ { Type_::F64 }
-        / _ n:$("i64") _ { Type_::I64 }
-        / _ n:$("&[f64]") _ { Type_::UnboundedArrayF64 }
-        / _ n:$("&[i64]") _ { Type_::UnboundedArrayI64 }
+    rule type_label() -> ExprType
+        = _ n:$("f64") _ { ExprType::F64 }
+        / _ n:$("i64") _ { ExprType::I64 }
+        / _ n:$("&[f64]") _ { ExprType::UnboundedArrayF64 }
+        / _ n:$("&[i64]") _ { ExprType::UnboundedArrayI64 }
 
     rule block() -> Vec<Expr>
         = _ "{" b:(statement() ** _) _ "}" { b }

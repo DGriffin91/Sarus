@@ -34,7 +34,10 @@ const STD_2ARG_I: [&str; 2] = [
 #[derive(Debug, Clone, Error)]
 pub enum TypeError {
     #[error("Type mismatch; expected {expected}, found {actual}")]
-    TypeMismatch { expected: SType, actual: SType },
+    TypeMismatch {
+        expected: ExprType,
+        actual: ExprType,
+    },
     #[error("Type mismatch; {s}")]
     TypeMismatchSpecific { s: String },
     #[error("Tuple length mismatch; expected {expected} found {actual}")]
@@ -44,24 +47,26 @@ pub enum TypeError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SType {
+pub enum ExprType {
     Void,
     Bool,
-    Float,
-    Int,
-    Address,
-    Tuple(Vec<SType>),
+    F64,
+    I64,
+    UnboundedArrayF64,
+    UnboundedArrayI64,
+    Tuple(Vec<ExprType>),
 }
 
-impl Display for SType {
+impl Display for ExprType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SType::Void => write!(f, "void"),
-            SType::Bool => write!(f, "bool"),
-            SType::Float => write!(f, "float"),
-            SType::Int => write!(f, "int"),
-            SType::Address => write!(f, "address"),
-            SType::Tuple(inner) => {
+            ExprType::Void => write!(f, "void"),
+            ExprType::Bool => write!(f, "bool"),
+            ExprType::F64 => write!(f, "f64"),
+            ExprType::I64 => write!(f, "i64"),
+            ExprType::UnboundedArrayF64 => write!(f, "&[f64]"),
+            ExprType::UnboundedArrayI64 => write!(f, "&[i64]"),
+            ExprType::Tuple(inner) => {
                 write!(f, "(")?;
                 inner
                     .iter()
@@ -73,34 +78,35 @@ impl Display for SType {
     }
 }
 
-impl SType {
+impl ExprType {
     pub fn of(
         expr: &Expr,
         env: &[Declaration],
         variables: &HashMap<String, SVariable>,
-    ) -> Result<SType, TypeError> {
+    ) -> Result<ExprType, TypeError> {
         let res = match expr {
             //TODO don't assume all identifiers are floats
             Expr::Identifier(id_name) => {
                 if variables.contains_key(id_name) {
                     match variables[id_name] {
-                        SVariable::Unknown(_, _) => SType::Address,
-                        SVariable::Bool(_, _) => SType::Bool,
-                        SVariable::Float(_, _) => SType::Float,
-                        SVariable::Int(_, _) => SType::Int,
-                        SVariable::Address(_, _) => SType::Address,
+                        SVariable::Unknown(_, _) => ExprType::F64, //TODO
+                        SVariable::Bool(_, _) => ExprType::Bool,
+                        SVariable::F64(_, _) => ExprType::F64,
+                        SVariable::I64(_, _) => ExprType::I64,
+                        SVariable::UnboundedArrayF64(_, _) => ExprType::UnboundedArrayF64,
+                        SVariable::UnboundedArrayI64(_, _) => ExprType::UnboundedArrayI64,
                     }
                 } else {
                     //This doesn't really make sense.
                     //The validator needs to be aware of previous vars
-                    SType::Float
+                    ExprType::F64
                 }
             }
-            Expr::LiteralFloat(_) => SType::Float,
-            Expr::LiteralInt(_) => SType::Int,
+            Expr::LiteralFloat(_) => ExprType::F64,
+            Expr::LiteralInt(_) => ExprType::I64,
             Expr::Binop(_, l, r) => {
-                let lt = SType::of(l, env, variables)?;
-                let rt = SType::of(r, env, variables)?;
+                let lt = ExprType::of(l, env, variables)?;
+                let rt = ExprType::of(r, env, variables)?;
                 if lt == rt {
                     lt
                 } else {
@@ -110,40 +116,40 @@ impl SType {
                     });
                 }
             }
-            Expr::Compare(_, _, _) => SType::Bool,
+            Expr::Compare(_, _, _) => ExprType::Bool,
             Expr::IfThen(econd, _) => {
-                let tcond = SType::of(econd, env, variables)?;
-                if tcond != SType::Bool {
+                let tcond = ExprType::of(econd, env, variables)?;
+                if tcond != ExprType::Bool {
                     return Err(TypeError::TypeMismatch {
-                        expected: SType::Bool,
+                        expected: ExprType::Bool,
                         actual: tcond,
                     });
                 }
-                SType::Void
+                ExprType::Void
             }
             Expr::IfElse(econd, etrue, efalse) => {
-                let tcond = SType::of(econd, env, variables)?;
-                if tcond != SType::Bool {
+                let tcond = ExprType::of(econd, env, variables)?;
+                if tcond != ExprType::Bool {
                     return Err(TypeError::TypeMismatch {
-                        expected: SType::Bool,
+                        expected: ExprType::Bool,
                         actual: tcond,
                     });
                 }
 
                 let ttrue = etrue
                     .iter()
-                    .map(|e| SType::of(e, env, variables))
+                    .map(|e| ExprType::of(e, env, variables))
                     .collect::<Result<Vec<_>, _>>()?
                     .last()
                     .cloned()
-                    .unwrap_or(SType::Void);
+                    .unwrap_or(ExprType::Void);
                 let tfalse = efalse
                     .iter()
-                    .map(|e| SType::of(e, env, variables))
+                    .map(|e| ExprType::of(e, env, variables))
                     .collect::<Result<Vec<_>, _>>()?
                     .last()
                     .cloned()
-                    .unwrap_or(SType::Void);
+                    .unwrap_or(ExprType::Void);
 
                 if ttrue == tfalse {
                     ttrue
@@ -156,7 +162,7 @@ impl SType {
             }
             Expr::Assign(vars, e) => {
                 let tlen = match e.len().into() {
-                    1 => SType::of(&e[0], env, variables)?.tuple_size(),
+                    1 => ExprType::of(&e[0], env, variables)?.tuple_size(),
                     n => n,
                 };
                 if usize::from(vars.len()) != tlen {
@@ -165,20 +171,20 @@ impl SType {
                         expected: tlen,
                     });
                 }
-                SType::Tuple(
+                ExprType::Tuple(
                     e.iter()
-                        .map(|e| SType::of(e, env, variables))
+                        .map(|e| ExprType::of(e, env, variables))
                         .collect::<Result<Vec<_>, _>>()?,
                 )
             }
-            Expr::AssignOp(_, _, e) => SType::of(e, env, variables)?,
-            Expr::WhileLoop(_, _) => SType::Void,
+            Expr::AssignOp(_, _, e) => ExprType::of(e, env, variables)?,
+            Expr::WhileLoop(_, _) => ExprType::Void,
             Expr::Block(b) => b
                 .iter()
-                .map(|e| SType::of(e, env, variables))
+                .map(|e| ExprType::of(e, env, variables))
                 .last()
                 .map(Result::unwrap)
-                .unwrap_or(SType::Void),
+                .unwrap_or(ExprType::Void),
             Expr::Call(fn_name, args) => {
                 if let Some(d) = env.iter().find_map(|d| match d {
                     Declaration::Function(func) => {
@@ -192,13 +198,15 @@ impl SType {
                 }) {
                     if d.params.len() == args.len() {
                         //TODO make sure types match too
-                        let targs: Result<Vec<_>, _> =
-                            args.iter().map(|e| SType::of(e, env, variables)).collect();
+                        let targs: Result<Vec<_>, _> = args
+                            .iter()
+                            .map(|e| ExprType::of(e, env, variables))
+                            .collect();
                         match targs {
                             Ok(_) => match &d.returns {
-                                v if v.is_empty() => SType::Void,
-                                v if v.len() == 1 => SType::Float,
-                                v => SType::Tuple(vec![SType::Float; v.len()]),
+                                v if v.is_empty() => ExprType::Void,
+                                v if v.len() == 1 => ExprType::F64,
+                                v => ExprType::Tuple(vec![ExprType::F64; v.len()]),
                             },
                             Err(err) => return Err(err),
                         }
@@ -210,7 +218,7 @@ impl SType {
                     }
                 } else if STD_1ARG_F.contains(&fn_name.as_str()) {
                     if args.len() == 1 {
-                        SType::Float
+                        ExprType::F64
                     } else {
                         return Err(TypeError::TupleLengthMismatch {
                             expected: 1,
@@ -219,7 +227,7 @@ impl SType {
                     }
                 } else if STD_2ARG_F.contains(&fn_name.as_str()) {
                     if args.len() == 2 {
-                        SType::Float
+                        ExprType::F64
                     } else {
                         return Err(TypeError::TupleLengthMismatch {
                             expected: 2,
@@ -228,7 +236,7 @@ impl SType {
                     }
                 } else if STD_1ARG_I.contains(&fn_name.as_str()) {
                     if args.len() == 1 {
-                        SType::Int
+                        ExprType::I64
                     } else {
                         return Err(TypeError::TupleLengthMismatch {
                             expected: 1,
@@ -237,7 +245,7 @@ impl SType {
                     }
                 } else if STD_2ARG_I.contains(&fn_name.as_str()) {
                     if args.len() == 2 {
-                        SType::Int
+                        ExprType::I64
                     } else {
                         return Err(TypeError::TupleLengthMismatch {
                             expected: 2,
@@ -248,20 +256,24 @@ impl SType {
                     return Err(TypeError::UnknownFunction(fn_name.to_string()));
                 }
             }
-            Expr::GlobalDataAddr(_) => SType::Float,
-            Expr::Bool(_) => SType::Bool,
-            Expr::Parentheses(expr) => SType::of(expr, env, variables)?,
-            Expr::ArraySet(_, _, e) => SType::of(e, env, variables)?,
-            Expr::ArrayGet(_, _) => SType::Float,
+            Expr::GlobalDataAddr(_) => ExprType::F64,
+            Expr::Bool(_) => ExprType::Bool,
+            Expr::Parentheses(expr) => ExprType::of(expr, env, variables)?,
+            Expr::ArraySet(_, _, e) => ExprType::of(e, env, variables)?,
+            Expr::ArrayGet(_, _) => ExprType::F64,
         };
         Ok(res)
     }
 
     pub fn tuple_size(&self) -> usize {
         match self {
-            SType::Void => 0,
-            SType::Bool | SType::Float | SType::Address | SType::Int => 1,
-            SType::Tuple(v) => v.len(),
+            ExprType::Void => 0,
+            ExprType::Bool
+            | ExprType::F64
+            | ExprType::UnboundedArrayF64
+            | ExprType::UnboundedArrayI64
+            | ExprType::I64 => 1,
+            ExprType::Tuple(v) => v.len(),
         }
     }
 
@@ -270,14 +282,15 @@ impl SType {
         ptr_type: cranelift::prelude::Type,
     ) -> Result<cranelift::prelude::Type, TypeError> {
         match self {
-            SType::Void => Err(TypeError::TypeMismatchSpecific {
+            ExprType::Void => Err(TypeError::TypeMismatchSpecific {
                 s: "Void has no cranelift analog".to_string(),
             }),
-            SType::Bool => Ok(cranelift::prelude::types::B1),
-            SType::Float => Ok(cranelift::prelude::types::B64),
-            SType::Int => Ok(cranelift::prelude::types::I64),
-            SType::Address => Ok(ptr_type),
-            SType::Tuple(_) => Err(TypeError::TypeMismatchSpecific {
+            ExprType::Bool => Ok(cranelift::prelude::types::B1),
+            ExprType::F64 => Ok(cranelift::prelude::types::F64),
+            ExprType::I64 => Ok(cranelift::prelude::types::I64),
+            ExprType::UnboundedArrayI64 => Ok(ptr_type),
+            ExprType::UnboundedArrayF64 => Ok(ptr_type),
+            ExprType::Tuple(_) => Err(TypeError::TypeMismatchSpecific {
                 s: "Tuple has no cranelift analog".to_string(),
             }),
         }
@@ -291,7 +304,7 @@ pub fn validate_program(decls: Vec<Declaration>) -> Result<Vec<Declaration>, Typ
         _ => None,
     }) {
         for expr in &func.body {
-            SType::of(expr, &decls, &variables)?;
+            ExprType::of(expr, &decls, &variables)?;
         }
     }
     Ok(decls)

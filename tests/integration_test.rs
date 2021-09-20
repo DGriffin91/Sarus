@@ -698,7 +698,7 @@ fn main(a: f64, b: i64) -> (c: i64) {
 
 #[test]
 fn i64_params_multifunc() -> anyhow::Result<()> {
-  //Not currently working, see BLOCKERs in jit.rs
+    //Not currently working, see BLOCKERs in jit.rs
     let code = r#"
 fn main(a: f64, b: i64) -> (c: i64) {
     c = foo(a, b, 2)
@@ -715,7 +715,7 @@ fn foo(a: f64, b: i64, c: i64) -> (d: i64) {
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, i64) -> i64>(func_ptr) };
-    assert_eq!((a * (a - b) * (a * (2.0 + b))) as i64, func(a, b as i64));
+    assert_eq!(302, func(a, b as i64));
     Ok(())
 }
 

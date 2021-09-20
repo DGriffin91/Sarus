@@ -3,9 +3,9 @@ use std::{collections::HashMap, fmt::Debug};
 use toposort_scc::IndexGraph;
 
 use crate::{
-    frontend::{make_nonempty, parser, Arg, Binop, Cmp, Declaration, Expr, Function, Type_},
+    frontend::{make_nonempty, parser, Arg, Binop, Cmp, Declaration, Expr, Function},
     jit,
-    validator::validate_program,
+    validator::{validate_program, ExprType},
 };
 
 #[derive(Debug, Clone)]
@@ -228,7 +228,7 @@ fn build_graph_func(
         name: "graph".to_string(),
         params: vec![Arg {
             name: "audio".into(),
-            type_: Some(Type_::UnboundedArrayF64),
+            expr_type: Some(ExprType::UnboundedArrayF64),
         }],
         returns: vec![],
         body: main_body,

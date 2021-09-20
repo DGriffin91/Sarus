@@ -13,25 +13,27 @@ fn rand64(x: f64) -> f64 {
     ((x * 12000000.9898).sin() * 43758.5453).fract()
 }
 
-fn filter_benchmark_1(iterations: f64, output_array: &mut [f64]) -> f64 {
+fn filter_benchmark_1(iterations: usize, output_array: &mut [f64]) -> f64 {
     let fs = 48000.0;
     let mut filter1 = IIR2::from(IIR2Coefficients::highpass(100.0, 0.0, 1.0, fs));
     let mut filter2 = IIR2::from(IIR2Coefficients::lowpass(5000.0, 0.0, 1.0, fs));
     let mut filter3 = IIR2::from(IIR2Coefficients::highshelf(2000.0, 6.0, 1.0, fs));
     let mut sum = 0.0;
-    let mut i = 0.0;
+    let mut i = 0usize;
+    let mut f_i = 0.0f64;
     while i < iterations {
-        let n = (i * 0.01).sin();
+        let n = (f_i * 0.01).sin();
         filter1.coeffs = IIR2Coefficients::highpass(n * 100.0 + 200.0, 0.0, 1.0, fs);
         filter2.coeffs = IIR2Coefficients::lowpass(n * 100.0 + 2000.0, 0.0, 1.0, fs);
         filter3.coeffs = IIR2Coefficients::highshelf(n * 100.0 + 1000.0, 6.0, 1.0, fs);
-        let mut sample = (rand64(i) * 100000.0).floor() * 0.00001;
+        let mut sample = (rand64(f_i) * 100000.0).floor() * 0.00001;
         sample = filter1.process(sample);
         sample = filter2.process(sample);
         sample = filter3.process(sample);
         sum += sample;
         output_array[i as usize] = sample;
-        i += 1.0;
+        i += 1;
+        f_i += 1.0;
     }
     //dbg!(IIR2Coefficients::highshelf(2000.0, 6.0, 1.0, fs));
     sum
@@ -43,7 +45,7 @@ fn test_static_filter_benchmark_1(b: &mut Bencher) {
     let mut output_arr = [0.0f64; 48000];
     b.iter(|| {
         //test::black_box({
-        result = filter_benchmark_1(48000.0, &mut output_arr);
+        result = filter_benchmark_1(48000usize, &mut output_arr);
         //});
     });
     dbg!((result, output_arr.iter().sum::<f64>()));
@@ -98,7 +100,7 @@ fn get_eq_jit() -> jit::JIT {
         n_ic2eq = 2.0 * v2 - ic2eq
         n_x = m0 * x + m1 * v1 + m2 * v2
     }
-    fn main(iterations, &output_arr) -> (sum) {
+    fn main(iterations: i64, output_arr: &[f64]) -> (sum) {
         fs = 48000.0
         f1_a1, f1_a2, f1_a3, f1_m0, f1_m1, f1_m2 = highpass(100.0, 1.0, fs)
         f2_a1, f2_a2, f2_a3, f2_m0, f2_m1, f2_m2 = lowpass(5000.0, 1.0, fs)
@@ -106,11 +108,10 @@ fn get_eq_jit() -> jit::JIT {
         f1_ic1eq, f1_ic2eq = 0.0, 0.0
         f2_ic1eq, f2_ic2eq = 0.0, 0.0
         f3_ic1eq, f3_ic2eq = 0.0, 0.0
-        i_iterations = int(iterations)
         sum = 0.0
         i = 0
         f_i = 0.0
-        while i < i_iterations {
+        while i < iterations {
             n = sin(f_i*0.01)        
             f1_a1, f1_a2, f1_a3, f1_m0, f1_m1, f1_m2 = highpass(n * 100.0 + 200.0, 1.0, fs)
             f2_a1, f2_a2, f2_a3, f2_m0, f2_m1, f2_m2 = lowpass(n * 100.0 + 2000.0, 1.0, fs)
@@ -120,7 +121,7 @@ fn get_eq_jit() -> jit::JIT {
             sample, f2_ic1eq, f2_ic2eq = process(sample, f2_ic1eq, f2_ic2eq, f2_a1, f2_a2, f2_a3, f2_m0, f2_m1, f2_m2)
             sample, f3_ic1eq, f3_ic2eq = process(sample, f3_ic1eq, f3_ic2eq, f3_a1, f3_a2, f3_a3, f3_m0, f3_m1, f3_m2)    
             sum += sample
-            &output_arr[i] = sample
+            output_arr[i] = sample
             i += 1
             f_i += 1.0
         }
@@ -165,9 +166,9 @@ fn eq(b: &mut Bencher) {
         test::black_box({
             let func_ptr = jit.get_func("main").unwrap();
             let func = unsafe {
-                mem::transmute::<_, extern "C" fn(f64, &mut [f64; 48000]) -> f64>(func_ptr)
+                mem::transmute::<_, extern "C" fn(i64, &mut [f64; 48000]) -> f64>(func_ptr)
             };
-            result = func(48000.0, &mut output_arr)
+            result = func(48000, &mut output_arr)
         });
     });
     dbg!((result, output_arr.iter().sum::<f64>()));
@@ -175,16 +176,16 @@ fn eq(b: &mut Bencher) {
 
 #[test]
 fn compare_eq() {
-    let iterations = 48000.0;
+    let iterations = 48000;
     let mut output_arr = [0.0f64; 48000];
     let mut jit = get_eq_jit();
     let func_ptr = jit.get_func("main").unwrap();
     let func =
-        unsafe { mem::transmute::<_, extern "C" fn(f64, &mut [f64; 48000]) -> f64>(func_ptr) };
+        unsafe { mem::transmute::<_, extern "C" fn(i64, &mut [f64; 48000]) -> f64>(func_ptr) };
     let result: f64 = func(iterations, &mut output_arr);
     //println!("{:?}", &output_arr[0..10]);
     let mut output_arr2 = [0.0f64; 48000];
-    let result2 = filter_benchmark_1(iterations, &mut output_arr2);
+    let result2 = filter_benchmark_1(iterations as usize, &mut output_arr2);
     println!("{} {}", result, result2);
     //println!("{:?}", output_arr2);
     write_wav(&output_arr, "sc.wav");
