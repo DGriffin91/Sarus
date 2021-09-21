@@ -229,6 +229,6 @@ fn build_graph_func(
         }],
         returns: vec![],
         body: main_body,
-        std_func: false,
+        extern_func: false,
     }))
 }

@@ -51,6 +51,24 @@ impl Default for JIT {
 }
 
 impl JIT {
+    pub fn new(symbols: &[(&str, *const u8)]) -> Self {
+        let mut builder = JITBuilder::new(cranelift_module::default_libcall_names());
+
+        for (name, func) in symbols {
+            builder.symbol(*name, *func);
+        }
+
+        let module = JITModule::new(builder);
+        Self {
+            builder_context: FunctionBuilderContext::new(),
+            ctx: module.make_context(),
+            data_ctx: DataContext::new(),
+            module,
+            clif: HashMap::new(),
+            variables: HashMap::new(),
+        }
+    }
+
     /// Compile a string in the toy language into machine code.
     pub fn translate(&mut self, prog: Vec<Declaration>) -> anyhow::Result<()> {
         //let mut return_counts = HashMap::new();
@@ -73,7 +91,7 @@ impl JIT {
         for d in prog.clone() {
             match d {
                 Declaration::Function(func) => {
-                    if func.std_func {
+                    if func.extern_func {
                         //Don't parse contents of std func, it will be empty
                         continue;
                     }
@@ -968,7 +986,7 @@ impl<'a> FunctionTranslator<'a> {
         }
 
         let mut arg_values = Vec::new();
-        if func.std_func {
+        if func.extern_func {
             if let Some(v) = self.translate_std(name, args)? {
                 return Ok(v);
             }

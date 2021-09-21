@@ -742,6 +742,37 @@ fn main(a: f64, b: bool) -> (c: f64) {
     Ok(())
 }
 
+extern "C" fn mult(a: f64, b: f64) -> f64 {
+    a * b
+}
+
+extern "C" fn prt(a: f64) {
+    dbg!(a);
+}
+
+#[test]
+fn extern_func() -> anyhow::Result<()> {
+    let code = r#"
+fn main(a: f64, b: f64) -> (c: f64) {
+    c = mult(a, b)
+    print(a)
+}
+
+extern fn mult(a: f64, b: f64) -> (c: f64) {}
+extern fn print(a: f64) -> () {}
+"#;
+    let a = 100.0f64;
+    let b = 100.0f64;
+    let mut jit = jit::JIT::new(&[("mult", mult as *const u8), ("print", prt as *const u8)]);
+    let ast = parser::program(&code)?;
+    let ast = sarus_std_lib::append_std_funcs(ast);
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    assert_eq!(mult(a, b), func(a, b));
+    Ok(())
+}
+
 //#[test]
 //fn int_min_max() -> anyhow::Result<()> {
 //    //Not currently working: Unsupported type for imin instruction: i64

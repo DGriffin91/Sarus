@@ -204,7 +204,7 @@ pub struct Function {
     pub params: Vec<Arg>,
     pub returns: Vec<Arg>,
     pub body: Vec<Expr>,
-    pub std_func: bool,
+    pub extern_func: bool,
 }
 
 impl Display for Function {
@@ -274,17 +274,18 @@ peg::parser!(pub grammar parser() for str {
         / expected!("identifier")
 
     rule function() -> Declaration
-        = _ "fn" name:identifier() _
+        = _ ext:("extern")* _ "fn" name:identifier() _
         "(" params:(i:arg() ** comma()) ")" _
         "->" _
         "(" returns:(i:arg() ** comma()) _ ")"
         body:block()
-        { Declaration::Function(Function {
+        {
+            Declaration::Function(Function {
             name,
             params,
             returns,
             body,
-            std_func: false
+            extern_func: if ext.len() > 0 {true} else {false}
         }) }
 
     rule arg() -> Arg

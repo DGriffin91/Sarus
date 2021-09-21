@@ -29,7 +29,7 @@ fn decl(name: &str, params: Vec<(&str, ExprType)>, returns: Vec<(&str, ExprType)
             })
             .collect(),
         body: vec![],
-        std_func: true,
+        extern_func: true,
     })
 }
 
