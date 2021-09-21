@@ -949,120 +949,76 @@ impl<'a> FunctionTranslator<'a> {
 
         let ptr_ty = self.module.target_config().pointer_type();
 
-        if self.funcs.contains_key(name) {
-            let func = self.funcs[name].clone();
-            if func.params.len() != args.len() {
-                anyhow::bail!(
-                    "function call to {} has {} args, but function description has {}",
-                    name,
-                    args.len(),
-                    func.params.len()
-                )
+        if !self.funcs.contains_key(name) {
+            anyhow::bail!("function {} not found", name)
+        }
+        let func = self.funcs[name].clone();
+        if func.params.len() != args.len() {
+            anyhow::bail!(
+                "function call to {} has {} args, but function description has {}",
+                name,
+                args.len(),
+                func.params.len()
+            )
+        }
+
+        let mut arg_values = Vec::new();
+        if func.std_func {
+            if let Some(v) = self.translate_std(name, args)? {
+                return Ok(v);
             }
-            let mut arg_values = Vec::new();
-            for (arg, expr) in func.params.iter().zip(args.iter()) {
-                //let tp = ExprType::of(arg, self.env, &self.variables)?;
-                sig.params.push(AbiParam::new(
-                    arg.expr_type
-                        .as_ref()
-                        .unwrap_or(&ExprType::F64)
-                        .cranelift_type(ptr_ty)?,
-                ));
-                arg_values.push(self.translate_expr(expr)?.inner("translate_call")?)
-            }
-            for ret_arg in &func.returns {
-                sig.returns.push(AbiParam::new(
-                    ret_arg
-                        .expr_type
-                        .as_ref()
-                        .unwrap_or(&ExprType::F64)
-                        .cranelift_type(ptr_ty)?,
-                ));
-            }
-            if func.std_func {
-                if let Some(v) = self.translate_std(name, args)? {
-                    return Ok(v);
-                }
-            }
-            let callee = self
-                .module
-                .declare_function(&name, Linkage::Import, &sig)
-                .expect("problem declaring function");
-            let local_callee = self
-                .module
-                .declare_func_in_func(callee, &mut self.builder.func);
-            let call = self.builder.ins().call(local_callee, &arg_values);
-            let res = self.builder.inst_results(call);
-            if res.len() > 1 {
-                Ok(SValue::Tuple(
-                    res.iter()
-                        .zip(func.returns.iter())
-                        .map(|(v, arg)| {
-                            SValue::from(arg.expr_type.as_ref().unwrap_or(&ExprType::F64), *v)
-                                .unwrap()
-                        })
-                        .collect::<Vec<SValue>>(),
-                ))
-            } else if res.len() == 1 {
-                Ok(SValue::from(
-                    &func
-                        .returns
-                        .first()
-                        .unwrap()
-                        .expr_type
-                        .as_ref()
-                        .unwrap_or(&ExprType::F64),
-                    *res.first().unwrap(),
-                )?)
-            } else {
-                Ok(SValue::Void)
-            }
+        }
+        for (arg, expr) in func.params.iter().zip(args.iter()) {
+            //let tp = ExprType::of(arg, self.env, &self.variables)?;
+            sig.params.push(AbiParam::new(
+                arg.expr_type
+                    .as_ref()
+                    .unwrap_or(&ExprType::F64)
+                    .cranelift_type(ptr_ty)?,
+            ));
+            arg_values.push(self.translate_expr(expr)?.inner("translate_call")?)
+        }
+
+        for ret_arg in &func.returns {
+            sig.returns.push(AbiParam::new(
+                ret_arg
+                    .expr_type
+                    .as_ref()
+                    .unwrap_or(&ExprType::F64)
+                    .cranelift_type(ptr_ty)?,
+            ));
+        }
+        let callee = self
+            .module
+            .declare_function(&name, Linkage::Import, &sig)
+            .expect("problem declaring function");
+        let local_callee = self
+            .module
+            .declare_func_in_func(callee, &mut self.builder.func);
+        let call = self.builder.ins().call(local_callee, &arg_values);
+        let res = self.builder.inst_results(call);
+        if res.len() > 1 {
+            Ok(SValue::Tuple(
+                res.iter()
+                    .zip(func.returns.iter())
+                    .map(|(v, arg)| {
+                        SValue::from(arg.expr_type.as_ref().unwrap_or(&ExprType::F64), *v).unwrap()
+                    })
+                    .collect::<Vec<SValue>>(),
+            ))
+        } else if res.len() == 1 {
+            Ok(SValue::from(
+                &func
+                    .returns
+                    .first()
+                    .unwrap()
+                    .expr_type
+                    .as_ref()
+                    .unwrap_or(&ExprType::F64),
+                *res.first().unwrap(),
+            )?)
         } else {
-            anyhow::bail!("function {} not found", name);
-            /*
-            dbg!("!!!");
-            // Function not found, maybe it's libc or std
-            // TODO This whole else should be able to be replaced
-            // when libc & std function defs are in funcs
-            for (_i, _arg) in args.iter().enumerate() {
-                //BLOCKER TODO don't assume float, check params count
-                sig.params.push(AbiParam::new(types::F64));
-            }
-            match self.translate_std(name, args)? {
-                Some(v) => return Ok(v),
-                None => {
-                    // If we can't find the function name, maybe it's a libc function.
-                    // For now, assume it will return a float.
-                    sig.returns.push(AbiParam::new(types::F64))
-                }
-            }
-            let callee = self
-                .module
-                .declare_function(&name, Linkage::Import, &sig)
-                .expect("problem declaring function");
-            let local_callee = self
-                .module
-                .declare_func_in_func(callee, &mut self.builder.func);
-            let mut arg_values = Vec::new();
-            for (i, arg) in args.iter().enumerate() {
-                arg_values.push({
-                    //BLOCKER TODO support returning more than just float
-                    self.translate_expr(arg)?
-                        .expect_f64(&format!("{} arg {}", name, i))?
-                })
-            }
-            let call = self.builder.ins().call(local_callee, &arg_values);
-            let res = self.builder.inst_results(call);
-            if res.len() > 1 {
-                Ok(SValue::Tuple(
-                    res.iter().map(|v| SValue::F64(*v)).collect::<Vec<SValue>>(),
-                ))
-            } else if res.len() == 1 {
-                Ok(SValue::F64(*res.first().unwrap()))
-            } else {
-                Ok(SValue::Void)
-            }
-            */
+            Ok(SValue::Void)
         }
     }
 
