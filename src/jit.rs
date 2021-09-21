@@ -7,6 +7,7 @@ use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataContext, Linkage, Module};
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::fmt::Display;
 use std::slice;
 
@@ -197,6 +198,9 @@ impl JIT {
                         ExprType::UnboundedArrayI64 => {
                             AbiParam::new(self.module.target_config().pointer_type())
                         }
+                        ExprType::Address => {
+                            AbiParam::new(self.module.target_config().pointer_type())
+                        }
                         ExprType::Void => continue,
                         ExprType::Bool => AbiParam::new(types::B1),
                         ExprType::Tuple(_) => anyhow::bail!("Tuple as parameter not supported"),
@@ -286,6 +290,9 @@ impl JIT {
                     ExprType::UnboundedArrayI64 => trans
                         .builder
                         .use_var(return_variable.expect_unbounded_array_f64("return_variable")?),
+                    ExprType::Address => trans
+                        .builder
+                        .use_var(return_variable.expect_address("return_variable")?),
                     ExprType::Void => continue,
                     ExprType::Bool => trans
                         .builder
@@ -344,6 +351,7 @@ pub enum SValue {
     I64(Value),
     UnboundedArrayF64(Value),
     UnboundedArrayI64(Value),
+    Address(Value),
     Tuple(Vec<SValue>),
 }
 
@@ -356,6 +364,7 @@ impl Display for SValue {
             SValue::I64(_) => write!(f, "i64"),
             SValue::UnboundedArrayF64(_) => write!(f, "&[f64]"),
             SValue::UnboundedArrayI64(_) => write!(f, "&[i64]"),
+            SValue::Address(_) => write!(f, "&"),
             SValue::Void => write!(f, "void"),
             SValue::Tuple(v) => write!(f, "Tuple ({})", v.len()),
         }
@@ -371,6 +380,7 @@ impl SValue {
             ExprType::I64 => SValue::I64(value),
             ExprType::UnboundedArrayF64 => SValue::UnboundedArrayF64(value),
             ExprType::UnboundedArrayI64 => SValue::UnboundedArrayI64(value),
+            ExprType::Address => SValue::Address(value),
             ExprType::Tuple(_) => anyhow::bail!("use SValue::from_tuple"),
         })
     }
@@ -383,6 +393,7 @@ impl SValue {
             SValue::I64(v) => Ok(*v),
             SValue::UnboundedArrayF64(v) => Ok(*v),
             SValue::UnboundedArrayI64(v) => Ok(*v),
+            SValue::Address(v) => Ok(*v),
             SValue::Void => anyhow::bail!("void has no inner {}", ctx),
             SValue::Tuple(v) => anyhow::bail!("inner does not support tuple {:?} {}", v, ctx),
         }
@@ -441,6 +452,7 @@ impl<'a> FunctionTranslator<'a> {
                     .ins()
                     .iconst::<i64>(types::I64, literal.parse().unwrap()),
             )),
+            Expr::LiteralString(literal) => self.translate_string(literal),
             Expr::Binop(op, lhs, rhs) => self.translate_binop(*op, lhs, rhs),
             Expr::Compare(cmp, lhs, rhs) => self.translate_cmp(*cmp, lhs, rhs),
             Expr::Call(name, args) => self.translate_call(name, args),
@@ -455,6 +467,7 @@ impl<'a> FunctionTranslator<'a> {
                         SVariable::Bool(_, v) => SValue::Bool(self.builder.use_var(*v)),
                         SVariable::F64(_, v) => SValue::F64(self.builder.use_var(*v)),
                         SVariable::I64(_, v) => SValue::I64(self.builder.use_var(*v)),
+                        SVariable::Address(_, v) => SValue::Address(self.builder.use_var(*v)),
                         SVariable::UnboundedArrayF64(_, v) => {
                             SValue::UnboundedArrayF64(self.builder.use_var(*v))
                         }
@@ -493,6 +506,31 @@ impl<'a> FunctionTranslator<'a> {
                 self.translate_array_set(name.to_string(), idx_expr, expr)
             }
         }
+    }
+
+    fn translate_string(&mut self, literal: &String) -> anyhow::Result<SValue> {
+        let cstr = CString::new(literal.to_string()).unwrap();
+        let bytes = cstr.to_bytes_with_nul();
+        let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
+            StackSlotKind::StructReturnSlot,
+            types::I8.bytes() * bytes.len() as u32,
+        ));
+        let stack_slot_address = self.builder.ins().stack_addr(
+            self.module.target_config().pointer_type(),
+            stack_slot,
+            Offset32::new(0),
+        );
+        //TODO Is this really how this is done?
+        for (i, c) in bytes.iter().enumerate() {
+            let v = self.builder.ins().iconst::<i64>(types::I64, *c as i64);
+            self.builder.ins().istore8(
+                MemFlags::new(),
+                v,
+                stack_slot_address,
+                Offset32::new(i as i32),
+            );
+        }
+        Ok(SValue::UnboundedArrayI64(stack_slot_address))
     }
 
     fn translate_binop(&mut self, op: Binop, lhs: &Expr, rhs: &Expr) -> anyhow::Result<SValue> {
@@ -630,6 +668,11 @@ impl<'a> FunctionTranslator<'a> {
                             .def_var(var.expect_unbounded_array_i64("assign")?, v);
                         v
                     }
+                    SValue::Address(v) => {
+                        values.push(SValue::Address(v));
+                        self.builder.def_var(var.expect_address("assign")?, v);
+                        v
+                    }
                 };
             }
             if values.len() > 1 {
@@ -670,6 +713,7 @@ impl<'a> FunctionTranslator<'a> {
                 SValue::I64(_) => anyhow::bail!("operation not supported {:?}", expr),
                 SValue::UnboundedArrayF64(_) => anyhow::bail!("operation not supported {:?}", expr),
                 SValue::UnboundedArrayI64(_) => anyhow::bail!("operation not supported {:?}", expr),
+                SValue::Address(_) => anyhow::bail!("operation not supported {:?}", expr),
             }
         }
     }
@@ -784,6 +828,10 @@ impl<'a> FunctionTranslator<'a> {
             SValue::UnboundedArrayI64(_) => {
                 anyhow::bail!("math assign UnboundedArrayI64 not supported")
             }
+            SValue::Address(_) => {
+                //TODO support this for pointer math
+                anyhow::bail!("math assign Address not supported")
+            }
         }
     }
 
@@ -870,6 +918,7 @@ impl<'a> FunctionTranslator<'a> {
             SValue::I64(v) => vec![v],
             SValue::UnboundedArrayF64(v) => vec![v],
             SValue::UnboundedArrayI64(v) => vec![v],
+            SValue::Address(v) => vec![v],
         };
 
         if then_value.to_string() != else_value.to_string() {
@@ -926,6 +975,7 @@ impl<'a> FunctionTranslator<'a> {
                 SValue::UnboundedArrayI64(_) => {
                     Ok(SValue::UnboundedArrayI64(*phi.first().unwrap()))
                 }
+                SValue::Address(_) => Ok(SValue::Address(*phi.first().unwrap())),
             }
         } else {
             Ok(SValue::Void)
@@ -1084,6 +1134,7 @@ pub enum SVariable {
     I64(String, Variable),
     UnboundedArrayF64(String, Variable),
     UnboundedArrayI64(String, Variable),
+    Address(String, Variable),
 }
 
 impl Display for SVariable {
@@ -1095,6 +1146,7 @@ impl Display for SVariable {
             SVariable::I64(name, _) => write!(f, "Int {}", name),
             SVariable::UnboundedArrayF64(name, _) => write!(f, "UnboundedArrayF64 {}", name),
             SVariable::UnboundedArrayI64(name, _) => write!(f, "UnboundedArrayI64 {}", name),
+            SVariable::Address(name, _) => write!(f, "Address {}", name),
         }
     }
 }
@@ -1108,6 +1160,7 @@ impl SVariable {
             SVariable::I64(_, v) => *v,
             SVariable::UnboundedArrayF64(_, v) => *v,
             SVariable::UnboundedArrayI64(_, v) => *v,
+            SVariable::Address(_, v) => *v,
         }
     }
     fn expect_f64(&self, ctx: &str) -> anyhow::Result<Variable> {
@@ -1131,12 +1184,18 @@ impl SVariable {
     fn expect_unbounded_array_f64(&self, ctx: &str) -> anyhow::Result<Variable> {
         match self {
             SVariable::UnboundedArrayF64(_, v) => Ok(*v),
-            v => anyhow::bail!("incorrect type {} expected Address {}", v, ctx),
+            v => anyhow::bail!("incorrect type {} expected UnboundedArrayF64 {}", v, ctx),
         }
     }
     fn expect_unbounded_array_i64(&self, ctx: &str) -> anyhow::Result<Variable> {
         match self {
             SVariable::UnboundedArrayI64(_, v) => Ok(*v),
+            v => anyhow::bail!("incorrect type {} expected UnboundedArrayI64 {}", v, ctx),
+        }
+    }
+    fn expect_address(&self, ctx: &str) -> anyhow::Result<Variable> {
+        match self {
+            SVariable::Address(_, v) => Ok(*v),
             v => anyhow::bail!("incorrect type {} expected Address {}", v, ctx),
         }
     }
@@ -1345,10 +1404,26 @@ fn declare_variable_from_type(
                 *index += 1;
             }
         }
-        ExprType::UnboundedArrayF64 | ExprType::UnboundedArrayI64 => {
+        ExprType::UnboundedArrayF64 => {
             if !variables.contains_key(name) {
                 let var = Variable::new(*index);
                 variables.insert(name.into(), SVariable::UnboundedArrayF64(name.into(), var));
+                builder.declare_var(var, ptr_type);
+                *index += 1;
+            }
+        }
+        ExprType::UnboundedArrayI64 => {
+            if !variables.contains_key(name) {
+                let var = Variable::new(*index);
+                variables.insert(name.into(), SVariable::UnboundedArrayI64(name.into(), var));
+                builder.declare_var(var, ptr_type);
+                *index += 1;
+            }
+        }
+        ExprType::Address => {
+            if !variables.contains_key(name) {
+                let var = Variable::new(*index);
+                variables.insert(name.into(), SVariable::Address(name.into(), var));
                 builder.declare_var(var, ptr_type);
                 *index += 1;
             }
@@ -1411,7 +1486,11 @@ fn declare_variable(
                     ptr_ty,
                 ),
                 ExprType::UnboundedArrayI64 => (
-                    SVariable::UnboundedArrayF64(arg.name.clone(), Variable::new(*index)),
+                    SVariable::UnboundedArrayI64(arg.name.clone(), Variable::new(*index)),
+                    ptr_ty,
+                ),
+                ExprType::Address => (
+                    SVariable::Address(arg.name.clone(), Variable::new(*index)),
                     ptr_ty,
                 ),
                 ExprType::Void => return None,

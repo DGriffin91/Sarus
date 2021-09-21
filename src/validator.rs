@@ -31,6 +31,7 @@ pub enum ExprType {
     I64,
     UnboundedArrayF64,
     UnboundedArrayI64,
+    Address,
     Tuple(Vec<ExprType>),
 }
 
@@ -43,6 +44,7 @@ impl Display for ExprType {
             ExprType::I64 => write!(f, "i64"),
             ExprType::UnboundedArrayF64 => write!(f, "&[f64]"),
             ExprType::UnboundedArrayI64 => write!(f, "&[i64]"),
+            ExprType::Address => write!(f, "&"),
             ExprType::Tuple(inner) => {
                 write!(f, "(")?;
                 inner
@@ -74,6 +76,7 @@ impl ExprType {
                         SVariable::I64(_, _) => ExprType::I64,
                         SVariable::UnboundedArrayF64(_, _) => ExprType::UnboundedArrayF64,
                         SVariable::UnboundedArrayI64(_, _) => ExprType::UnboundedArrayI64,
+                        SVariable::Address(_, _) => ExprType::Address,
                     }
                 } else if constant_vars.contains_key(id_name) {
                     ExprType::F64 //All constants are currently math like PI, TAU...
@@ -84,6 +87,7 @@ impl ExprType {
             Expr::LiteralFloat(_) => ExprType::F64,
             Expr::LiteralInt(_) => ExprType::I64,
             Expr::LiteralBool(_) => ExprType::Bool,
+            Expr::LiteralString(_) => ExprType::UnboundedArrayI64, //TODO change to char
             Expr::Binop(_, l, r) => {
                 let lt = ExprType::of(l, env, variables, constant_vars)?;
                 let rt = ExprType::of(r, env, variables, constant_vars)?;
@@ -238,6 +242,7 @@ impl ExprType {
             | ExprType::F64
             | ExprType::I64
             | ExprType::UnboundedArrayF64
+            | ExprType::Address
             | ExprType::UnboundedArrayI64 => 1,
             ExprType::Tuple(v) => v.len(),
         }
@@ -256,6 +261,7 @@ impl ExprType {
             ExprType::I64 => Ok(cranelift::prelude::types::I64),
             ExprType::UnboundedArrayI64 => Ok(ptr_type),
             ExprType::UnboundedArrayF64 => Ok(ptr_type),
+            ExprType::Address => Ok(ptr_type),
             ExprType::Tuple(_) => Err(TypeError::TypeMismatchSpecific {
                 s: "Tuple has no cranelift analog".to_string(),
             }),

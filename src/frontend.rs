@@ -55,6 +55,7 @@ pub enum Expr {
     LiteralFloat(String),
     LiteralInt(String),
     LiteralBool(bool),
+    LiteralString(String),
     Identifier(String),
     Binop(Binop, Box<Expr>, Box<Expr>),
     Compare(Cmp, Box<Expr>, Box<Expr>),
@@ -77,6 +78,7 @@ impl Display for Expr {
         match self {
             Expr::LiteralFloat(s) => write!(f, "{}", s),
             Expr::LiteralInt(s) => write!(f, "{}", s),
+            Expr::LiteralString(s) => write!(f, "\"{}\"", s),
             Expr::Identifier(s) => write!(f, "{}", s),
             Expr::Binop(op, e1, e2) => write!(f, "{} {} {}", e1, op, e2),
             Expr::Compare(cmp, e1, e2) => write!(f, "{} {} {}", e1, cmp, e2),
@@ -164,7 +166,7 @@ pub fn make_nonempty<T>(v: Vec<T>) -> Option<NV<T>> {
 #[derive(Debug, Clone)]
 pub enum Declaration {
     Function(Function),
-    Metadata(Vec<String>, Box<String>),
+    Metadata(Vec<String>, String),
 }
 
 impl Display for Declaration {
@@ -266,7 +268,7 @@ peg::parser!(pub grammar parser() for str {
         / metadata()
 
     rule metadata() -> Declaration
-        = _ "@" _ headings:(i:(metadata_identifier()** ([' ' | '\t'])) {i}) ([' ' | '\t'])* "\n" body:$[^'@']* "@" _ {Declaration::Metadata(headings, Box::new(body.join("")))}
+        = _ "@" _ headings:(i:(metadata_identifier()** ([' ' | '\t'])) {i}) ([' ' | '\t'])* "\n" body:$[^'@']* "@" _ {Declaration::Metadata(headings, body.join(""))}
 
 
     rule metadata_identifier() -> String
@@ -297,6 +299,7 @@ peg::parser!(pub grammar parser() for str {
         / _ n:$("i64") _ { ExprType::I64 }
         / _ n:$("&[f64]") _ { ExprType::UnboundedArrayF64 }
         / _ n:$("&[i64]") _ { ExprType::UnboundedArrayI64 }
+        / _ n:$("&") _ { ExprType::Address }
         / _ n:$("bool") _ { ExprType::Bool }
 
     rule block() -> Vec<Expr>
@@ -376,6 +379,7 @@ peg::parser!(pub grammar parser() for str {
         / "*" i:identifier() { Expr::GlobalDataAddr(i) }
         / _ "true" _ { Expr::LiteralBool(true) }
         / _ "false" _ { Expr::LiteralBool(false) }
+        / _ "\"" body:$[^'"']* "\"" _ { Expr::LiteralString(body.join("")) }
 
     rule comment() -> ()
         = quiet!{"//" [^'\n']*"\n"}

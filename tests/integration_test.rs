@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use std::{collections::HashMap, f64::consts::*, mem};
+use std::{collections::HashMap, f64::consts::*, ffi::CStr, mem};
 
 use sarus::*;
 
@@ -770,6 +770,35 @@ extern fn print(a: f64) -> () {}
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(mult(a, b), func(a, b));
+    Ok(())
+}
+
+extern "C" fn prt2(s: *const i8) {
+    unsafe {
+        println!("{:?}", CStr::from_ptr(s).to_str());
+    }
+}
+
+#[test]
+fn create_string() -> anyhow::Result<()> {
+    let code = r#"
+fn main(a: f64, b: f64) -> (c: f64) {
+    print("HELLO WORLD")
+    c = a
+}
+
+extern fn print(s: &) -> () {}
+"#;
+    let a = 100.0f64;
+    let b = 100.0f64;
+    let mut jit = jit::JIT::new(&[("print", prt2 as *const u8)]);
+    let ast = parser::program(&code)?;
+    let ast = sarus_std_lib::append_std_funcs(ast);
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    func(a, b);
+
     Ok(())
 }
 
