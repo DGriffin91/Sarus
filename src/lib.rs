@@ -5,7 +5,7 @@ pub use crate::frontend::parser;
 pub mod frontend;
 pub mod graph;
 pub mod jit;
-pub mod std_lib;
+pub mod sarus_std_lib;
 pub mod validator;
 
 #[macro_export]

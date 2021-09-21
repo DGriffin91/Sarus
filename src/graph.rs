@@ -4,7 +4,7 @@ use toposort_scc::IndexGraph;
 
 use crate::{
     frontend::{make_nonempty, parser, Arg, Binop, Cmp, Declaration, Expr, Function},
-    jit, std_lib,
+    jit, sarus_std_lib,
     validator::{validate_program, ExprType},
 };
 
@@ -45,7 +45,7 @@ impl Graph {
         let ast = parser::program(&code)?;
 
         // Add STD lib to ast
-        let ast = std_lib::append_std_funcs(ast);
+        let ast = sarus_std_lib::append_std_funcs(ast);
 
         // Validate type useage
         let mut ast = validate_program(ast)?;

@@ -15,7 +15,7 @@ fn main(a, b) -> (c) {
     let b = 200.0f64;
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -92,7 +92,7 @@ fn nums() -> (r) {
     let mut jit = jit::JIT::default();
     jit.add_math_constants()?;
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -114,7 +114,7 @@ fn main(a, b) -> (c) {
     let b = 200.0f64;
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -135,7 +135,7 @@ fn minmax() -> anyhow::Result<()> {
     }
     "#,
     )?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let a = 100.0f64;
     let b = 200.0f64;
     let mut jit = jit::JIT::default();
@@ -153,7 +153,7 @@ fn minmax() -> anyhow::Result<()> {
     }
     "#,
     )?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -201,7 +201,7 @@ fn foodd(a, b) -> (c) {
     let b = 200.0f64;
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -248,7 +248,7 @@ fn multiple_returns() -> anyhow::Result<()> {
     let b = 200.0f64;
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -275,7 +275,7 @@ fn bools() -> anyhow::Result<()> {
     let b = 200.0f64;
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -299,7 +299,7 @@ fn ifelse_assign() -> anyhow::Result<()> {
     let b = 200.0f64;
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -319,7 +319,7 @@ fn order() -> anyhow::Result<()> {
     let b = 200.0f64;
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -343,7 +343,7 @@ fn main(arr: &[f64], b) -> () {
     let b = 200.0f64;
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -363,7 +363,7 @@ fn negative() -> anyhow::Result<()> {
     let a = -100.0f64;
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -405,7 +405,7 @@ fn compiled_graph() -> anyhow::Result<()> {
     let mut audio = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("graph")?;
@@ -471,7 +471,7 @@ fn metadata() -> anyhow::Result<()> {
 
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
 
@@ -517,7 +517,7 @@ fn int_while_loop() -> anyhow::Result<()> {
     let b = 200.0f64;
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -539,7 +539,7 @@ fn int_to_float() -> anyhow::Result<()> {
     let b = 200.0f64;
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -565,7 +565,7 @@ fn float_conversion() -> anyhow::Result<()> {
 
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -592,7 +592,7 @@ fn float_as_bool_error() -> anyhow::Result<()> {
 
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -620,7 +620,7 @@ fn main(arr1: &[f64], arr2: &[f64], b) -> () {
     let b = 200.0f64;
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -647,7 +647,7 @@ fn var_type_consistency() -> anyhow::Result<()> {
 
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -670,7 +670,7 @@ fn three_inputs() -> anyhow::Result<()> {
 
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -690,7 +690,7 @@ fn main(a: f64, b: f64) -> (c: f64) {
     let b = 200.0f64;
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -710,7 +710,7 @@ fn main(a: f64, b: i64) -> (c: i64) {
     let b = 200.0f64;
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
@@ -734,7 +734,7 @@ fn foo(a: f64, b: i64, c: i64) -> (d: i64) {
     let b = 200.0f64;
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
-    let ast = std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_funcs(ast);
     //let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;

@@ -1,5 +1,5 @@
 use crate::frontend::*;
-use crate::std_lib;
+use crate::sarus_std_lib;
 use crate::validator::ExprType;
 use cranelift::codegen::ir::immediates::Offset32;
 use cranelift::prelude::*;
@@ -1090,7 +1090,7 @@ impl<'a> FunctionTranslator<'a> {
         for arg in args {
             vargs.push(self.translate_expr(arg)?.inner("translate_std")?);
         }
-        std_lib::translate_std(&mut self.builder, name, vargs.as_slice())
+        sarus_std_lib::translate_std(&mut self.builder, name, vargs.as_slice())
     }
 
     fn value_type(&self, val: Value) -> Type {
