@@ -1,5 +1,6 @@
 use crate::frontend::*;
 use crate::sarus_std_lib;
+use crate::validator::validate_program;
 use crate::validator::ExprType;
 use cranelift::codegen::ir::immediates::Offset32;
 use cranelift::prelude::*;
@@ -26,6 +27,12 @@ pub struct JIT {
     /// The module, with the jit backend, which manages the JIT'd
     /// functions.
     module: JITModule,
+
+    //CLIF cranelift IR string, by function name
+    pub clif: HashMap<String, String>,
+
+    //local variables for each function
+    pub variables: HashMap<String, HashMap<String, SVariable>>,
 }
 
 impl Default for JIT {
@@ -37,6 +44,8 @@ impl Default for JIT {
             ctx: module.make_context(),
             data_ctx: DataContext::new(),
             module,
+            clif: HashMap::new(),
+            variables: HashMap::new(),
         }
     }
 }
@@ -73,13 +82,7 @@ impl JIT {
                     ////    &name, &params, &the_return
                     ////);
                     //// Then, translate the AST nodes into Cranelift IR.
-                    self.codegen(
-                        func.params,
-                        func.returns,
-                        func.body,
-                        funcs.to_owned(),
-                        &prog,
-                    )?;
+                    self.codegen(&func, funcs.to_owned(), &prog)?;
                     // Next, declare the function to jit. Functions must be declared
                     // before they can be called, or defined.
                     let id = self
@@ -158,15 +161,13 @@ impl JIT {
     // Translate from toy-language AST nodes into Cranelift IR.
     fn codegen(
         &mut self,
-        params: Vec<Arg>,
-        returns: Vec<Arg>,
-        stmts: Vec<Expr>,
+        func: &Function,
         funcs: HashMap<String, Function>,
         env: &[Declaration],
     ) -> anyhow::Result<()> {
         let float = types::F64; //self.module.target_config().pointer_type();
 
-        for p in &params {
+        for p in &func.params {
             self.ctx.func.signature.params.push({
                 match &p.expr_type {
                     Some(t) => match t {
@@ -187,7 +188,7 @@ impl JIT {
             });
         }
 
-        for ret_arg in &returns {
+        for ret_arg in &func.returns {
             self.ctx.func.signature.returns.push(AbiParam::new(
                 ret_arg
                     .expr_type
@@ -214,20 +215,27 @@ impl JIT {
         // predecessors. Since it's the entry block, it won't have any
         // predecessors.
         builder.seal_block(entry_block);
-
+        let constant_vars = sarus_std_lib::get_constants();
         // The toy language allows variables to be declared implicitly.
         // Walk the AST and declare all implicitly-declared variables.
         let variables = declare_variables(
             float,
             &mut builder,
             &mut self.module,
-            &params,
-            &returns,
-            &stmts,
+            &func.params,
+            &func.returns,
+            &func.body,
             entry_block,
             env,
-            sarus_std_lib::get_constants(),
+            &constant_vars,
         )?;
+
+        //Keep function vars around for later debug/print
+        self.variables
+            .insert(func.name.to_string(), variables.clone());
+
+        //Check every statement, this can catch funcs with no assignment, etc...
+        validate_program(&func.body, env, &variables, &constant_vars)?;
 
         // Now translate the statements of the function body.
         let mut trans = FunctionTranslator {
@@ -236,7 +244,7 @@ impl JIT {
             funcs,
             module: &mut self.module,
         };
-        for expr in &stmts {
+        for expr in &func.body {
             trans.translate_expr(expr)?;
         }
 
@@ -244,7 +252,7 @@ impl JIT {
         // variable to hold the return value. Here, we just do a use of that
         // variable.
         let mut return_values = Vec::new();
-        for ret in returns.iter() {
+        for ret in func.returns.iter() {
             let return_variable = trans.variables.get(&ret.name).unwrap();
             let v = match &ret.expr_type {
                 Some(t) => match t {
@@ -279,7 +287,11 @@ impl JIT {
         // Tell the builder we're done with this function.
         trans.builder.finalize();
 
-        //println!("{}", trans.builder.func.display(None)); //DISPLAY CLIF
+        //Keep clif around for later debug/print
+        self.clif.insert(
+            func.name.to_string(),
+            trans.builder.func.display(None).to_string(),
+        );
         Ok(())
     }
 
@@ -288,6 +300,20 @@ impl JIT {
             self.create_data(&name, val.to_ne_bytes().to_vec())?;
         }
         Ok(())
+    }
+
+    pub fn print_clif(&self, show_vars: bool) {
+        for (func_name, func_clif) in &self.clif {
+            let mut func_clif = func_clif.clone();
+            if show_vars {
+                for (var_name, var) in &self.variables[func_name] {
+                    let clif_var_name = format!("v{}", var.inner().index());
+                    func_clif = func_clif
+                        .replace(&clif_var_name, &format!("{}~{}", clif_var_name, var_name));
+                }
+            }
+            println!("//{}\n{}", func_name, func_clif);
+        }
     }
 }
 
@@ -1107,7 +1133,7 @@ fn declare_variables(
     stmts: &[Expr],
     entry_block: Block,
     env: &[Declaration],
-    constant_vars: HashMap<String, f64>,
+    constant_vars: &HashMap<String, f64>,
 ) -> anyhow::Result<HashMap<String, SVariable>> {
     //TODO we should create a list of the variables here with their expected type, so it can be referenced later
     let mut variables: HashMap<String, SVariable> = HashMap::new();

@@ -65,6 +65,7 @@ impl ExprType {
         let res = match expr {
             //TODO don't assume all identifiers are floats
             Expr::Identifier(id_name) => {
+                //dbg!(&id_name, &variables);
                 if variables.contains_key(id_name) {
                     match variables[id_name] {
                         SVariable::Unknown(_, _) => ExprType::F64, //TODO
@@ -260,4 +261,16 @@ impl ExprType {
             }),
         }
     }
+}
+
+pub fn validate_program(
+    stmts: &Vec<Expr>,
+    env: &[Declaration],
+    variables: &HashMap<String, SVariable>,
+    constant_vars: &HashMap<String, f64>,
+) -> Result<(), TypeError> {
+    for expr in stmts {
+        ExprType::of(expr, env, variables, constant_vars)?;
+    }
+    Ok(())
 }
