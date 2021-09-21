@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use cranelift::frontend::FunctionBuilder;
-use cranelift::prelude::{types, InstBuilder, Value};
+use cranelift::prelude::{types, InstBuilder, StackSlotData, StackSlotKind, Value};
 
 use crate::frontend::Arg;
 use crate::hashmap;
@@ -97,10 +97,16 @@ pub fn append_std_funcs(mut prog: Vec<Declaration>) -> Vec<Declaration> {
             vec![("z", ExprType::I64)],
         ));
     }
+    //prog.push(decl(
+    //    "bytes",
+    //    vec![("size", ExprType::I64)],
+    //    vec![("mem", ExprType::Address)],
+    //));
     prog
 }
 
 pub(crate) fn translate_std(
+    ptr_ty: cranelift::prelude::Type,
     builder: &mut FunctionBuilder,
     name: &str,
     args: &[Value],
@@ -126,6 +132,16 @@ pub(crate) fn translate_std(
         "max" => Ok(Some(SValue::F64(builder.ins().fmax(args[0], args[1])))),
         "imin" => Ok(Some(SValue::I64(builder.ins().imin(args[0], args[1])))),
         "imax" => Ok(Some(SValue::I64(builder.ins().imax(args[0], args[1])))),
+        //"bytes" => {
+        //    let stack_slot = builder.create_stack_slot(StackSlotData::new(
+        //        StackSlotKind::ExplicitSlot,
+        //        types::I8.bytes() * 1,
+        //    ));
+        //    let stack_slot_address = builder
+        //        .ins()
+        //        .stack_addr(ptr_ty, stack_slot, Offset32::new(0));
+        //    Ok(Some(SValue::Address(stack_slot_address)))
+        //}
         _ => Ok(None),
     }
 }

@@ -509,10 +509,10 @@ impl<'a> FunctionTranslator<'a> {
     }
 
     fn translate_string(&mut self, literal: &String) -> anyhow::Result<SValue> {
-        let cstr = CString::new(literal.to_string()).unwrap();
+        let cstr = CString::new(literal.replace("\\n", "\n").to_string()).unwrap();
         let bytes = cstr.to_bytes_with_nul();
         let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
-            StackSlotKind::StructReturnSlot,
+            StackSlotKind::ExplicitSlot,
             types::I8.bytes() * bytes.len() as u32,
         ));
         let stack_slot_address = self.builder.ins().stack_addr(
@@ -1118,7 +1118,12 @@ impl<'a> FunctionTranslator<'a> {
         for arg in args {
             vargs.push(self.translate_expr(arg)?.inner("translate_std")?);
         }
-        sarus_std_lib::translate_std(&mut self.builder, name, vargs.as_slice())
+        sarus_std_lib::translate_std(
+            self.module.target_config().pointer_type(),
+            &mut self.builder,
+            name,
+            vargs.as_slice(),
+        )
     }
 
     fn value_type(&self, val: Value) -> Type {

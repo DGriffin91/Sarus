@@ -775,7 +775,7 @@ extern fn print(a: f64) -> () {}
 
 extern "C" fn prt2(s: *const i8) {
     unsafe {
-        println!("{:?}", CStr::from_ptr(s).to_str());
+        print!("{}", CStr::from_ptr(s).to_str().unwrap());
     }
 }
 
@@ -783,7 +783,9 @@ extern "C" fn prt2(s: *const i8) {
 fn create_string() -> anyhow::Result<()> {
     let code = r#"
 fn main(a: f64, b: f64) -> (c: f64) {
-    print("HELLO WORLD")
+    print("HELLO WORLD\n")
+    print($5)
+    print("HELLO WORLD\n")
     c = a
 }
 
