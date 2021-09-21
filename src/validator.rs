@@ -19,6 +19,8 @@ pub enum TypeError {
     TupleLengthMismatch { expected: usize, actual: usize },
     #[error("Function \"{0}\" does not exist")]
     UnknownFunction(String),
+    #[error("Variable \"{0}\" does not exist")]
+    UnknownVariable(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +60,7 @@ impl ExprType {
         expr: &Expr,
         env: &[Declaration],
         variables: &HashMap<String, SVariable>,
+        constant_vars: &HashMap<String, f64>,
     ) -> Result<ExprType, TypeError> {
         let res = match expr {
             //TODO don't assume all identifiers are floats
@@ -71,17 +74,18 @@ impl ExprType {
                         SVariable::UnboundedArrayF64(_, _) => ExprType::UnboundedArrayF64,
                         SVariable::UnboundedArrayI64(_, _) => ExprType::UnboundedArrayI64,
                     }
+                } else if constant_vars.contains_key(id_name) {
+                    ExprType::F64 //All constants are currently math like PI, TAU...
                 } else {
-                    //This doesn't really make sense.
-                    //The validator needs to be aware of previous vars
-                    ExprType::F64
+                    return Err(TypeError::UnknownVariable(id_name.to_string()));
                 }
             }
             Expr::LiteralFloat(_) => ExprType::F64,
             Expr::LiteralInt(_) => ExprType::I64,
+            Expr::LiteralBool(_) => ExprType::Bool,
             Expr::Binop(_, l, r) => {
-                let lt = ExprType::of(l, env, variables)?;
-                let rt = ExprType::of(r, env, variables)?;
+                let lt = ExprType::of(l, env, variables, constant_vars)?;
+                let rt = ExprType::of(r, env, variables, constant_vars)?;
                 if lt == rt {
                     lt
                 } else {
@@ -93,7 +97,7 @@ impl ExprType {
             }
             Expr::Compare(_, _, _) => ExprType::Bool,
             Expr::IfThen(econd, _) => {
-                let tcond = ExprType::of(econd, env, variables)?;
+                let tcond = ExprType::of(econd, env, variables, constant_vars)?;
                 if tcond != ExprType::Bool {
                     return Err(TypeError::TypeMismatch {
                         expected: ExprType::Bool,
@@ -103,7 +107,7 @@ impl ExprType {
                 ExprType::Void
             }
             Expr::IfElse(econd, etrue, efalse) => {
-                let tcond = ExprType::of(econd, env, variables)?;
+                let tcond = ExprType::of(econd, env, variables, constant_vars)?;
                 if tcond != ExprType::Bool {
                     return Err(TypeError::TypeMismatch {
                         expected: ExprType::Bool,
@@ -113,14 +117,14 @@ impl ExprType {
 
                 let ttrue = etrue
                     .iter()
-                    .map(|e| ExprType::of(e, env, variables))
+                    .map(|e| ExprType::of(e, env, variables, constant_vars))
                     .collect::<Result<Vec<_>, _>>()?
                     .last()
                     .cloned()
                     .unwrap_or(ExprType::Void);
                 let tfalse = efalse
                     .iter()
-                    .map(|e| ExprType::of(e, env, variables))
+                    .map(|e| ExprType::of(e, env, variables, constant_vars))
                     .collect::<Result<Vec<_>, _>>()?
                     .last()
                     .cloned()
@@ -137,7 +141,7 @@ impl ExprType {
             }
             Expr::Assign(vars, e) => {
                 let tlen = match e.len().into() {
-                    1 => ExprType::of(&e[0], env, variables)?.tuple_size(),
+                    1 => ExprType::of(&e[0], env, variables, constant_vars)?.tuple_size(),
                     n => n,
                 };
                 if usize::from(vars.len()) != tlen {
@@ -148,15 +152,15 @@ impl ExprType {
                 }
                 ExprType::Tuple(
                     e.iter()
-                        .map(|e| ExprType::of(e, env, variables))
+                        .map(|e| ExprType::of(e, env, variables, constant_vars))
                         .collect::<Result<Vec<_>, _>>()?,
                 )
             }
-            Expr::AssignOp(_, _, e) => ExprType::of(e, env, variables)?,
+            Expr::AssignOp(_, _, e) => ExprType::of(e, env, variables, constant_vars)?,
             Expr::WhileLoop(_, _) => ExprType::Void,
             Expr::Block(b) => b
                 .iter()
-                .map(|e| ExprType::of(e, env, variables))
+                .map(|e| ExprType::of(e, env, variables, constant_vars))
                 .last()
                 .map(Result::unwrap)
                 .unwrap_or(ExprType::Void),
@@ -175,7 +179,7 @@ impl ExprType {
                         //TODO make sure types match too
                         let targs: Result<Vec<_>, _> = args
                             .iter()
-                            .map(|e| ExprType::of(e, env, variables))
+                            .map(|e| ExprType::of(e, env, variables, constant_vars))
                             .collect();
                         match targs {
                             Ok(_) => match &d.returns {
@@ -207,10 +211,21 @@ impl ExprType {
                 }
             }
             Expr::GlobalDataAddr(_) => ExprType::F64,
-            Expr::Bool(_) => ExprType::Bool,
-            Expr::Parentheses(expr) => ExprType::of(expr, env, variables)?,
-            Expr::ArraySet(_, _, e) => ExprType::of(e, env, variables)?,
-            Expr::ArrayGet(_, _) => ExprType::F64,
+            Expr::Parentheses(expr) => ExprType::of(expr, env, variables, constant_vars)?,
+            Expr::ArraySet(_, _, e) => ExprType::of(e, env, variables, constant_vars)?,
+            Expr::ArrayGet(id_name, _) => {
+                if variables.contains_key(id_name) {
+                    match &variables[id_name] {
+                        SVariable::UnboundedArrayF64(_, _) => Ok(ExprType::F64),
+                        SVariable::UnboundedArrayI64(_, _) => Ok(ExprType::I64),
+                        _ => Err(TypeError::TypeMismatchSpecific {
+                            s: format!("{} is not an array", id_name),
+                        }),
+                    }
+                } else {
+                    return Err(TypeError::UnknownVariable(id_name.to_string()));
+                }?
+            }
         };
         Ok(res)
     }
@@ -220,9 +235,9 @@ impl ExprType {
             ExprType::Void => 0,
             ExprType::Bool
             | ExprType::F64
+            | ExprType::I64
             | ExprType::UnboundedArrayF64
-            | ExprType::UnboundedArrayI64
-            | ExprType::I64 => 1,
+            | ExprType::UnboundedArrayI64 => 1,
             ExprType::Tuple(v) => v.len(),
         }
     }
@@ -245,17 +260,4 @@ impl ExprType {
             }),
         }
     }
-}
-
-pub fn validate_program(decls: Vec<Declaration>) -> Result<Vec<Declaration>, TypeError> {
-    let variables = HashMap::new(); //Previously declared variables, used in jit
-    for func in decls.iter().filter_map(|d| match d {
-        Declaration::Function(func) => Some(func.clone()),
-        _ => None,
-    }) {
-        for expr in &func.body {
-            ExprType::of(expr, &decls, &variables)?;
-        }
-    }
-    Ok(decls)
 }

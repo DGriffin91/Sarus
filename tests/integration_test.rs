@@ -16,7 +16,6 @@ fn main(a, b) -> (c) {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
@@ -93,7 +92,6 @@ fn nums() -> (r) {
     jit.add_math_constants()?;
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
@@ -115,7 +113,6 @@ fn main(a, b) -> (c) {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
@@ -139,7 +136,6 @@ fn minmax() -> anyhow::Result<()> {
     let a = 100.0f64;
     let b = 200.0f64;
     let mut jit = jit::JIT::default();
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
@@ -154,7 +150,6 @@ fn minmax() -> anyhow::Result<()> {
     "#,
     )?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
@@ -202,7 +197,6 @@ fn foodd(a, b) -> (c) {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
@@ -249,7 +243,6 @@ fn multiple_returns() -> anyhow::Result<()> {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
@@ -276,7 +269,6 @@ fn bools() -> anyhow::Result<()> {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
@@ -300,7 +292,6 @@ fn ifelse_assign() -> anyhow::Result<()> {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
@@ -320,7 +311,6 @@ fn order() -> anyhow::Result<()> {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
@@ -344,7 +334,6 @@ fn main(arr: &[f64], b) -> () {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [f64; 4], f64)>(func_ptr) };
@@ -364,7 +353,6 @@ fn negative() -> anyhow::Result<()> {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
@@ -406,7 +394,6 @@ fn compiled_graph() -> anyhow::Result<()> {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("graph")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [f64; 8])>(func_ptr) };
@@ -472,7 +459,6 @@ fn metadata() -> anyhow::Result<()> {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
 
     let func_meta: Option<Metadata> = ast.iter().find_map(|d| match d {
@@ -518,7 +504,6 @@ fn int_while_loop() -> anyhow::Result<()> {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
@@ -540,7 +525,6 @@ fn int_to_float() -> anyhow::Result<()> {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
@@ -566,7 +550,6 @@ fn float_conversion() -> anyhow::Result<()> {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
@@ -593,7 +576,6 @@ fn float_as_bool_error() -> anyhow::Result<()> {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
@@ -621,7 +603,6 @@ fn main(arr1: &[f64], arr2: &[f64], b) -> () {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func =
@@ -648,7 +629,6 @@ fn var_type_consistency() -> anyhow::Result<()> {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
@@ -671,7 +651,6 @@ fn three_inputs() -> anyhow::Result<()> {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64, f64) -> f64>(func_ptr) };
@@ -691,7 +670,6 @@ fn main(a: f64, b: f64) -> (c: f64) {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
@@ -711,7 +689,6 @@ fn main(a: f64, b: i64) -> (c: i64) {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, i64) -> i64>(func_ptr) };
@@ -735,11 +712,33 @@ fn foo(a: f64, b: i64, c: i64) -> (d: i64) {
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
-    //let ast = validate_program(ast)?;
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, i64) -> i64>(func_ptr) };
     assert_eq!(302, func(a, b as i64));
+    Ok(())
+}
+
+#[test]
+fn bool_params() -> anyhow::Result<()> {
+    let code = r#"
+fn main(a: f64, b: bool) -> (c: f64) {
+    c = if b {
+        a
+    } else {
+        0.0-a
+    }
+}
+"#;
+    let a = 100.0f64;
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = sarus_std_lib::append_std_funcs(ast);
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, bool) -> f64>(func_ptr) };
+    assert_eq!(a, func(a, true));
+    assert_eq!(-a, func(a, false));
     Ok(())
 }
 
@@ -758,7 +757,6 @@ fn foo(a: f64, b: i64, c: i64) -> (d: i64) {
 //    let mut jit = jit::JIT::default();
 //    let ast = parser::program(&code)?
 //    let ast = std_lib::append_std_funcs(ast);
-//    let ast = validate_program(ast)?;
 //    jit.translate(ast.clone())?;
 //
 //    let a = 100.0f64;

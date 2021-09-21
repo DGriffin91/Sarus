@@ -54,6 +54,7 @@ type NV<T> = non_empty_vec::NonEmpty<T>;
 pub enum Expr {
     LiteralFloat(String),
     LiteralInt(String),
+    LiteralBool(bool),
     Identifier(String),
     Binop(Binop, Box<Expr>, Box<Expr>),
     Compare(Cmp, Box<Expr>, Box<Expr>),
@@ -65,7 +66,6 @@ pub enum Expr {
     Block(Vec<Expr>),
     Call(String, Vec<Expr>),
     GlobalDataAddr(String),
-    Bool(bool),
     Parentheses(Box<Expr>),
     ArrayGet(String, Box<Expr>),
     ArraySet(String, Box<Expr>, Box<Expr>),
@@ -145,7 +145,7 @@ impl Display for Expr {
                 Ok(())
             }
             Expr::GlobalDataAddr(e) => write!(f, "{}", e),
-            Expr::Bool(b) => write!(f, "{}", b),
+            Expr::LiteralBool(b) => write!(f, "{}", b),
             Expr::Parentheses(e) => write!(f, "({})", e),
             Expr::ArrayGet(var, e) => write!(f, "{}[{}]", var, e),
             Expr::ArraySet(var, idx_e, e) => write!(f, "{}[{}] = {}", var, idx_e, e),
@@ -296,6 +296,7 @@ peg::parser!(pub grammar parser() for str {
         / _ n:$("i64") _ { ExprType::I64 }
         / _ n:$("&[f64]") _ { ExprType::UnboundedArrayF64 }
         / _ n:$("&[i64]") _ { ExprType::UnboundedArrayI64 }
+        / _ n:$("bool") _ { ExprType::Bool }
 
     rule block() -> Vec<Expr>
         = _ "{" b:(statement() ** _) _ "}" { b }
@@ -372,8 +373,8 @@ peg::parser!(pub grammar parser() for str {
         = _ n:$(['-']*['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat(n.into()) }
         / _ n:$(['-']*['0'..='9']+) { Expr::LiteralInt(n.into()) }
         / "*" i:identifier() { Expr::GlobalDataAddr(i) }
-        / _ "true" _ { Expr::Bool(true) }
-        / _ "false" _ { Expr::Bool(false) }
+        / _ "true" _ { Expr::LiteralBool(true) }
+        / _ "false" _ { Expr::LiteralBool(false) }
 
     rule comment() -> ()
         = quiet!{"//" [^'\n']*"\n"}

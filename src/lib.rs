@@ -1,5 +1,3 @@
-pub use crate::validator::validate_program;
-
 pub use crate::frontend::parser;
 
 pub mod frontend;

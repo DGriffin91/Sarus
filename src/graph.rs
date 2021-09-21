@@ -5,7 +5,7 @@ use toposort_scc::IndexGraph;
 use crate::{
     frontend::{make_nonempty, parser, Arg, Binop, Cmp, Declaration, Expr, Function},
     jit, sarus_std_lib,
-    validator::{validate_program, ExprType},
+    validator::ExprType,
 };
 
 #[derive(Debug, Clone)]
@@ -45,10 +45,7 @@ impl Graph {
         let ast = parser::program(&code)?;
 
         // Add STD lib to ast
-        let ast = sarus_std_lib::append_std_funcs(ast);
-
-        // Validate type useage
-        let mut ast = validate_program(ast)?;
+        let mut ast = sarus_std_lib::append_std_funcs(ast);
 
         let node_execution_order = order_connections(&connections, &nodes);
 
@@ -63,9 +60,6 @@ impl Graph {
 
         // Append graph function to ast
         ast.push(graph_func_ast);
-
-        // Test ast again with graph function added
-        let ast = validate_program(ast)?;
 
         // Pass the AST to the JIT to compile
         jit.translate(ast.clone())?;

@@ -1,7 +1,10 @@
+use std::collections::HashMap;
+
 use cranelift::frontend::FunctionBuilder;
 use cranelift::prelude::{types, InstBuilder, Value};
 
 use crate::frontend::Arg;
+use crate::hashmap;
 use crate::jit::SValue;
 use crate::{
     frontend::{Declaration, Function},
@@ -125,4 +128,27 @@ pub(crate) fn translate_std(
         "imax" => Ok(Some(SValue::I64(builder.ins().imax(args[0], args[1])))),
         _ => Ok(None),
     }
+}
+
+pub fn get_constants() -> HashMap<String, f64> {
+    hashmap!(
+        "E".into() => std::f64::consts::E,
+        "FRAC_1_PI".into() => std::f64::consts::FRAC_1_PI,
+        "FRAC_1_SQRT_2".into() => std::f64::consts::FRAC_1_SQRT_2,
+        "FRAC_2_SQRT_PI".into() => std::f64::consts::FRAC_2_SQRT_PI,
+        "FRAC_PI_2".into() => std::f64::consts::FRAC_PI_2,
+        "FRAC_PI_3".into() => std::f64::consts::FRAC_PI_3,
+        "FRAC_PI_4".into() => std::f64::consts::FRAC_PI_4,
+        "FRAC_PI_6".into() => std::f64::consts::FRAC_PI_6,
+        "FRAC_PI_8".into() => std::f64::consts::FRAC_PI_8,
+        "LN_2".into() => std::f64::consts::LN_2,
+        "LN_10".into() => std::f64::consts::LN_10,
+        "LOG2_10".into() => std::f64::consts::LOG2_10,
+        "LOG2_E".into() => std::f64::consts::LOG2_E,
+        "LOG10_2".into() => std::f64::consts::LOG10_2,
+        "LOG10_E".into() => std::f64::consts::LOG10_E,
+        "PI".into() => std::f64::consts::PI,
+        "SQRT_2".into() => std::f64::consts::SQRT_2,
+        "TAU".into() => std::f64::consts::TAU
+    )
 }

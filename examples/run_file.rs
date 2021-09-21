@@ -1,4 +1,4 @@
-use sarus::{jit, parser, validate_program};
+use sarus::{jit, parser};
 use std::{env, fs, mem};
 
 fn main() -> anyhow::Result<()> {
@@ -12,9 +12,6 @@ fn main() -> anyhow::Result<()> {
 
         // Generate AST from string
         let ast = parser::program(&code)?;
-
-        // Validate type useage
-        let ast = validate_program(ast)?;
 
         // Pass the AST to the JIT to compile
         jit.translate(ast)?;

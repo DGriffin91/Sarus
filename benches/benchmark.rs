@@ -134,7 +134,6 @@ fn get_eq_jit() -> jit::JIT {
     jit.add_math_constants().unwrap();
     let ast = frontend::parser::program(&code).unwrap();
     let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = validator::validate_program(ast).unwrap();
     jit.translate(ast).unwrap();
     jit
 }
@@ -149,10 +148,10 @@ fn eq_compile(b: &mut Bencher) {
 
             let func_ptr = jit.get_func("main").unwrap();
             let func = unsafe {
-                mem::transmute::<_, extern "C" fn(f64, &mut [f64; 128]) -> f64>(func_ptr)
+                mem::transmute::<_, extern "C" fn(i64, &mut [f64; 128]) -> f64>(func_ptr)
             };
 
-            sum += func(2.0, &mut output_arr);
+            sum += func(2, &mut output_arr);
         });
     });
     dbg!(sum);

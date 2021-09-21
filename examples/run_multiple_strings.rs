@@ -1,6 +1,6 @@
 use std::mem;
 
-use sarus::{jit, parser, validate_program};
+use sarus::{jit, parser};
 
 fn main() -> anyhow::Result<()> {
     // Create the JIT instance, which manages all generated functions and data.
@@ -14,8 +14,6 @@ fn add(a, b) -> (c) {
 }
 "#,
     )?;
-    // Validate type useage
-    let ast = validate_program(ast)?;
     // Pass the AST to the JIT to compile
     jit.translate(ast)?;
 
@@ -38,7 +36,6 @@ fn mult(a, b) -> (c) {
 "#,
     )?;
 
-    let ast = validate_program(ast)?;
     jit.translate(ast)?;
     let func_ptr = jit.get_func("mult")?;
     let func = unsafe { mem::transmute::<_, fn(f64, f64) -> f64>(func_ptr) };

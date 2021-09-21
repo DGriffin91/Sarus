@@ -226,6 +226,7 @@ impl JIT {
             &stmts,
             entry_block,
             env,
+            sarus_std_lib::get_constants(),
         )?;
 
         // Now translate the statements of the function body.
@@ -234,7 +235,6 @@ impl JIT {
             variables,
             funcs,
             module: &mut self.module,
-            env,
         };
         for expr in &stmts {
             trans.translate_expr(expr)?;
@@ -284,28 +284,8 @@ impl JIT {
     }
 
     pub fn add_math_constants(&mut self) -> anyhow::Result<()> {
-        let names = [
-            ("E", std::f64::consts::E),
-            ("FRAC_1_PI", std::f64::consts::FRAC_1_PI),
-            ("FRAC_1_SQRT_2", std::f64::consts::FRAC_1_SQRT_2),
-            ("FRAC_2_SQRT_PI", std::f64::consts::FRAC_2_SQRT_PI),
-            ("FRAC_PI_2", std::f64::consts::FRAC_PI_2),
-            ("FRAC_PI_3", std::f64::consts::FRAC_PI_3),
-            ("FRAC_PI_4", std::f64::consts::FRAC_PI_4),
-            ("FRAC_PI_6", std::f64::consts::FRAC_PI_6),
-            ("FRAC_PI_8", std::f64::consts::FRAC_PI_8),
-            ("LN_2", std::f64::consts::LN_2),
-            ("LN_10", std::f64::consts::LN_10),
-            ("LOG2_10", std::f64::consts::LOG2_10),
-            ("LOG2_E", std::f64::consts::LOG2_E),
-            ("LOG10_2", std::f64::consts::LOG10_2),
-            ("LOG10_E", std::f64::consts::LOG10_E),
-            ("PI", std::f64::consts::PI),
-            ("SQRT_2", std::f64::consts::SQRT_2),
-            ("TAU", std::f64::consts::TAU),
-        ];
-        for (name, val) in &names {
-            self.create_data(name, val.to_ne_bytes().to_vec())?;
+        for (name, val) in sarus_std_lib::get_constants() {
+            self.create_data(&name, val.to_ne_bytes().to_vec())?;
         }
         Ok(())
     }
@@ -402,7 +382,6 @@ struct FunctionTranslator<'a> {
     variables: HashMap<String, SVariable>,
     funcs: HashMap<String, Function>,
     module: &'a mut JITModule,
-    env: &'a [Declaration],
 }
 
 impl<'a> FunctionTranslator<'a> {
@@ -463,7 +442,7 @@ impl<'a> FunctionTranslator<'a> {
                 .map(|e| self.translate_expr(e))
                 .last()
                 .unwrap(),
-            Expr::Bool(b) => Ok(SValue::Bool(self.builder.ins().bconst(types::B1, *b))),
+            Expr::LiteralBool(b) => Ok(SValue::Bool(self.builder.ins().bconst(types::B1, *b))),
             Expr::Parentheses(expr) => self.translate_expr(expr),
             Expr::ArrayGet(name, idx_expr) => self.translate_array_get(name.to_string(), idx_expr),
             Expr::ArraySet(name, idx_expr, expr) => {
@@ -969,7 +948,6 @@ impl<'a> FunctionTranslator<'a> {
             }
         }
         for (arg, expr) in func.params.iter().zip(args.iter()) {
-            //let tp = ExprType::of(arg, self.env, &self.variables)?;
             sig.params.push(AbiParam::new(
                 arg.expr_type
                     .as_ref()
@@ -1129,6 +1107,7 @@ fn declare_variables(
     stmts: &[Expr],
     entry_block: Block,
     env: &[Declaration],
+    constant_vars: HashMap<String, f64>,
 ) -> anyhow::Result<HashMap<String, SVariable>> {
     //TODO we should create a list of the variables here with their expected type, so it can be referenced later
     let mut variables: HashMap<String, SVariable> = HashMap::new();
@@ -1155,6 +1134,7 @@ fn declare_variables(
             &mut index,
             expr,
             env,
+            &constant_vars,
         )?;
     }
 
@@ -1171,6 +1151,7 @@ fn declare_variables_in_stmt(
     index: &mut usize,
     expr: &Expr,
     env: &[Declaration],
+    constant_vars: &HashMap<String, f64>,
 ) -> anyhow::Result<()> {
     match *expr {
         Expr::Assign(ref names, ref exprs) => {
@@ -1184,6 +1165,7 @@ fn declare_variables_in_stmt(
                         index,
                         &[name],
                         env,
+                        constant_vars,
                     )?;
                 }
             } else {
@@ -1192,21 +1174,55 @@ fn declare_variables_in_stmt(
                     snames.push(sname.as_str());
                 }
                 declare_variable_from_expr(
-                    ptr_type, expr, builder, variables, index, &snames, env,
+                    ptr_type,
+                    expr,
+                    builder,
+                    variables,
+                    index,
+                    &snames,
+                    env,
+                    constant_vars,
                 )?;
             }
         }
         Expr::IfElse(ref _condition, ref then_body, ref else_body) => {
             for stmt in then_body {
-                declare_variables_in_stmt(ptr_type, ty, builder, variables, index, &stmt, env)?;
+                declare_variables_in_stmt(
+                    ptr_type,
+                    ty,
+                    builder,
+                    variables,
+                    index,
+                    &stmt,
+                    env,
+                    constant_vars,
+                )?;
             }
             for stmt in else_body {
-                declare_variables_in_stmt(ptr_type, ty, builder, variables, index, &stmt, env)?;
+                declare_variables_in_stmt(
+                    ptr_type,
+                    ty,
+                    builder,
+                    variables,
+                    index,
+                    &stmt,
+                    env,
+                    constant_vars,
+                )?;
             }
         }
         Expr::WhileLoop(ref _condition, ref loop_body) => {
             for stmt in loop_body {
-                declare_variables_in_stmt(ptr_type, ty, builder, variables, index, &stmt, env)?;
+                declare_variables_in_stmt(
+                    ptr_type,
+                    ty,
+                    builder,
+                    variables,
+                    index,
+                    &stmt,
+                    env,
+                    constant_vars,
+                )?;
             }
         }
         _ => (),
@@ -1223,6 +1239,7 @@ fn declare_variable_from_expr(
     index: &mut usize,
     names: &[&str],
     env: &[Declaration],
+    constant_vars: &HashMap<String, f64>,
 ) -> anyhow::Result<()> {
     match expr {
         Expr::IfElse(_condition, then_body, _else_body) => {
@@ -1235,10 +1252,11 @@ fn declare_variable_from_expr(
                 index,
                 names,
                 env,
+                constant_vars,
             )?;
         }
         expr => {
-            let expr_type = ExprType::of(expr, &env, variables)?;
+            let expr_type = ExprType::of(expr, &env, variables, constant_vars)?;
             declare_variable_from_type(
                 ptr_type, &expr_type, builder, variables, index, names, env,
             )?;
