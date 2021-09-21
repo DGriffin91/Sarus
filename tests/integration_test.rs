@@ -783,9 +783,9 @@ extern "C" fn prt2(s: *const i8) {
 fn create_string() -> anyhow::Result<()> {
     let code = r#"
 fn main(a: f64, b: f64) -> (c: f64) {
-    print("HELLO WORLD\n")
-    print($5)
-    print("HELLO WORLD\n")
+    print("HELLO\n")
+    print(["-"; 5])
+    print("WORLD\n")
     c = a
 }
 

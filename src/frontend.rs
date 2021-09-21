@@ -380,10 +380,10 @@ peg::parser!(pub grammar parser() for str {
         / _ "true" _ { Expr::LiteralBool(true) }
         / _ "false" _ { Expr::LiteralBool(false) }
         / _ "\"" body:$[^'"']* "\"" _ { Expr::LiteralString(body.join("")) }
-        / _ "$" len:$(['0'..='9']+) _ {
+        / _ "[" _ "\"" repstr:$[^'\"']* "\"" _ ";" _ len:$(['0'..='9']+) _ "]" _ {
             //Temp solution for creating empty strings
-            Expr::LiteralString(" ".repeat( len.parse().unwrap()))
-        }
+            Expr::LiteralString(repstr.join("").repeat( len.parse().unwrap()))
+        } //[" "; 10]
 
     rule comment() -> ()
         = quiet!{"//" [^'\n']*"\n"}
