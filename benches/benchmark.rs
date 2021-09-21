@@ -133,6 +133,7 @@ fn get_eq_jit() -> jit::JIT {
     let mut jit = jit::JIT::default();
     jit.add_math_constants().unwrap();
     let ast = frontend::parser::program(&code).unwrap();
+    let ast = std_lib::append_std_funcs(ast);
     let ast = validator::validate_program(ast).unwrap();
     jit.translate(ast).unwrap();
     jit

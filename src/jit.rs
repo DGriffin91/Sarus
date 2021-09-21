@@ -1,4 +1,5 @@
 use crate::frontend::*;
+use crate::std_lib;
 use crate::validator::ExprType;
 use cranelift::codegen::ir::immediates::Offset32;
 use cranelift::prelude::*;
@@ -63,6 +64,10 @@ impl JIT {
         for d in prog.clone() {
             match d {
                 Declaration::Function(func) => {
+                    if func.std_func {
+                        //Don't parse contents of std func, it will be empty
+                        continue;
+                    }
                     ////println!(
                     ////    "name {:?}, params {:?}, the_return {:?}",
                     ////    &name, &params, &the_return
@@ -974,6 +979,11 @@ impl<'a> FunctionTranslator<'a> {
                         .cranelift_type(ptr_ty)?,
                 ));
             }
+            if func.std_func {
+                if let Some(v) = self.translate_std(name, args)? {
+                    return Ok(v);
+                }
+            }
             let callee = self
                 .module
                 .declare_function(&name, Linkage::Import, &sig)
@@ -1008,6 +1018,9 @@ impl<'a> FunctionTranslator<'a> {
                 Ok(SValue::Void)
             }
         } else {
+            anyhow::bail!("function {} not found", name);
+            /*
+            dbg!("!!!");
             // Function not found, maybe it's libc or std
             // TODO This whole else should be able to be replaced
             // when libc & std function defs are in funcs
@@ -1049,6 +1062,7 @@ impl<'a> FunctionTranslator<'a> {
             } else {
                 Ok(SValue::Void)
             }
+            */
         }
     }
 
@@ -1072,53 +1086,11 @@ impl<'a> FunctionTranslator<'a> {
     }
 
     fn translate_std(&mut self, name: &str, args: &[Expr]) -> anyhow::Result<Option<SValue>> {
-        match args.len() {
-            1 => match self.translate_expr(&args[0])? {
-                SValue::F64(v) => match name {
-                    "trunc" => Ok(Some(SValue::F64(self.builder.ins().trunc(v)))),
-                    "floor" => Ok(Some(SValue::F64(self.builder.ins().floor(v)))),
-                    "ceil" => Ok(Some(SValue::F64(self.builder.ins().ceil(v)))),
-                    "fract" => {
-                        let v_int = self.builder.ins().trunc(v);
-                        let v = self.builder.ins().fsub(v, v_int);
-                        Ok(Some(SValue::F64(v)))
-                    }
-                    "abs" => Ok(Some(SValue::F64(self.builder.ins().fabs(v)))),
-                    "round" => Ok(Some(SValue::F64(self.builder.ins().nearest(v)))),
-                    "int" => Ok(Some(SValue::I64(
-                        self.builder.ins().fcvt_to_sint(types::I64, v),
-                    ))),
-                    _ => Ok(None),
-                },
-                SValue::I64(v) => match name {
-                    "float" => Ok(Some(SValue::F64(
-                        self.builder.ins().fcvt_from_sint(types::F64, v),
-                    ))),
-                    _ => Ok(None),
-                },
-                t => anyhow::bail!("type {:?} not supported", t),
-            },
-            2 => match self.translate_expr(&args[0])? {
-                SValue::F64(v0) => {
-                    let v1 = self.translate_expr(&args[1])?.expect_f64("translate_std")?;
-                    match name {
-                        "min" => Ok(Some(SValue::F64(self.builder.ins().fmin(v0, v1)))),
-                        "max" => Ok(Some(SValue::F64(self.builder.ins().fmax(v0, v1)))),
-                        _ => Ok(None),
-                    }
-                }
-                SValue::I64(v0) => {
-                    let v1 = self.translate_expr(&args[1])?.expect_i64("translate_std")?;
-                    match name {
-                        "imin" => Ok(Some(SValue::I64(self.builder.ins().imin(v0, v1)))),
-                        "imax" => Ok(Some(SValue::I64(self.builder.ins().imax(v0, v1)))),
-                        _ => Ok(None),
-                    }
-                }
-                _ => Ok(None),
-            },
-            _ => Ok(None),
+        let mut vargs = Vec::new();
+        for arg in args {
+            vargs.push(self.translate_expr(arg)?.inner("translate_std")?);
         }
+        std_lib::translate_std(&mut self.builder, name, vargs.as_slice())
     }
 
     fn value_type(&self, val: Value) -> Type {

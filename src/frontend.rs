@@ -204,6 +204,7 @@ pub struct Function {
     pub params: Vec<Arg>,
     pub returns: Vec<Arg>,
     pub body: Vec<Expr>,
+    pub std_func: bool,
 }
 
 impl Display for Function {
@@ -283,6 +284,7 @@ peg::parser!(pub grammar parser() for str {
             params,
             returns,
             body,
+            std_func: false
         }) }
 
     rule arg() -> Arg

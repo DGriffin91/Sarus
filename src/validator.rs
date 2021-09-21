@@ -6,31 +6,6 @@ use crate::{
 };
 use thiserror::Error;
 
-//Reference: https://www.gnu.org/software/libc/manual/html_node/Mathematics.html
-//https://docs.rs/libc/0.2.101/libc/
-//should this include bessel functions? It seems like they would pollute the name space.
-
-//couldn't get to work (STATUS_ACCESS_VIOLATION):
-// "asinh", "acosh", "atanh", "erf", "erfc", "lgamma", "gamma", "tgamma", "exp2", "exp10", "log2"
-const STD_1ARG_F: [&str; 21] = [
-    "sin", "cos", "tan", "asin", "acos", "atan", "exp", "log", "log10", "sqrt", "sinh", "cosh",
-    "exp10", "tanh", // libc
-    "ceil", "floor", "trunc", "fract", "abs", "round", "float", // built in std
-];
-const STD_1ARG_I: [&str; 1] = [
-    "int", // built in std
-];
-
-//couldn't get to work (STATUS_ACCESS_VIOLATION):
-// "hypot", "expm1", "log1p"
-const STD_2ARG_F: [&str; 4] = [
-    "atan2", "pow", // libc
-    "min", "max", // built in std
-];
-const STD_2ARG_I: [&str; 2] = [
-    "imin", "imax", // built in std
-];
-
 #[derive(Debug, Clone, Error)]
 pub enum TypeError {
     #[error("Type mismatch; expected {expected}, found {actual}")]
@@ -205,50 +180,25 @@ impl ExprType {
                         match targs {
                             Ok(_) => match &d.returns {
                                 v if v.is_empty() => ExprType::Void,
-                                v if v.len() == 1 => ExprType::F64,
-                                v => ExprType::Tuple(vec![ExprType::F64; v.len()]),
+                                v if v.len() == 1 => v
+                                    .first()
+                                    .unwrap()
+                                    .expr_type
+                                    .clone()
+                                    .unwrap_or(ExprType::F64),
+                                v => {
+                                    let mut items = Vec::new();
+                                    for arg in v.iter() {
+                                        items.push(arg.expr_type.clone().unwrap_or(ExprType::F64));
+                                    }
+                                    ExprType::Tuple(items)
+                                }
                             },
                             Err(err) => return Err(err),
                         }
                     } else {
                         return Err(TypeError::TupleLengthMismatch {
                             expected: d.params.len(),
-                            actual: args.len(),
-                        });
-                    }
-                } else if STD_1ARG_F.contains(&fn_name.as_str()) {
-                    if args.len() == 1 {
-                        ExprType::F64
-                    } else {
-                        return Err(TypeError::TupleLengthMismatch {
-                            expected: 1,
-                            actual: args.len(),
-                        });
-                    }
-                } else if STD_2ARG_F.contains(&fn_name.as_str()) {
-                    if args.len() == 2 {
-                        ExprType::F64
-                    } else {
-                        return Err(TypeError::TupleLengthMismatch {
-                            expected: 2,
-                            actual: args.len(),
-                        });
-                    }
-                } else if STD_1ARG_I.contains(&fn_name.as_str()) {
-                    if args.len() == 1 {
-                        ExprType::I64
-                    } else {
-                        return Err(TypeError::TupleLengthMismatch {
-                            expected: 1,
-                            actual: args.len(),
-                        });
-                    }
-                } else if STD_2ARG_I.contains(&fn_name.as_str()) {
-                    if args.len() == 2 {
-                        ExprType::I64
-                    } else {
-                        return Err(TypeError::TupleLengthMismatch {
-                            expected: 2,
                             actual: args.len(),
                         });
                     }
