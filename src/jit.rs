@@ -538,33 +538,58 @@ impl<'a> FunctionTranslator<'a> {
         let rhs = self.translate_expr(rhs)?;
         match lhs {
             SValue::F64(a) => match rhs {
-                SValue::F64(b) => Ok(SValue::F64(self.binop_float(op, a, b))),
+                SValue::F64(b) => Ok(SValue::F64(self.binop_float(op, a, b)?)),
                 _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs),
             },
             SValue::I64(a) => match rhs {
-                SValue::I64(b) => Ok(SValue::I64(self.binop_int(op, a, b))),
+                SValue::I64(b) => Ok(SValue::I64(self.binop_int(op, a, b)?)),
                 _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs),
             },
-            _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs),
+            SValue::Bool(a) => match rhs {
+                SValue::Bool(b) => Ok(SValue::Bool(self.binop_bool(op, a, b)?)),
+                _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs),
+            },
+            SValue::Void
+            | SValue::Unknown(_)
+            | SValue::UnboundedArrayF64(_)
+            | SValue::UnboundedArrayI64(_)
+            | SValue::Address(_)
+            | SValue::Tuple(_) => {
+                anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs)
+            }
         }
     }
 
-    fn binop_float(&mut self, op: Binop, lhs: Value, rhs: Value) -> Value {
-        match op {
+    fn binop_float(&mut self, op: Binop, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
+        Ok(match op {
             Binop::Add => self.builder.ins().fadd(lhs, rhs),
             Binop::Sub => self.builder.ins().fsub(lhs, rhs),
             Binop::Mul => self.builder.ins().fmul(lhs, rhs),
             Binop::Div => self.builder.ins().fdiv(lhs, rhs),
-        }
+            Binop::LogicalAnd | Binop::LogicalOr => {
+                anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs)
+            }
+        })
     }
 
-    fn binop_int(&mut self, op: Binop, lhs: Value, rhs: Value) -> Value {
-        match op {
+    fn binop_int(&mut self, op: Binop, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
+        Ok(match op {
             Binop::Add => self.builder.ins().iadd(lhs, rhs),
             Binop::Sub => self.builder.ins().isub(lhs, rhs),
             Binop::Mul => self.builder.ins().imul(lhs, rhs),
             Binop::Div => self.builder.ins().sdiv(lhs, rhs),
-        }
+            Binop::LogicalAnd | Binop::LogicalOr => {
+                anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs)
+            }
+        })
+    }
+
+    fn binop_bool(&mut self, op: Binop, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
+        Ok(match op {
+            Binop::LogicalAnd => self.builder.ins().band(lhs, rhs),
+            Binop::LogicalOr => self.builder.ins().bor(lhs, rhs),
+            _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs),
+        })
     }
 
     fn translate_cmp(&mut self, cmp: Cmp, lhs: &Expr, rhs: &Expr) -> anyhow::Result<SValue> {
@@ -574,21 +599,24 @@ impl<'a> FunctionTranslator<'a> {
         match lhs {
             SValue::F64(a) => match rhs {
                 SValue::F64(b) => Ok(SValue::Bool(self.cmp_float(cmp, a, b))),
-                SValue::I64(b) => {
-                    let f_b = self.builder.ins().fcvt_from_sint(types::F64, b);
-                    Ok(SValue::Bool(self.cmp_float(cmp, f_b, b)))
-                }
                 _ => anyhow::bail!("compare not supported: {:?} {} {:?}", lhs, cmp, rhs),
             },
             SValue::I64(a) => match rhs {
-                SValue::F64(b) => {
-                    let f_a = self.builder.ins().fcvt_from_sint(types::F64, a);
-                    Ok(SValue::Bool(self.cmp_float(cmp, f_a, b)))
-                }
                 SValue::I64(b) => Ok(SValue::Bool(self.cmp_int(cmp, a, b))),
                 _ => anyhow::bail!("compare not supported: {:?} {} {:?}", lhs, cmp, rhs),
             },
-            _ => anyhow::bail!("compare not supported: {:?} {} {:?}", lhs, cmp, rhs),
+            SValue::Bool(a) => match rhs {
+                SValue::Bool(b) => Ok(SValue::Bool(self.cmp_bool(cmp, a, b))),
+                _ => anyhow::bail!("compare not supported: {:?} {} {:?}", lhs, cmp, rhs),
+            },
+            SValue::Void
+            | SValue::Unknown(_)
+            | SValue::UnboundedArrayF64(_)
+            | SValue::UnboundedArrayI64(_)
+            | SValue::Address(_)
+            | SValue::Tuple(_) => {
+                anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, cmp, rhs)
+            }
         }
     }
 
@@ -614,6 +642,42 @@ impl<'a> FunctionTranslator<'a> {
             Cmp::Ge => IntCC::SignedGreaterThanOrEqual,
         };
         self.builder.ins().icmp(icmp, lhs, rhs)
+    }
+
+    fn cmp_bool(&mut self, cmp: Cmp, lhs: Value, rhs: Value) -> Value {
+        //TODO
+        //thread 'logical_operators' panicked at 'not implemented: bool bnot', [...]]\cranelift-codegen-0.76.0\src\isa\x64\lower.rs:2375:17
+        //match cmp {
+        //    Cmp::Eq => {
+        //        let x = self.builder.ins().bxor(lhs, rhs);
+        //        self.builder.ins().bnot(x)
+        //    }
+        //    Cmp::Ne => self.builder.ins().bxor(lhs, rhs),
+        //    Cmp::Lt => {
+        //        let x = self.builder.ins().bxor(lhs, rhs);
+        //        self.builder.ins().band_not(x, lhs)
+        //    }
+        //    Cmp::Le => {
+        //        //There's probably a faster way
+        //        let x = self.cmp_bool(Cmp::Eq, lhs, rhs);
+        //        let y = self.cmp_bool(Cmp::Lt, lhs, rhs);
+        //        self.builder.ins().bor(x, y)
+        //    }
+        //    Cmp::Gt => {
+        //        let x = self.builder.ins().bxor(lhs, rhs);
+        //        self.builder.ins().band_not(x, rhs)
+        //    }
+        //    Cmp::Ge => {
+        //        //There's probably a faster way
+        //        let x = self.cmp_bool(Cmp::Eq, lhs, rhs);
+        //        let y = self.cmp_bool(Cmp::Eq, lhs, rhs);
+        //        self.builder.ins().bor(x, y)
+        //    }
+        //}
+
+        let lhs = self.builder.ins().bint(types::I64, lhs);
+        let rhs = self.builder.ins().bint(types::I64, rhs);
+        self.cmp_int(cmp, lhs, rhs)
     }
 
     fn translate_assign(&mut self, names: &[String], expr: &[Expr]) -> anyhow::Result<SValue> {
@@ -798,6 +862,9 @@ impl<'a> FunctionTranslator<'a> {
                     Binop::Sub => self.builder.ins().fsub(orig_value, v),
                     Binop::Mul => self.builder.ins().fmul(orig_value, v),
                     Binop::Div => self.builder.ins().fdiv(orig_value, v),
+                    Binop::LogicalAnd | Binop::LogicalOr => {
+                        anyhow::bail!("operation not supported: {:?} {} {:?}", orig_value, op, v)
+                    }
                 };
                 self.builder
                     .def_var(orig_variable.expect_f64("math_assign")?, added_val);
@@ -813,6 +880,9 @@ impl<'a> FunctionTranslator<'a> {
                     Binop::Sub => self.builder.ins().isub(orig_value, v),
                     Binop::Mul => self.builder.ins().imul(orig_value, v),
                     Binop::Div => self.builder.ins().sdiv(orig_value, v),
+                    Binop::LogicalAnd | Binop::LogicalOr => {
+                        anyhow::bail!("operation not supported: {:?} {} {:?}", orig_value, op, v)
+                    }
                 };
                 self.builder
                     .def_var(orig_variable.expect_i64("math_assign")?, added_val);

@@ -742,28 +742,127 @@ fn main(a: f64, b: bool) -> (c: f64) {
     Ok(())
 }
 
+#[test]
+fn logical_operators() -> anyhow::Result<()> {
+    let code = r#"
+fn and(a: bool, b: bool) -> (c: bool) {
+    c = a && b
+}
+fn or(a: bool, b: bool) -> (c: bool) {
+    c = a || b
+}
+fn gt(a: bool, b: bool) -> (c: bool) {
+    c = a > b
+}
+fn ge(a: bool, b: bool) -> (c: bool) {
+    c = a >= b
+}
+fn lt(a: bool, b: bool) -> (c: bool) {
+    c = a < b
+}
+fn le(a: bool, b: bool) -> (c: bool) {
+    c = a <= b
+}
+fn eq(a: bool, b: bool) -> (c: bool) {
+    c = a == b
+}
+fn ne(a: bool, b: bool) -> (c: bool) {
+    c = a != b
+}
+fn ifthen() -> (c: bool) {
+    c = false
+    if 1.0 < 2.0 && 2.0 < 3.0 {
+        c = true
+    }
+}
+fn ifthen2() -> (c: bool) {
+    c = false
+    if 1.0 < 2.0 || 2.0 < 1.0 {
+        c = true
+    }
+}
+fn ifthenparen() -> (c: bool) {
+    c = false
+    if (1.0 < 2.0) && (2.0 < 3.0) {
+        c = true
+    }
+}
+"#;
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = sarus_std_lib::append_std_funcs(ast);
+    jit.translate(ast.clone())?;
+    let f = unsafe { mem::transmute::<_, extern "C" fn(bool, bool) -> bool>(jit.get_func("and")?) };
+    assert_eq!(true, f(true, true));
+    assert_eq!(false, f(true, false));
+    assert_eq!(false, f(false, true));
+    assert_eq!(false, f(false, false));
+    let f = unsafe { mem::transmute::<_, extern "C" fn(bool, bool) -> bool>(jit.get_func("or")?) };
+    assert_eq!(true, f(true, true));
+    assert_eq!(true, f(true, false));
+    assert_eq!(true, f(false, true));
+    assert_eq!(false, f(false, false));
+    let f = unsafe { mem::transmute::<_, extern "C" fn(bool, bool) -> bool>(jit.get_func("gt")?) };
+    assert_eq!(false, f(true, true));
+    assert_eq!(true, f(true, false));
+    assert_eq!(false, f(false, true));
+    assert_eq!(false, f(false, false));
+    let f = unsafe { mem::transmute::<_, extern "C" fn(bool, bool) -> bool>(jit.get_func("ge")?) };
+    assert_eq!(true, f(true, true));
+    assert_eq!(true, f(true, false));
+    assert_eq!(false, f(false, true));
+    assert_eq!(true, f(false, false));
+    let f = unsafe { mem::transmute::<_, extern "C" fn(bool, bool) -> bool>(jit.get_func("lt")?) };
+    assert_eq!(false, f(true, true));
+    assert_eq!(false, f(true, false));
+    assert_eq!(true, f(false, true));
+    assert_eq!(false, f(false, false));
+    let f = unsafe { mem::transmute::<_, extern "C" fn(bool, bool) -> bool>(jit.get_func("le")?) };
+    assert_eq!(true, f(true, true));
+    assert_eq!(false, f(true, false));
+    assert_eq!(true, f(false, true));
+    assert_eq!(true, f(false, false));
+    let f = unsafe { mem::transmute::<_, extern "C" fn(bool, bool) -> bool>(jit.get_func("eq")?) };
+    assert_eq!(true, f(true, true));
+    assert_eq!(false, f(true, false));
+    assert_eq!(false, f(false, true));
+    assert_eq!(true, f(false, false));
+    let f = unsafe { mem::transmute::<_, extern "C" fn(bool, bool) -> bool>(jit.get_func("ne")?) };
+    assert_eq!(false, f(true, true));
+    assert_eq!(true, f(true, false));
+    assert_eq!(true, f(false, true));
+    assert_eq!(false, f(false, false));
+    let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("ifthen")?) };
+    assert_eq!(true, f());
+    let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("ifthen2")?) };
+    assert_eq!(true, f());
+    let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("ifthenparen")?) };
+    assert_eq!(true, f());
+    Ok(())
+}
+
 extern "C" fn mult(a: f64, b: f64) -> f64 {
     a * b
 }
 
-extern "C" fn prt(a: f64) {
+extern "C" fn dbg(a: f64) {
     dbg!(a);
 }
 
 #[test]
 fn extern_func() -> anyhow::Result<()> {
     let code = r#"
+extern fn mult(a: f64, b: f64) -> (c: f64) {}
+extern fn dbg(a: f64) -> () {}
+
 fn main(a: f64, b: f64) -> (c: f64) {
     c = mult(a, b)
-    print(a)
+    dbg(a)
 }
-
-extern fn mult(a: f64, b: f64) -> (c: f64) {}
-extern fn print(a: f64) -> () {}
 "#;
     let a = 100.0f64;
     let b = 100.0f64;
-    let mut jit = jit::JIT::new(&[("mult", mult as *const u8), ("print", prt as *const u8)]);
+    let mut jit = jit::JIT::new(&[("mult", mult as *const u8), ("dbg", dbg as *const u8)]);
     let ast = parser::program(&code)?;
     let ast = sarus_std_lib::append_std_funcs(ast);
     jit.translate(ast.clone())?;

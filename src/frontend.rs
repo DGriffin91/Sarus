@@ -10,6 +10,8 @@ pub enum Binop {
     Sub,
     Mul,
     Div,
+    LogicalAnd,
+    LogicalOr,
 }
 
 impl Display for Binop {
@@ -19,6 +21,8 @@ impl Display for Binop {
             Binop::Sub => write!(f, "-"),
             Binop::Mul => write!(f, "*"),
             Binop::Div => write!(f, "/"),
+            Binop::LogicalAnd => write!(f, "&&"),
+            Binop::LogicalOr => write!(f, "||"),
         }
     }
 }
@@ -341,6 +345,9 @@ peg::parser!(pub grammar parser() for str {
         = i:identifier() _ "[" idx:expression() "]" _ "=" _ e:expression() {Expr::ArraySet(i, Box::new(idx), Box::new(e))}
 
     rule binary_op() -> Expr = precedence!{
+        a:@ _ "&&" _ b:(@) { Expr::Binop(Binop::LogicalAnd, Box::new(a), Box::new(b)) }
+        a:@ _ "||" _ b:(@) { Expr::Binop(Binop::LogicalOr, Box::new(a), Box::new(b)) }
+        --
         a:@ _ "==" b:(@) { Expr::Compare(Cmp::Eq, Box::new(a), Box::new(b)) }
         a:@ _ "!=" b:(@) { Expr::Compare(Cmp::Ne, Box::new(a), Box::new(b)) }
         a:@ _ "<"  b:(@) { Expr::Compare(Cmp::Lt, Box::new(a), Box::new(b)) }
