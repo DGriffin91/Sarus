@@ -147,11 +147,10 @@ fn eq_compile(b: &mut Bencher) {
             let mut output_arr = [0.0f64; 128];
 
             let func_ptr = jit.get_func("main").unwrap();
-            let func = unsafe {
-                mem::transmute::<_, extern "C" fn(i64, &mut [f64; 128]) -> f64>(func_ptr)
-            };
+            let func =
+                unsafe { mem::transmute::<_, extern "C" fn(i64, *mut f64) -> f64>(func_ptr) };
 
-            sum += func(2, &mut output_arr);
+            sum += func(output_arr.len() as i64, output_arr.as_mut_ptr());
         });
     });
     dbg!(sum);
@@ -165,10 +164,9 @@ fn eq(b: &mut Bencher) {
     b.iter(|| {
         test::black_box({
             let func_ptr = jit.get_func("main").unwrap();
-            let func = unsafe {
-                mem::transmute::<_, extern "C" fn(i64, &mut [f64; 48000]) -> f64>(func_ptr)
-            };
-            result = func(48000, &mut output_arr)
+            let func =
+                unsafe { mem::transmute::<_, extern "C" fn(i64, *mut f64) -> f64>(func_ptr) };
+            result = func(output_arr.len() as i64, output_arr.as_mut_ptr())
         });
     });
     dbg!((result, output_arr.iter().sum::<f64>()));
@@ -180,9 +178,8 @@ fn compare_eq() {
     let mut output_arr = [0.0f64; 48000];
     let mut jit = get_eq_jit();
     let func_ptr = jit.get_func("main").unwrap();
-    let func =
-        unsafe { mem::transmute::<_, extern "C" fn(i64, &mut [f64; 48000]) -> f64>(func_ptr) };
-    let result: f64 = func(iterations, &mut output_arr);
+    let func = unsafe { mem::transmute::<_, extern "C" fn(i64, *mut f64) -> f64>(func_ptr) };
+    let result: f64 = func(output_arr.len() as i64, output_arr.as_mut_ptr());
     //println!("{:?}", &output_arr[0..10]);
     let mut output_arr2 = [0.0f64; 48000];
     let result2 = filter_benchmark_1(iterations as usize, &mut output_arr2);
@@ -222,8 +219,8 @@ fn subprocess_code(_: Option<()>) -> Result<f64, String> {
     let func_ptr = jit
         .get_func("main")
         .map_err(|e| format!("get_func main failed: {}", e))?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, &mut [f64; 128]) -> f64>(func_ptr) };
-    Ok(func(2.0, &mut output_arr))
+    let func = unsafe { mem::transmute::<_, extern "C" fn(i64, *mut f64) -> f64>(func_ptr) };
+    Ok(func(output_arr.len() as i64, output_arr.as_mut_ptr()))
 }
 
 #[bench]

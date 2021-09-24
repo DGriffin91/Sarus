@@ -336,8 +336,8 @@ fn main(arr: &[f64], b) -> () {
     let ast = sarus_std_lib::append_std_funcs(ast);
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [f64; 4], f64)>(func_ptr) };
-    func(&mut arr, b);
+    let func = unsafe { mem::transmute::<_, extern "C" fn(*mut f64, f64)>(func_ptr) };
+    func(arr.as_mut_ptr(), b);
     assert_eq!([200.0, 400.0, 600.0, 800.0], arr);
     Ok(())
 }
@@ -605,9 +605,8 @@ fn main(arr1: &[f64], arr2: &[f64], b) -> () {
     let ast = sarus_std_lib::append_std_funcs(ast);
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
-    let func =
-        unsafe { mem::transmute::<_, extern "C" fn(&mut [f64; 4], &mut [f64; 4], f64)>(func_ptr) };
-    func(&mut arr1, &mut arr2, b);
+    let func = unsafe { mem::transmute::<_, extern "C" fn(*mut f64, *mut f64, f64)>(func_ptr) };
+    func(arr1.as_mut_ptr(), arr2.as_mut_ptr(), b);
     assert_eq!(200.0, arr2[0]);
     Ok(())
 }
@@ -787,6 +786,15 @@ fn ifthenparen() -> (c: bool) {
         c = true
     }
 }
+fn ifthennestedparen() -> (c: bool) {
+    c = false
+    if ((1.0 < 2.0) && (2.0 < 3.0) && true) {
+        c = true
+    }
+}
+fn parenassign() -> (c: bool) {
+    c = ((1.0 < 2.0) && (2.0 < 3.0) && true)
+}
 "#;
     let mut jit = jit::JIT::default();
     let ast = parser::program(&code)?;
@@ -837,6 +845,11 @@ fn ifthenparen() -> (c: bool) {
     let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("ifthen2")?) };
     assert_eq!(true, f());
     let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("ifthenparen")?) };
+    assert_eq!(true, f());
+    let f =
+        unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("ifthennestedparen")?) };
+    assert_eq!(true, f());
+    let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("parenassign")?) };
     assert_eq!(true, f());
     Ok(())
 }
