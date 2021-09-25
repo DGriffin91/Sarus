@@ -3,6 +3,19 @@ use std::fmt::Display;
 
 use std::fmt::Write;
 
+#[derive(Debug, Copy, Clone)]
+pub enum Unaryop {
+    Not,
+}
+
+impl Display for Unaryop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Unaryop::Not => write!(f, "!"),
+        }
+    }
+}
+
 /// "Mathematical" binary operations variants
 #[derive(Debug, Copy, Clone)]
 pub enum Binop {
@@ -62,6 +75,7 @@ pub enum Expr {
     LiteralString(String),
     Identifier(String),
     Binop(Binop, Box<Expr>, Box<Expr>),
+    Unaryop(Unaryop, Box<Expr>),
     Compare(Cmp, Box<Expr>, Box<Expr>),
     IfThen(Box<Expr>, Vec<Expr>),
     IfElse(Box<Expr>, Vec<Expr>, Vec<Expr>),
@@ -85,6 +99,7 @@ impl Display for Expr {
             Expr::LiteralString(s) => write!(f, "\"{}\"", s),
             Expr::Identifier(s) => write!(f, "{}", s),
             Expr::Binop(op, e1, e2) => write!(f, "{} {} {}", e1, op, e2),
+            Expr::Unaryop(op, e1) => write!(f, "{} {}", op, e1),
             Expr::Compare(cmp, e1, e2) => write!(f, "{} {} {}", e1, cmp, e2),
             Expr::IfThen(e, body) => {
                 writeln!(f, "if {} {{", e)?;
@@ -344,6 +359,11 @@ peg::parser!(pub grammar parser() for str {
     rule arrayset() -> Expr
         = i:identifier() _ "[" idx:expression() "]" _ "=" _ e:expression() {Expr::ArraySet(i, Box::new(idx), Box::new(e))}
 
+
+    rule unary_op() -> Expr = precedence!{
+        "!" e:expression() { Expr::Unaryop(Unaryop::Not, Box::new(e)) }
+    }
+
     rule binary_op() -> Expr = precedence!{
         a:@ _ "&&" _ b:(@) { Expr::Binop(Binop::LogicalAnd, Box::new(a), Box::new(b)) }
         a:@ _ "||" _ b:(@) { Expr::Binop(Binop::LogicalOr, Box::new(a), Box::new(b)) }
@@ -372,7 +392,10 @@ peg::parser!(pub grammar parser() for str {
         i:identifier() { Expr::Identifier(i) }
         l:literal() { l }
         --
+        u:unary_op()  { u }
+        --
         "(" e:expression() ")" { Expr::Parentheses(Box::new(e)) }
+
 
     }
 

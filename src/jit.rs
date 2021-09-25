@@ -454,6 +454,7 @@ impl<'a> FunctionTranslator<'a> {
             )),
             Expr::LiteralString(literal) => self.translate_string(literal),
             Expr::Binop(op, lhs, rhs) => self.translate_binop(*op, lhs, rhs),
+            Expr::Unaryop(op, lhs) => self.translate_unaryop(*op, lhs),
             Expr::Compare(cmp, lhs, rhs) => self.translate_cmp(*cmp, lhs, rhs),
             Expr::Call(name, args) => self.translate_call(name, args),
             Expr::GlobalDataAddr(name) => Ok(SValue::UnboundedArrayF64(
@@ -558,6 +559,31 @@ impl<'a> FunctionTranslator<'a> {
                 anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs)
             }
         }
+    }
+
+    fn translate_unaryop(&mut self, op: Unaryop, lhs: &Expr) -> anyhow::Result<SValue> {
+        let lhs = self.translate_expr(lhs)?;
+
+        Ok(match lhs {
+            SValue::Bool(lhs) => {
+                //TODO I'm sure this has absolutely terrible performance
+                //thread 'unary_not' panicked at 'not implemented: bool bnot', [...]\cranelift-codegen-0.76.0\src\isa\x64\lower.rs:2375:17
+                //SValue::Bool(self.builder.ins().bnot(lhs))
+                let i_bool = self.builder.ins().bint(types::I64, lhs);
+                let false_const = self.builder.ins().iconst(types::I64, 0);
+                SValue::Bool(self.builder.ins().icmp(IntCC::Equal, i_bool, false_const))
+            }
+            SValue::Void
+            | SValue::F64(_)
+            | SValue::I64(_)
+            | SValue::Unknown(_)
+            | SValue::UnboundedArrayF64(_)
+            | SValue::UnboundedArrayI64(_)
+            | SValue::Address(_)
+            | SValue::Tuple(_) => {
+                anyhow::bail!("operation not supported: {:?} {}", lhs, op)
+            }
+        })
     }
 
     fn binop_float(&mut self, op: Binop, lhs: Value, rhs: Value) -> anyhow::Result<Value> {

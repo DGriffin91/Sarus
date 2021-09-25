@@ -854,6 +854,69 @@ fn parenassign() -> (c: bool) {
     Ok(())
 }
 
+#[test]
+fn unary_not() -> anyhow::Result<()> {
+    let code = r#"
+fn direct() -> (c: bool) {
+    c = !true
+}
+fn direct2() -> (c: bool) {
+    c = !false
+}
+fn direct3() -> (c: bool) {
+    c = !(false)
+}
+fn not(a: bool) -> (c: bool) {
+    c = !a
+}
+fn not2(a: bool) -> (c: bool) {
+    c = !(a)
+}
+fn ifthen() -> (c: bool) {
+    c = false
+    if !(false) {
+        c = true
+    }
+}
+fn ifthen2() -> (c: bool) {
+    c = false
+    if !(!(false || !false)) {
+        c = true
+    }
+}
+fn ifthen3() -> (c: bool) {
+    c = true
+    if !(!(1.0 < 2.0) && !(2.0 < 3.0)) {
+        c = false
+    }
+}
+fn parenassign() -> (c: bool) {
+    c = !((1.0 < 2.0) && (2.0 < 3.0) && true)
+}
+"#;
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = sarus_std_lib::append_std_funcs(ast);
+    jit.translate(ast.clone())?;
+    let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("direct")?) };
+    assert_eq!(false, f());
+    let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("direct2")?) };
+    assert_eq!(true, f());
+    let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("direct3")?) };
+    assert_eq!(true, f());
+    let f = unsafe { mem::transmute::<_, extern "C" fn(bool) -> bool>(jit.get_func("not2")?) };
+    assert_eq!(false, f(true));
+    let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("ifthen")?) };
+    assert_eq!(true, f());
+    let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("ifthen2")?) };
+    assert_eq!(true, f());
+    let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("ifthen3")?) };
+    assert_eq!(true, f());
+    let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("parenassign")?) };
+    assert_eq!(false, f());
+    Ok(())
+}
+
 extern "C" fn mult(a: f64, b: f64) -> f64 {
     a * b
 }

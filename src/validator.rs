@@ -100,6 +100,7 @@ impl ExprType {
                     });
                 }
             }
+            Expr::Unaryop(_, l) => ExprType::of(l, env, variables, constant_vars)?,
             Expr::Compare(_, _, _) => ExprType::Bool,
             Expr::IfThen(econd, _) => {
                 let tcond = ExprType::of(econd, env, variables, constant_vars)?;
