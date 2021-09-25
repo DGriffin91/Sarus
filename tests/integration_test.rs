@@ -979,6 +979,32 @@ extern fn print(s: &) -> () {}
     Ok(())
 }
 
+#[test]
+fn structs() -> anyhow::Result<()> {
+    let code = r#"
+struct Point {
+    x: f64,
+    y: f64,
+    z: f64,
+}
+fn length(self: Point) -> (r: f64) {
+    r = sqrt(pow(self.x, 2.0) + pow(self.y, 2.0) + pow(self.z, 2.0))
+}
+fn main(a: f64, b: bool) -> (c: f64) {
+    c = 100.0
+}
+"#;
+    let a = 100.0f64;
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = sarus_std_lib::append_std_funcs(ast);
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, bool) -> f64>(func_ptr) };
+    assert_eq!(a, func(a, true));
+    Ok(())
+}
+
 //#[test]
 //fn int_min_max() -> anyhow::Result<()> {
 //    //Not currently working: Unsupported type for imin instruction: i64
@@ -991,14 +1017,14 @@ extern fn print(s: &) -> () {}
 //        e = float(c)
 //    }
 //"#;
-//    let mut jit = jit::JIT::default();
-//    let ast = parser::program(&code)?
-//    let ast = std_lib::append_std_funcs(ast);
-//    jit.translate(ast.clone())?;
-//
 //    let a = 100.0f64;
-//    let b = 200.0f64;
-//    let result: f64 = unsafe { run_fn(&mut jit, "main", ())? };
-//    assert_eq!(100.0, result);
+//    let b = 100.0f64;
+//    let mut jit = jit::JIT::new(&[("print", prt2 as *const u8)]);
+//    let ast = parser::program(&code)?;
+//    let ast = sarus_std_lib::append_std_funcs(ast);
+//    jit.translate(ast.clone())?;
+//    let func_ptr = jit.get_func("main")?;
+//    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+//    func(a, b);
 //    Ok(())
 //}

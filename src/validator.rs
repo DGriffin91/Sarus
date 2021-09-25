@@ -33,6 +33,7 @@ pub enum ExprType {
     UnboundedArrayI64,
     Address,
     Tuple(Vec<ExprType>),
+    Struct(Box<String>),
 }
 
 impl Display for ExprType {
@@ -53,6 +54,7 @@ impl Display for ExprType {
                     .collect::<Result<Vec<_>, _>>()?;
                 write!(f, ")")
             }
+            ExprType::Struct(s) => write!(f, "{}", s),
         }
     }
 }
@@ -69,7 +71,7 @@ impl ExprType {
             Expr::Identifier(id_name) => {
                 //dbg!(&id_name, &variables);
                 if variables.contains_key(id_name) {
-                    match variables[id_name] {
+                    match &variables[id_name] {
                         SVariable::Unknown(_, _) => ExprType::F64, //TODO
                         SVariable::Bool(_, _) => ExprType::Bool,
                         SVariable::F64(_, _) => ExprType::F64,
@@ -77,6 +79,9 @@ impl ExprType {
                         SVariable::UnboundedArrayF64(_, _) => ExprType::UnboundedArrayF64,
                         SVariable::UnboundedArrayI64(_, _) => ExprType::UnboundedArrayI64,
                         SVariable::Address(_, _) => ExprType::Address,
+                        SVariable::Struct(_, structname, _) => {
+                            ExprType::Struct(Box::new(structname.to_string()))
+                        }
                     }
                 } else if constant_vars.contains_key(id_name) {
                     ExprType::F64 //All constants are currently math like PI, TAU...
@@ -242,8 +247,9 @@ impl ExprType {
             ExprType::Bool
             | ExprType::F64
             | ExprType::I64
-            | ExprType::UnboundedArrayF64
             | ExprType::Address
+            | ExprType::Struct(_)
+            | ExprType::UnboundedArrayF64
             | ExprType::UnboundedArrayI64 => 1,
             ExprType::Tuple(v) => v.len(),
         }
@@ -263,6 +269,7 @@ impl ExprType {
             ExprType::UnboundedArrayI64 => Ok(ptr_type),
             ExprType::UnboundedArrayF64 => Ok(ptr_type),
             ExprType::Address => Ok(ptr_type),
+            ExprType::Struct(_) => Ok(ptr_type),
             ExprType::Tuple(_) => Err(TypeError::TypeMismatchSpecific {
                 s: "Tuple has no cranelift analog".to_string(),
             }),

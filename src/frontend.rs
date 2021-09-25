@@ -186,6 +186,7 @@ pub fn make_nonempty<T>(v: Vec<T>) -> Option<NV<T>> {
 pub enum Declaration {
     Function(Function),
     Metadata(Vec<String>, String),
+    Struct(Struct),
 }
 
 impl Display for Declaration {
@@ -200,6 +201,7 @@ impl Display for Declaration {
                 write!(f, "{}", body)?;
                 Ok(())
             }
+            Declaration::Struct(e) => write!(f, "{}", e),
         }
     }
 }
@@ -250,6 +252,24 @@ impl Display for Function {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Struct {
+    pub name: String,
+    pub fields: Vec<Arg>,
+    pub extern_struct: bool,
+}
+
+impl Display for Struct {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "struct {} {{", self.name)?;
+        for param in &self.fields {
+            writeln!(f, "{},", param)?;
+        }
+        writeln!(f, "}}")?;
+        Ok(())
+    }
+}
+
 // TODO there must be a better way.
 pub fn pretty_indent(code: &str) -> String {
     let mut f = String::from("");
@@ -285,17 +305,23 @@ peg::parser!(pub grammar parser() for str {
     rule declaration() -> Declaration
         = function()
         / metadata()
+        / structdef()
+
+    rule structdef() -> Declaration
+        = _ ext:("extern")? _ "struct" name:identifier() _ "{" _ fields:(struct_field())* _ "}" _ {Declaration::Struct(Struct{name, fields, extern_struct: if ext.is_some() {true} else {false}})}
+
+    rule struct_field() -> Arg
+        = a:arg() comma() {a}
 
     rule metadata() -> Declaration
         = _ "@" _ headings:(i:(metadata_identifier()** ([' ' | '\t'])) {i}) ([' ' | '\t'])* "\n" body:$[^'@']* "@" _ {Declaration::Metadata(headings, body.join(""))}
-
 
     rule metadata_identifier() -> String
         = quiet!{ _ n:$(['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.into() } }
         / expected!("identifier")
 
     rule function() -> Declaration
-        = _ ext:("extern")* _ "fn" name:identifier() _
+        = _ ext:("extern")? _  "fn" name:identifier() _
         "(" params:(i:arg() ** comma()) ")" _
         "->" _
         "(" returns:(i:arg() ** comma()) _ ")"
@@ -306,7 +332,7 @@ peg::parser!(pub grammar parser() for str {
             params,
             returns,
             body,
-            extern_func: if ext.len() > 0 {true} else {false}
+            extern_func: if ext.is_some() {true} else {false},
         }) }
 
     rule arg() -> Arg
@@ -320,6 +346,7 @@ peg::parser!(pub grammar parser() for str {
         / _ n:$("&[i64]") _ { ExprType::UnboundedArrayI64 }
         / _ n:$("&") _ { ExprType::Address }
         / _ n:$("bool") _ { ExprType::Bool }
+        / _ n:identifier() _ { ExprType::Struct(Box::new(n)) }
 
     rule block() -> Vec<Expr>
         = _ "{" b:(statement() ** _) _ "}" { b }
@@ -349,7 +376,7 @@ peg::parser!(pub grammar parser() for str {
         { Expr::WhileLoop(Box::new(e), body) }
 
     rule assignment() -> Expr
-        = assignments:((i:identifier() {i}) ** comma()) _ "=" args:((_ e:expression() _ {e}) ** comma()) {?
+        = assignments:((i:var_identifier() {i}) ** comma()) _ "=" args:((_ e:expression() _ {e}) ** comma()) {?
             make_nonempty(assignments)
                 .and_then(|assignments| make_nonempty(args)
                 .map(|args| Expr::Assign(assignments, args)))
@@ -357,7 +384,7 @@ peg::parser!(pub grammar parser() for str {
         }
 
     rule arrayset() -> Expr
-        = i:identifier() _ "[" idx:expression() "]" _ "=" _ e:expression() {Expr::ArraySet(i, Box::new(idx), Box::new(e))}
+        = i:var_identifier() _ "[" idx:expression() "]" _ "=" _ e:expression() {Expr::ArraySet(i, Box::new(idx), Box::new(e))}
 
 
     rule unary_op() -> Expr = precedence!{
@@ -376,32 +403,35 @@ peg::parser!(pub grammar parser() for str {
         a:@ _ ">=" b:(@) { Expr::Compare(Cmp::Ge, Box::new(a), Box::new(b)) }
         --
         a:@ _ "+" _ b:(@) { Expr::Binop(Binop::Add, Box::new(a), Box::new(b)) }
-        i:identifier() _ "+=" _ a:(@) { Expr::AssignOp(Binop::Add, Box::new(i), Box::new(a)) }
+        i:var_identifier() _ "+=" _ a:(@) { Expr::AssignOp(Binop::Add, Box::new(i), Box::new(a)) }
 
         a:@ _ "-" _ b:(@) { Expr::Binop(Binop::Sub, Box::new(a), Box::new(b)) }
-        i:identifier() _ "-=" _ a:(@) { Expr::AssignOp(Binop::Sub, Box::new(i), Box::new(a)) }
+        i:var_identifier() _ "-=" _ a:(@) { Expr::AssignOp(Binop::Sub, Box::new(i), Box::new(a)) }
         --
         a:@ _ "*" _ b:(@) { Expr::Binop(Binop::Mul, Box::new(a), Box::new(b)) }
-        i:identifier() _ "*=" _ a:(@) { Expr::AssignOp(Binop::Mul, Box::new(i), Box::new(a)) }
+        i:var_identifier() _ "*=" _ a:(@) { Expr::AssignOp(Binop::Mul, Box::new(i), Box::new(a)) }
 
         a:@ _ "/" _ b:(@) { Expr::Binop(Binop::Div, Box::new(a), Box::new(b)) }
-        i:identifier() _ "/=" _ a:(@) { Expr::AssignOp(Binop::Div, Box::new(i), Box::new(a)) }
+        i:var_identifier() _ "/=" _ a:(@) { Expr::AssignOp(Binop::Div, Box::new(i), Box::new(a)) }
         --
-        i:identifier() _ "(" args:((_ e:expression() _ {e}) ** comma()) ")" { Expr::Call(i, args) }
-        i:identifier() _ "[" idx:expression() "]" { Expr::ArrayGet(i, Box::new(idx)) }
-        i:identifier() { Expr::Identifier(i) }
+        i:var_identifier() _ "(" args:((_ e:expression() _ {e}) ** comma()) ")" { Expr::Call(i, args) }
+        i:var_identifier() _ "[" idx:expression() "]" { Expr::ArrayGet(i, Box::new(idx)) }
+        i:var_identifier() { Expr::Identifier(i) }
         l:literal() { l }
         --
         u:unary_op()  { u }
         --
         "(" e:expression() ")" { Expr::Parentheses(Box::new(e)) }
-
-
     }
 
     rule identifier() -> String
         = quiet!{ _ n:$((!"true"!"false")['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.into() } }
         / expected!("identifier")
+
+
+    rule var_identifier() -> (String)
+        = a:identifier() "." b:identifier() {format!("{}.{}", a, b)}
+        / identifier()
 
     rule literal() -> Expr
         = _ n:$(['-']*['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat(n.into()) }

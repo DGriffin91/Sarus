@@ -203,6 +203,9 @@ impl JIT {
                         }
                         ExprType::Void => continue,
                         ExprType::Bool => AbiParam::new(types::B1),
+                        ExprType::Struct(_) => {
+                            AbiParam::new(self.module.target_config().pointer_type())
+                        }
                         ExprType::Tuple(_) => anyhow::bail!("Tuple as parameter not supported"),
                     },
                     None => AbiParam::new(float),
@@ -298,6 +301,7 @@ impl JIT {
                         .builder
                         .use_var(return_variable.expect_bool("return_variable")?),
                     ExprType::Tuple(_) => anyhow::bail!("tuple not supported in return"),
+                    ExprType::Struct(_) => anyhow::bail!("returning structs not supported yet"), //TODO support this
                 },
                 None => trans
                     .builder
@@ -353,6 +357,7 @@ pub enum SValue {
     UnboundedArrayI64(Value),
     Address(Value),
     Tuple(Vec<SValue>),
+    Struct(String, Value),
 }
 
 impl Display for SValue {
@@ -367,6 +372,7 @@ impl Display for SValue {
             SValue::Address(_) => write!(f, "&"),
             SValue::Void => write!(f, "void"),
             SValue::Tuple(v) => write!(f, "Tuple ({})", v.len()),
+            SValue::Struct(name, _) => write!(f, "Struct ({})", name),
         }
     }
 }
@@ -382,6 +388,7 @@ impl SValue {
             ExprType::UnboundedArrayI64 => SValue::UnboundedArrayI64(value),
             ExprType::Address => SValue::Address(value),
             ExprType::Tuple(_) => anyhow::bail!("use SValue::from_tuple"),
+            ExprType::Struct(name) => SValue::Struct(name.to_string(), value),
         })
     }
 
@@ -396,6 +403,7 @@ impl SValue {
             SValue::Address(v) => Ok(*v),
             SValue::Void => anyhow::bail!("void has no inner {}", ctx),
             SValue::Tuple(v) => anyhow::bail!("inner does not support tuple {:?} {}", v, ctx),
+            SValue::Struct(_, v) => Ok(*v),
         }
     }
     fn expect_f64(&self, ctx: &str) -> anyhow::Result<Value> {
@@ -426,6 +434,18 @@ impl SValue {
         match self {
             SValue::UnboundedArrayI64(v) => Ok(*v),
             v => anyhow::bail!("incorrect type {} expected UnboundedArrayI64 {}", v, ctx),
+        }
+    }
+    fn expect_struct(&self, name: &str, ctx: &str) -> anyhow::Result<Value> {
+        match self {
+            SValue::Struct(sname, v) => {
+                if sname == name {
+                    return Ok(*v);
+                } else {
+                    anyhow::bail!("incorrect type {} expected Struct {} {}", v, name, ctx)
+                }
+            }
+            v => anyhow::bail!("incorrect type {} expected Struct {} {}", v, name, ctx),
         }
     }
 }
@@ -474,6 +494,9 @@ impl<'a> FunctionTranslator<'a> {
                         }
                         SVariable::UnboundedArrayI64(_, v) => {
                             SValue::UnboundedArrayF64(self.builder.use_var(*v))
+                        }
+                        SVariable::Struct(_, structname, v) => {
+                            SValue::Struct(structname.to_string(), self.builder.use_var(*v))
                         }
                     }),
                     None => Ok(SValue::F64(
@@ -555,6 +578,7 @@ impl<'a> FunctionTranslator<'a> {
             | SValue::UnboundedArrayF64(_)
             | SValue::UnboundedArrayI64(_)
             | SValue::Address(_)
+            | SValue::Struct(_, _)
             | SValue::Tuple(_) => {
                 anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs)
             }
@@ -580,6 +604,7 @@ impl<'a> FunctionTranslator<'a> {
             | SValue::UnboundedArrayF64(_)
             | SValue::UnboundedArrayI64(_)
             | SValue::Address(_)
+            | SValue::Struct(_, _)
             | SValue::Tuple(_) => {
                 anyhow::bail!("operation not supported: {:?} {}", lhs, op)
             }
@@ -640,6 +665,7 @@ impl<'a> FunctionTranslator<'a> {
             | SValue::UnboundedArrayF64(_)
             | SValue::UnboundedArrayI64(_)
             | SValue::Address(_)
+            | SValue::Struct(_, _)
             | SValue::Tuple(_) => {
                 anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, cmp, rhs)
             }
@@ -763,6 +789,11 @@ impl<'a> FunctionTranslator<'a> {
                         self.builder.def_var(var.expect_address("assign")?, v);
                         v
                     }
+                    SValue::Struct(name, v) => {
+                        values.push(SValue::Struct(name.clone(), v));
+                        self.builder.def_var(var.expect_struct(&name, "assign")?, v);
+                        v
+                    }
                 };
             }
             if values.len() > 1 {
@@ -804,6 +835,7 @@ impl<'a> FunctionTranslator<'a> {
                 SValue::UnboundedArrayF64(_) => anyhow::bail!("operation not supported {:?}", expr),
                 SValue::UnboundedArrayI64(_) => anyhow::bail!("operation not supported {:?}", expr),
                 SValue::Address(_) => anyhow::bail!("operation not supported {:?}", expr),
+                SValue::Struct(_, _) => anyhow::bail!("operation not supported {:?}", expr),
             }
         }
     }
@@ -928,6 +960,10 @@ impl<'a> FunctionTranslator<'a> {
                 //TODO support this for pointer math
                 anyhow::bail!("math assign Address not supported")
             }
+            SValue::Struct(_, _) => {
+                //TODO support this for pointer math
+                anyhow::bail!("math assign Struct not supported")
+            }
         }
     }
 
@@ -1015,6 +1051,7 @@ impl<'a> FunctionTranslator<'a> {
             SValue::UnboundedArrayF64(v) => vec![v],
             SValue::UnboundedArrayI64(v) => vec![v],
             SValue::Address(v) => vec![v],
+            SValue::Struct(_, v) => vec![v],
         };
 
         if then_value.to_string() != else_value.to_string() {
@@ -1072,6 +1109,7 @@ impl<'a> FunctionTranslator<'a> {
                     Ok(SValue::UnboundedArrayI64(*phi.first().unwrap()))
                 }
                 SValue::Address(_) => Ok(SValue::Address(*phi.first().unwrap())),
+                SValue::Struct(name, _) => Ok(SValue::Struct(name, *phi.first().unwrap())),
             }
         } else {
             Ok(SValue::Void)
@@ -1236,6 +1274,7 @@ pub enum SVariable {
     UnboundedArrayF64(String, Variable),
     UnboundedArrayI64(String, Variable),
     Address(String, Variable),
+    Struct(String, String, Variable),
 }
 
 impl Display for SVariable {
@@ -1248,6 +1287,7 @@ impl Display for SVariable {
             SVariable::UnboundedArrayF64(name, _) => write!(f, "UnboundedArrayF64 {}", name),
             SVariable::UnboundedArrayI64(name, _) => write!(f, "UnboundedArrayI64 {}", name),
             SVariable::Address(name, _) => write!(f, "Address {}", name),
+            SVariable::Struct(name, structname, _) => write!(f, "Struct {} {}", name, structname),
         }
     }
 }
@@ -1262,6 +1302,7 @@ impl SVariable {
             SVariable::UnboundedArrayF64(_, v) => *v,
             SVariable::UnboundedArrayI64(_, v) => *v,
             SVariable::Address(_, v) => *v,
+            SVariable::Struct(_, _, v) => *v,
         }
     }
     fn expect_f64(&self, ctx: &str) -> anyhow::Result<Variable> {
@@ -1298,6 +1339,23 @@ impl SVariable {
         match self {
             SVariable::Address(_, v) => Ok(*v),
             v => anyhow::bail!("incorrect type {} expected Address {}", v, ctx),
+        }
+    }
+    fn expect_struct(&self, name: &str, ctx: &str) -> anyhow::Result<Variable> {
+        match self {
+            SVariable::Struct(varname, sname, v) => {
+                if sname == name {
+                    return Ok(*v);
+                } else {
+                    anyhow::bail!(
+                        "incorrect type {} expected Struct {} {}",
+                        varname,
+                        name,
+                        ctx
+                    )
+                }
+            }
+            v => anyhow::bail!("incorrect type {} expected Struct {} {}", v, name, ctx),
         }
     }
 }
@@ -1559,6 +1617,17 @@ fn declare_variable_from_type(
                 )?
             }
         }
+        ExprType::Struct(structname) => {
+            if !variables.contains_key(name) {
+                let var = Variable::new(*index);
+                variables.insert(
+                    name.into(),
+                    SVariable::Struct(name.into(), structname.to_string(), var),
+                );
+                builder.declare_var(var, ptr_type);
+                *index += 1;
+            }
+        }
     }
     Ok(())
 }
@@ -1600,6 +1669,14 @@ fn declare_variable(
                     types::B1,
                 ),
                 ExprType::Tuple(_) => return None, //anyhow::bail!("single variable tuple not supported"),
+                ExprType::Struct(structname) => (
+                    SVariable::Struct(
+                        arg.name.clone(),
+                        structname.to_string(),
+                        Variable::new(*index),
+                    ),
+                    ptr_ty,
+                ),
             },
             None => (
                 SVariable::F64(arg.name.clone(), Variable::new(*index)),
