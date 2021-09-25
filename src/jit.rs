@@ -88,6 +88,9 @@ impl JIT {
             funcs.insert(func.name.clone(), func);
         }
 
+        let _struct_map = create_struct_map(&prog, self.module.target_config().pointer_type())?;
+        //dbg!(struct_map);
+
         // First, parse the string, producing AST nodes.
         for d in prog.clone() {
             match d {
@@ -1690,4 +1693,126 @@ fn declare_variable(
     } else {
         None
     }
+}
+
+#[derive(Debug)]
+struct StructDef {
+    size: u32,
+    name: String,
+    fields: HashMap<String, StructField>,
+}
+
+#[derive(Debug)]
+struct StructField {
+    offset: u32,
+    size: u32,
+    name: String,
+    expr_type: Option<ExprType>,
+}
+
+fn create_struct_map(
+    prog: &Vec<Declaration>,
+    ptr_type: types::Type,
+) -> anyhow::Result<HashMap<String, StructDef>> {
+    let mut in_structs = HashMap::new();
+    for decl in prog {
+        if let Declaration::Struct(s) = decl {
+            in_structs.insert(s.name.to_string(), s);
+        }
+    }
+    let structs_order = order_structs(&in_structs)?;
+
+    let mut structs: HashMap<String, StructDef> = HashMap::new();
+
+    for struct_name in structs_order {
+        let mut fields = HashMap::new();
+        let mut struct_size = 0u32;
+        for field in in_structs[&struct_name].fields.iter() {
+            let size = match &field.expr_type {
+                Some(t) => match t {
+                    ExprType::Void => 0u32,
+                    ExprType::Bool => types::B1.bytes(),
+                    ExprType::F64 => types::F64.bytes(),
+                    ExprType::I64 => types::I64.bytes(),
+                    ExprType::UnboundedArrayF64 => ptr_type.bytes(),
+                    ExprType::UnboundedArrayI64 => ptr_type.bytes(),
+                    ExprType::Address => ptr_type.bytes(),
+                    ExprType::Tuple(_) => anyhow::bail!("Tuple in struct not supported"),
+                    ExprType::Struct(name) => structs[&name.to_string()].size,
+                },
+                None => types::F64.bytes(),
+            };
+            fields.insert(
+                field.name.to_string(),
+                StructField {
+                    offset: struct_size,
+                    size,
+                    name: field.name.to_string(),
+                    expr_type: field.expr_type.clone(),
+                },
+            );
+            struct_size += size;
+        }
+
+        structs.insert(
+            struct_name.to_string(),
+            StructDef {
+                size: struct_size,
+                name: struct_name.to_string(),
+                fields,
+            },
+        );
+    }
+
+    Ok(structs)
+}
+
+fn order_structs(in_structs: &HashMap<String, &Struct>) -> anyhow::Result<Vec<String>> {
+    let mut structs_order = Vec::new();
+    let mut last_structs_len = 0usize;
+    while structs_order.len() < in_structs.len() {
+        for (name, struc) in in_structs {
+            let mut can_insert = true;
+            for field in &struc.fields {
+                match &field.expr_type {
+                    Some(t) => match t {
+                        ExprType::Void
+                        | ExprType::Bool
+                        | ExprType::F64
+                        | ExprType::I64
+                        | ExprType::UnboundedArrayF64
+                        | ExprType::UnboundedArrayI64
+                        | ExprType::Address
+                        | ExprType::Tuple(_) => continue,
+                        ExprType::Struct(field_struct_name) => {
+                            if !in_structs.contains_key(&field_struct_name.to_string()) {
+                                anyhow::bail!(
+                                    "Can't find Struct {} referenced in Struct {} field {}",
+                                    field_struct_name,
+                                    struc.name,
+                                    field.name
+                                )
+                            }
+                            if structs_order.contains(&field_struct_name.to_string()) {
+                                continue;
+                            } else {
+                                can_insert = false;
+                            }
+                        }
+                    },
+                    None => continue,
+                }
+            }
+            if can_insert && !structs_order.contains(&name.to_string()) {
+                structs_order.push(name.to_string());
+            }
+        }
+        if structs_order.len() > last_structs_len {
+            last_structs_len = structs_order.len()
+        } else {
+            anyhow::bail!("Structs references resulting in loop unsupported")
+        }
+    }
+
+    Ok(structs_order)
 }

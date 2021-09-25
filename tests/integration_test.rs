@@ -982,6 +982,10 @@ extern fn print(s: &) -> () {}
 #[test]
 fn structs() -> anyhow::Result<()> {
     let code = r#"
+struct Line {
+    a: Point,
+    b: Point,
+}
 struct Point {
     x: f64,
     y: f64,
