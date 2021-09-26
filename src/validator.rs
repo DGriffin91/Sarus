@@ -1,8 +1,8 @@
 use std::{collections::HashMap, fmt::Display};
 
 use crate::{
-    frontend::{Declaration, Expr},
-    jit::SVariable,
+    frontend::{Declaration, Expr, Function},
+    jit::{SVariable, StructDef},
 };
 use thiserror::Error;
 
@@ -21,6 +21,10 @@ pub enum TypeError {
     UnknownFunction(String),
     #[error("Variable \"{0}\" does not exist")]
     UnknownVariable(String),
+    #[error("Struct \"{0}\" does not exist")]
+    UnknownStruct(String),
+    #[error("Struct \"{0}\" does not have field \"{1}\"")]
+    UnknownField(String, String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,14 +67,43 @@ impl ExprType {
     pub fn of(
         expr: &Expr,
         env: &[Declaration],
+        funcs: &HashMap<String, Function>,
         variables: &HashMap<String, SVariable>,
         constant_vars: &HashMap<String, f64>,
+        struct_map: &HashMap<String, StructDef>,
     ) -> Result<ExprType, TypeError> {
         let res = match expr {
             //TODO don't assume all identifiers are floats
             Expr::Identifier(id_name) => {
-                //dbg!(&id_name, &variables);
-                if variables.contains_key(id_name) {
+                if id_name.contains(".") {
+                    let parts = id_name.split(".").collect::<Vec<&str>>();
+                    if variables.contains_key(parts[0]) {
+                        match &variables[parts[0]] {
+                            SVariable::Struct(_var_name, struct_name, _var) => {
+                                let struct_name = struct_name.to_string();
+                                if struct_map.contains_key(&struct_name) {
+                                    if struct_map[&struct_name].fields.contains_key(parts[1]) {
+                                        struct_map[&struct_name].fields[parts[1]].expr_type.clone()
+                                    } else {
+                                        return Err(TypeError::UnknownField(
+                                            struct_name.to_string(),
+                                            parts[1].to_string(),
+                                        ));
+                                    }
+                                } else {
+                                    return Err(TypeError::UnknownStruct(struct_name.to_string()));
+                                }
+                            }
+                            _v => {
+                                return Err(TypeError::TypeMismatchSpecific {
+                                    s: format!("{} is not a Struct", id_name),
+                                })
+                            }
+                        }
+                    } else {
+                        return Err(TypeError::UnknownVariable(id_name.to_string()));
+                    }
+                } else if variables.contains_key(id_name) {
                     match &variables[id_name] {
                         SVariable::Unknown(_, _) => ExprType::F64, //TODO
                         SVariable::Bool(_, _) => ExprType::Bool,
@@ -94,8 +127,8 @@ impl ExprType {
             Expr::LiteralBool(_) => ExprType::Bool,
             Expr::LiteralString(_) => ExprType::UnboundedArrayI64, //TODO change to char
             Expr::Binop(_, l, r) => {
-                let lt = ExprType::of(l, env, variables, constant_vars)?;
-                let rt = ExprType::of(r, env, variables, constant_vars)?;
+                let lt = ExprType::of(l, env, funcs, variables, constant_vars, struct_map)?;
+                let rt = ExprType::of(r, env, funcs, variables, constant_vars, struct_map)?;
                 if lt == rt {
                     lt
                 } else {
@@ -105,10 +138,12 @@ impl ExprType {
                     });
                 }
             }
-            Expr::Unaryop(_, l) => ExprType::of(l, env, variables, constant_vars)?,
+            Expr::Unaryop(_, l) => {
+                ExprType::of(l, env, funcs, variables, constant_vars, struct_map)?
+            }
             Expr::Compare(_, _, _) => ExprType::Bool,
             Expr::IfThen(econd, _) => {
-                let tcond = ExprType::of(econd, env, variables, constant_vars)?;
+                let tcond = ExprType::of(econd, env, funcs, variables, constant_vars, struct_map)?;
                 if tcond != ExprType::Bool {
                     return Err(TypeError::TypeMismatch {
                         expected: ExprType::Bool,
@@ -118,7 +153,7 @@ impl ExprType {
                 ExprType::Void
             }
             Expr::IfElse(econd, etrue, efalse) => {
-                let tcond = ExprType::of(econd, env, variables, constant_vars)?;
+                let tcond = ExprType::of(econd, env, funcs, variables, constant_vars, struct_map)?;
                 if tcond != ExprType::Bool {
                     return Err(TypeError::TypeMismatch {
                         expected: ExprType::Bool,
@@ -128,14 +163,14 @@ impl ExprType {
 
                 let ttrue = etrue
                     .iter()
-                    .map(|e| ExprType::of(e, env, variables, constant_vars))
+                    .map(|e| ExprType::of(e, env, funcs, variables, constant_vars, struct_map))
                     .collect::<Result<Vec<_>, _>>()?
                     .last()
                     .cloned()
                     .unwrap_or(ExprType::Void);
                 let tfalse = efalse
                     .iter()
-                    .map(|e| ExprType::of(e, env, variables, constant_vars))
+                    .map(|e| ExprType::of(e, env, funcs, variables, constant_vars, struct_map))
                     .collect::<Result<Vec<_>, _>>()?
                     .last()
                     .cloned()
@@ -152,7 +187,8 @@ impl ExprType {
             }
             Expr::Assign(vars, e) => {
                 let tlen = match e.len().into() {
-                    1 => ExprType::of(&e[0], env, variables, constant_vars)?.tuple_size(),
+                    1 => ExprType::of(&e[0], env, funcs, variables, constant_vars, struct_map)?
+                        .tuple_size(),
                     n => n,
                 };
                 if usize::from(vars.len()) != tlen {
@@ -163,34 +199,54 @@ impl ExprType {
                 }
                 ExprType::Tuple(
                     e.iter()
-                        .map(|e| ExprType::of(e, env, variables, constant_vars))
+                        .map(|e| ExprType::of(e, env, funcs, variables, constant_vars, struct_map))
                         .collect::<Result<Vec<_>, _>>()?,
                 )
             }
-            Expr::AssignOp(_, _, e) => ExprType::of(e, env, variables, constant_vars)?,
+            Expr::AssignOp(_, _, e) => {
+                ExprType::of(e, env, funcs, variables, constant_vars, struct_map)?
+            }
             Expr::WhileLoop(_, _) => ExprType::Void,
             Expr::Block(b) => b
                 .iter()
-                .map(|e| ExprType::of(e, env, variables, constant_vars))
+                .map(|e| ExprType::of(e, env, funcs, variables, constant_vars, struct_map))
                 .last()
                 .map(Result::unwrap)
                 .unwrap_or(ExprType::Void),
-            Expr::Call(fn_name, args) => {
-                if let Some(d) = env.iter().find_map(|d| match d {
-                    Declaration::Function(func) => {
-                        if &func.name == fn_name {
-                            Some(func)
+            Expr::Call(fn_name, args, impl_func) => {
+                if *impl_func {
+                    if let Some(self_var) = variables.get(&args[0].to_string()) {
+                        if let SVariable::Struct(_var_name, struct_name, _var) = self_var {
+                            let e = Expr::Call(
+                                format!("{}.{}", struct_name, fn_name),
+                                args.to_vec(),
+                                false,
+                            );
+                            return Ok(ExprType::of(
+                                &e,
+                                env,
+                                funcs,
+                                variables,
+                                constant_vars,
+                                struct_map,
+                            )?);
                         } else {
-                            None
+                            return Err(TypeError::TypeMismatchSpecific {
+                                s: format!("{} is not a Struct", self_var),
+                            });
                         }
+                    } else {
+                        return Err(TypeError::UnknownVariable(args[0].to_string()));
                     }
-                    _ => None,
-                }) {
+                }
+                if let Some(d) = funcs.get(fn_name) {
                     if d.params.len() == args.len() {
                         //TODO make sure types match too
                         let targs: Result<Vec<_>, _> = args
                             .iter()
-                            .map(|e| ExprType::of(e, env, variables, constant_vars))
+                            .map(|e| {
+                                ExprType::of(e, env, funcs, variables, constant_vars, struct_map)
+                            })
                             .collect();
                         match targs {
                             Ok(_) => match &d.returns {
@@ -222,8 +278,12 @@ impl ExprType {
                 }
             }
             Expr::GlobalDataAddr(_) => ExprType::F64,
-            Expr::Parentheses(expr) => ExprType::of(expr, env, variables, constant_vars)?,
-            Expr::ArraySet(_, _, e) => ExprType::of(e, env, variables, constant_vars)?,
+            Expr::Parentheses(expr) => {
+                ExprType::of(expr, env, funcs, variables, constant_vars, struct_map)?
+            }
+            Expr::ArraySet(_, _, e) => {
+                ExprType::of(e, env, funcs, variables, constant_vars, struct_map)?
+            }
             Expr::ArrayGet(id_name, _) => {
                 if variables.contains_key(id_name) {
                     match &variables[id_name] {
@@ -236,6 +296,14 @@ impl ExprType {
                 } else {
                     return Err(TypeError::UnknownVariable(id_name.to_string()));
                 }?
+            }
+            Expr::NewStruct(struct_name, _fields) => {
+                if struct_map.contains_key(struct_name) {
+                    //Need to check field types
+                } else {
+                    return Err(TypeError::UnknownStruct(struct_name.to_string()));
+                }
+                ExprType::Struct(Box::new(struct_name.to_string()))
             }
         };
         Ok(res)
@@ -280,11 +348,13 @@ impl ExprType {
 pub fn validate_program(
     stmts: &Vec<Expr>,
     env: &[Declaration],
+    funcs: &HashMap<String, Function>,
     variables: &HashMap<String, SVariable>,
     constant_vars: &HashMap<String, f64>,
+    struct_map: &HashMap<String, StructDef>,
 ) -> Result<(), TypeError> {
     for expr in stmts {
-        ExprType::of(expr, env, variables, constant_vars)?;
+        ExprType::of(expr, env, funcs, variables, constant_vars, struct_map)?;
     }
     Ok(())
 }

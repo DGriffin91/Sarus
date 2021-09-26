@@ -980,7 +980,35 @@ extern fn print(s: &) -> () {}
 }
 
 #[test]
-fn structs() -> anyhow::Result<()> {
+fn struct_access() -> anyhow::Result<()> {
+    let code = r#"
+struct Point {
+    x: f64,
+    y: f64,
+    z: f64,
+}
+fn main(a: f64) -> (c: f64) {
+    p = Point {
+        x: a,
+        y: 200.0,
+        z: 300.0,
+    }
+    c = p.x + p.y + p.z
+}
+"#;
+    let a = 100.0f64;
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = sarus_std_lib::append_std_funcs(ast);
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
+    assert_eq!(600.0, func(a));
+    Ok(())
+}
+
+#[test]
+fn struct_impl() -> anyhow::Result<()> {
     let code = r#"
 struct Line {
     a: Point,
@@ -994,8 +1022,13 @@ struct Point {
 fn length(self: Point) -> (r: f64) {
     r = sqrt(pow(self.x, 2.0) + pow(self.y, 2.0) + pow(self.z, 2.0))
 }
-fn main(a: f64, b: bool) -> (c: f64) {
-    c = 100.0
+fn main(a: f64) -> (c: f64) {
+    p = Point {
+        x: a,
+        y: 200.0,
+        z: 300.0,
+    }
+    c = p.length()
 }
 "#;
     let a = 100.0f64;
@@ -1004,8 +1037,8 @@ fn main(a: f64, b: bool) -> (c: f64) {
     let ast = sarus_std_lib::append_std_funcs(ast);
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, bool) -> f64>(func_ptr) };
-    assert_eq!(a, func(a, true));
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
+    assert_eq!(374.16573867739413, func(a));
     Ok(())
 }
 

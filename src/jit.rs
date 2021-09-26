@@ -3,6 +3,7 @@ use crate::sarus_std_lib;
 use crate::validator::validate_program;
 use crate::validator::ExprType;
 use cranelift::codegen::ir::immediates::Offset32;
+use cranelift::codegen::ir::Opcode;
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataContext, Linkage, Module};
@@ -88,8 +89,7 @@ impl JIT {
             funcs.insert(func.name.clone(), func);
         }
 
-        let _struct_map = create_struct_map(&prog, self.module.target_config().pointer_type())?;
-        //dbg!(struct_map);
+        let struct_map = create_struct_map(&prog, self.module.target_config().pointer_type())?;
 
         // First, parse the string, producing AST nodes.
         for d in prog.clone() {
@@ -104,7 +104,7 @@ impl JIT {
                     ////    &name, &params, &the_return
                     ////);
                     //// Then, translate the AST nodes into Cranelift IR.
-                    self.codegen(&func, funcs.to_owned(), &prog)?;
+                    self.codegen(&func, funcs.to_owned(), &prog, &struct_map)?;
                     // Next, declare the function to jit. Functions must be declared
                     // before they can be called, or defined.
                     let id = self
@@ -186,6 +186,7 @@ impl JIT {
         func: &Function,
         funcs: HashMap<String, Function>,
         env: &[Declaration],
+        struct_map: &HashMap<String, StructDef>,
     ) -> anyhow::Result<()> {
         let float = types::F64; //self.module.target_config().pointer_type();
 
@@ -255,7 +256,9 @@ impl JIT {
             &func.body,
             entry_block,
             env,
+            &funcs,
             &constant_vars,
+            &struct_map,
         )?;
 
         //Keep function vars around for later debug/print
@@ -263,13 +266,21 @@ impl JIT {
             .insert(func.name.to_string(), variables.clone());
 
         //Check every statement, this can catch funcs with no assignment, etc...
-        validate_program(&func.body, env, &variables, &constant_vars)?;
+        validate_program(
+            &func.body,
+            env,
+            &funcs,
+            &variables,
+            &constant_vars,
+            &struct_map,
+        )?;
 
         // Now translate the statements of the function body.
         let mut trans = FunctionTranslator {
             builder,
             variables,
             funcs,
+            struct_map,
             module: &mut self.module,
         };
         for expr in &func.body {
@@ -459,6 +470,7 @@ struct FunctionTranslator<'a> {
     builder: FunctionBuilder<'a>,
     variables: HashMap<String, SVariable>,
     funcs: HashMap<String, Function>,
+    struct_map: &'a HashMap<String, StructDef>,
     module: &'a mut JITModule,
 }
 
@@ -479,37 +491,41 @@ impl<'a> FunctionTranslator<'a> {
             Expr::Binop(op, lhs, rhs) => self.translate_binop(*op, lhs, rhs),
             Expr::Unaryop(op, lhs) => self.translate_unaryop(*op, lhs),
             Expr::Compare(cmp, lhs, rhs) => self.translate_cmp(*cmp, lhs, rhs),
-            Expr::Call(name, args) => self.translate_call(name, args),
+            Expr::Call(name, args, impl_func) => self.translate_call(name, args, *impl_func),
             Expr::GlobalDataAddr(name) => Ok(SValue::UnboundedArrayF64(
                 self.translate_global_data_addr(self.module.target_config().pointer_type(), name),
             )),
             Expr::Identifier(name) => {
-                //TODO should this be moved into pattern matching frontend?
-                match self.variables.get(name) {
-                    Some(var) => Ok(match var {
-                        SVariable::Unknown(_, v) => SValue::Unknown(self.builder.use_var(*v)),
-                        SVariable::Bool(_, v) => SValue::Bool(self.builder.use_var(*v)),
-                        SVariable::F64(_, v) => SValue::F64(self.builder.use_var(*v)),
-                        SVariable::I64(_, v) => SValue::I64(self.builder.use_var(*v)),
-                        SVariable::Address(_, v) => SValue::Address(self.builder.use_var(*v)),
-                        SVariable::UnboundedArrayF64(_, v) => {
-                            SValue::UnboundedArrayF64(self.builder.use_var(*v))
-                        }
-                        SVariable::UnboundedArrayI64(_, v) => {
-                            SValue::UnboundedArrayF64(self.builder.use_var(*v))
-                        }
-                        SVariable::Struct(_, structname, v) => {
-                            SValue::Struct(structname.to_string(), self.builder.use_var(*v))
-                        }
-                    }),
-                    None => Ok(SValue::F64(
-                        //TODO Don't assume this is a float (this is used for math const)
-                        self.translate_global_data_addr(types::F64, name),
-                    )), //Try to load global
+                if name.contains(".") {
+                    self.translate_struct_field(name)
+                } else {
+                    match self.variables.get(name) {
+                        Some(var) => Ok(match var {
+                            SVariable::Unknown(_, v) => SValue::Unknown(self.builder.use_var(*v)),
+                            SVariable::Bool(_, v) => SValue::Bool(self.builder.use_var(*v)),
+                            SVariable::F64(_, v) => SValue::F64(self.builder.use_var(*v)),
+                            SVariable::I64(_, v) => SValue::I64(self.builder.use_var(*v)),
+                            SVariable::Address(_, v) => SValue::Address(self.builder.use_var(*v)),
+                            SVariable::UnboundedArrayF64(_, v) => {
+                                SValue::UnboundedArrayF64(self.builder.use_var(*v))
+                            }
+                            SVariable::UnboundedArrayI64(_, v) => {
+                                SValue::UnboundedArrayF64(self.builder.use_var(*v))
+                            }
+                            SVariable::Struct(varname, structname, v) => {
+                                SValue::Struct(structname.to_string(), self.builder.use_var(*v))
+                            }
+                        }),
+                        None => Ok(SValue::F64(
+                            //TODO Don't assume this is a float (this is used for math const)
+                            self.translate_global_data_addr(types::F64, name),
+                        )), //Try to load global
+                    }
                 }
             }
             Expr::Assign(names, expr) => self.translate_assign(names, expr),
             Expr::AssignOp(op, lhs, rhs) => self.translate_math_assign(*op, lhs, rhs),
+            Expr::NewStruct(struct_name, fields) => self.translate_new_struct(struct_name, fields),
             Expr::IfThen(condition, then_body) => {
                 self.translate_if_then(condition, then_body)?;
                 Ok(SValue::Void)
@@ -1154,10 +1170,30 @@ impl<'a> FunctionTranslator<'a> {
         Ok(SValue::Void)
     }
 
-    fn translate_call(&mut self, name: &str, args: &[Expr]) -> anyhow::Result<SValue> {
+    fn translate_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        impl_func: bool,
+    ) -> anyhow::Result<SValue> {
+        let mut name = name.to_string();
+        if impl_func {
+            if let Some(self_var) = self.variables.get(&args[0].to_string()) {
+                if let SVariable::Struct(_var_name, struct_name, _var) = self_var {
+                    name = format!("{}.{}", struct_name, name);
+                } else {
+                    unreachable!("should be caught by validator");
+                }
+            } else {
+                unreachable!("should be caught by validator");
+            }
+        }
+
         let mut sig = self.module.make_signature();
 
         let ptr_ty = self.module.target_config().pointer_type();
+
+        let name = &name;
 
         if !self.funcs.contains_key(name) {
             anyhow::bail!("function {} not found", name)
@@ -1266,6 +1302,60 @@ impl<'a> FunctionTranslator<'a> {
     fn value_type(&self, val: Value) -> Type {
         self.builder.func.dfg.value_type(val)
     }
+
+    fn translate_new_struct(
+        &mut self,
+        name: &str,
+        fields: &[StructAssignField],
+    ) -> anyhow::Result<SValue> {
+        let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            self.struct_map[name].size,
+        ));
+        let stack_slot_address = self.builder.ins().stack_addr(
+            self.module.target_config().pointer_type(),
+            stack_slot,
+            Offset32::new(0),
+        );
+        for field in fields.iter() {
+            let field_def = &self.struct_map[name].fields[&field.field_name];
+            let ty = field_def
+                .expr_type
+                .cranelift_type(self.module.target_config().pointer_type())?;
+            //TODO this won't work if the field is another struct
+            let v = self.translate_expr(&field.expr)?;
+            self.builder.ins().Store(
+                Opcode::Store,
+                ty,
+                MemFlags::new(),
+                Offset32::new(field_def.offset as i32),
+                v.inner("new_struct")?,
+                stack_slot_address,
+            );
+        }
+        Ok(SValue::Struct(name.to_string(), stack_slot_address))
+    }
+
+    fn translate_struct_field(&mut self, name: &str) -> anyhow::Result<SValue> {
+        let parts = name.split(".").collect::<Vec<&str>>();
+        match &self.variables[parts[0]] {
+            SVariable::Struct(_var_name, struct_name, var) => {
+                let struct_field = &self.struct_map[struct_name].fields[parts[1]];
+                let struct_var_ptr = self.builder.use_var(*var);
+
+                let val = self.builder.ins().load(
+                    struct_field
+                        .expr_type
+                        .cranelift_type(self.module.target_config().pointer_type())?,
+                    MemFlags::trusted(),
+                    struct_var_ptr,
+                    Offset32::new(struct_field.offset as i32),
+                );
+                SValue::from(&struct_field.expr_type, val)
+            }
+            _ => unreachable!("validator should catch this"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1372,7 +1462,9 @@ fn declare_variables(
     stmts: &[Expr],
     entry_block: Block,
     env: &[Declaration],
+    funcs: &HashMap<String, Function>,
     constant_vars: &HashMap<String, f64>,
+    struct_map: &HashMap<String, StructDef>,
 ) -> anyhow::Result<HashMap<String, SVariable>> {
     //TODO we should create a list of the variables here with their expected type, so it can be referenced later
     let mut variables: HashMap<String, SVariable> = HashMap::new();
@@ -1399,7 +1491,9 @@ fn declare_variables(
             &mut index,
             expr,
             env,
+            funcs,
             &constant_vars,
+            &struct_map,
         )?;
     }
 
@@ -1416,7 +1510,9 @@ fn declare_variables_in_stmt(
     index: &mut usize,
     expr: &Expr,
     env: &[Declaration],
+    funcs: &HashMap<String, Function>,
     constant_vars: &HashMap<String, f64>,
+    struct_map: &HashMap<String, StructDef>,
 ) -> anyhow::Result<()> {
     match *expr {
         Expr::Assign(ref names, ref exprs) => {
@@ -1430,7 +1526,9 @@ fn declare_variables_in_stmt(
                         index,
                         &[name],
                         env,
+                        funcs,
                         constant_vars,
+                        struct_map,
                     )?;
                 }
             } else {
@@ -1446,7 +1544,9 @@ fn declare_variables_in_stmt(
                     index,
                     &snames,
                     env,
+                    funcs,
                     constant_vars,
+                    struct_map,
                 )?;
             }
         }
@@ -1460,7 +1560,9 @@ fn declare_variables_in_stmt(
                     index,
                     &stmt,
                     env,
+                    funcs,
                     constant_vars,
+                    struct_map,
                 )?;
             }
             for stmt in else_body {
@@ -1472,7 +1574,9 @@ fn declare_variables_in_stmt(
                     index,
                     &stmt,
                     env,
+                    funcs,
                     constant_vars,
+                    struct_map,
                 )?;
             }
         }
@@ -1486,7 +1590,9 @@ fn declare_variables_in_stmt(
                     index,
                     &stmt,
                     env,
+                    funcs,
                     constant_vars,
+                    struct_map,
                 )?;
             }
         }
@@ -1504,7 +1610,9 @@ fn declare_variable_from_expr(
     index: &mut usize,
     names: &[&str],
     env: &[Declaration],
+    funcs: &HashMap<String, Function>,
     constant_vars: &HashMap<String, f64>,
+    struct_map: &HashMap<String, StructDef>,
 ) -> anyhow::Result<()> {
     match expr {
         Expr::IfElse(_condition, then_body, _else_body) => {
@@ -1517,11 +1625,13 @@ fn declare_variable_from_expr(
                 index,
                 names,
                 env,
+                funcs,
                 constant_vars,
+                struct_map,
             )?;
         }
         expr => {
-            let expr_type = ExprType::of(expr, &env, variables, constant_vars)?;
+            let expr_type = ExprType::of(expr, &env, funcs, variables, constant_vars, struct_map)?;
             declare_variable_from_type(
                 ptr_type, &expr_type, builder, variables, index, names, env,
             )?;
@@ -1696,18 +1806,18 @@ fn declare_variable(
 }
 
 #[derive(Debug)]
-struct StructDef {
-    size: u32,
-    name: String,
-    fields: HashMap<String, StructField>,
+pub struct StructDef {
+    pub size: u32,
+    pub name: String,
+    pub fields: HashMap<String, StructField>,
 }
 
 #[derive(Debug)]
-struct StructField {
-    offset: u32,
-    size: u32,
-    name: String,
-    expr_type: Option<ExprType>,
+pub struct StructField {
+    pub offset: u32,
+    pub size: u32,
+    pub name: String,
+    pub expr_type: ExprType,
 }
 
 fn create_struct_map(
@@ -1748,7 +1858,7 @@ fn create_struct_map(
                     offset: struct_size,
                     size,
                     name: field.name.to_string(),
-                    expr_type: field.expr_type.clone(),
+                    expr_type: field.expr_type.as_ref().unwrap_or(&ExprType::F64).clone(),
                 },
             );
             struct_size += size;

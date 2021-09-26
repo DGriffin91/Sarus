@@ -81,9 +81,10 @@ pub enum Expr {
     IfElse(Box<Expr>, Vec<Expr>, Vec<Expr>),
     Assign(NV<String>, NV<Expr>),
     AssignOp(Binop, Box<String>, Box<Expr>),
+    NewStruct(String, Vec<StructAssignField>),
     WhileLoop(Box<Expr>, Vec<Expr>), //Should this take a block instead of Vec<Expr>?
     Block(Vec<Expr>),
-    Call(String, Vec<Expr>),
+    Call(String, Vec<Expr>, bool),
     GlobalDataAddr(String),
     Parentheses(Box<Expr>),
     ArrayGet(String, Box<Expr>),
@@ -140,6 +141,14 @@ impl Display for Expr {
                 Ok(())
             }
             Expr::AssignOp(op, s, e) => write!(f, "{} {}= {}", s, op, e),
+            Expr::NewStruct(struct_name, args) => {
+                writeln!(f, "{}{{", struct_name)?;
+                for arg in args.iter() {
+                    writeln!(f, "{},", arg)?;
+                }
+                writeln!(f, "}}")?;
+                Ok(())
+            }
             Expr::WhileLoop(eval, block) => {
                 writeln!(f, "while {} {{", eval)?;
                 for expr in block.iter() {
@@ -154,7 +163,8 @@ impl Display for Expr {
                 }
                 Ok(())
             }
-            Expr::Call(func_name, args) => {
+            Expr::Call(func_name, args, _impl_func) => {
+                //todo print this correctly
                 write!(f, "{}(", func_name)?;
                 for (i, arg) in args.iter().enumerate() {
                     write!(f, "{}", arg)?;
@@ -218,6 +228,18 @@ impl Display for Arg {
             Some(t) => write!(f, "{}: {}", self.name, t),
             None => write!(f, "{}", self.name),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StructAssignField {
+    pub field_name: String,
+    pub expr: Expr,
+}
+
+impl Display for StructAssignField {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.field_name, self.expr)
     }
 }
 
@@ -308,10 +330,7 @@ peg::parser!(pub grammar parser() for str {
         / structdef()
 
     rule structdef() -> Declaration
-        = _ ext:("extern")? _ "struct" name:identifier() _ "{" _ fields:(struct_field())* _ "}" _ {Declaration::Struct(Struct{name, fields, extern_struct: if ext.is_some() {true} else {false}})}
-
-    rule struct_field() -> Arg
-        = a:arg() comma() {a}
+        = _ ext:("extern")? _ "struct" name:identifier() _ "{" _ fields:(a:arg() comma() {a})* _ "}" _ {Declaration::Struct(Struct{name, fields, extern_struct: if ext.is_some() {true} else {false}})}
 
     rule metadata() -> Declaration
         = _ "@" _ headings:(i:(metadata_identifier()** ([' ' | '\t'])) {i}) ([' ' | '\t'])* "\n" body:$[^'@']* "@" _ {Declaration::Metadata(headings, body.join(""))}
@@ -327,6 +346,13 @@ peg::parser!(pub grammar parser() for str {
         "(" returns:(i:arg() ** comma()) _ ")"
         body:block()
         {
+            let mut name = name;
+            if let Some(first_param) = params.first() {
+                if first_param.name == "self" {
+                    name = format!("{}.{}", first_param.expr_type.as_ref().unwrap(), name)
+                    //change func name to struct_name.func_name if first param is self
+                }
+            }
             Declaration::Function(Function {
             name,
             params,
@@ -414,7 +440,18 @@ peg::parser!(pub grammar parser() for str {
         a:@ _ "/" _ b:(@) { Expr::Binop(Binop::Div, Box::new(a), Box::new(b)) }
         i:var_identifier() _ "/=" _ a:(@) { Expr::AssignOp(Binop::Div, Box::new(i), Box::new(a)) }
         --
-        i:var_identifier() _ "(" args:((_ e:expression() _ {e}) ** comma()) ")" { Expr::Call(i, args) }
+        i:var_identifier() _ "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
+            if i.contains(".") {
+                let mut parts = i.split(".").collect::<Vec<&str>>();
+                let mut args = args;
+                let func_name = parts.pop().unwrap().to_string();
+                args.insert(0, Expr::Identifier(parts.join(".")));
+                Expr::Call(func_name, args, true)
+            } else {
+                Expr::Call(i, args, false)
+            }
+        }
+        i:var_identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" { Expr::NewStruct(i, args) }
         i:var_identifier() _ "[" idx:expression() "]" { Expr::ArrayGet(i, Box::new(idx)) }
         i:var_identifier() { Expr::Identifier(i) }
         l:literal() { l }
@@ -430,7 +467,7 @@ peg::parser!(pub grammar parser() for str {
 
 
     rule var_identifier() -> (String)
-        = a:identifier() "." b:identifier() {format!("{}.{}", a, b)}
+        = i:(identifier() ++ ".") {i.join(".")}
         / identifier()
 
     rule literal() -> Expr
@@ -444,6 +481,9 @@ peg::parser!(pub grammar parser() for str {
             //Temp solution for creating empty strings
             Expr::LiteralString(repstr.join("").repeat( len.parse().unwrap()))
         } //[" "; 10]
+
+    rule struct_assign_field() -> StructAssignField
+        = _ i:identifier() _ ":" _ e:expression() comma() _ { StructAssignField {field_name: i.into(), expr: e } }
 
     rule comment() -> ()
         = quiet!{"//" [^'\n']*"\n"}
