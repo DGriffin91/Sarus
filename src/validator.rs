@@ -63,6 +63,25 @@ impl Display for ExprType {
     }
 }
 
+fn get_struct_field_type(
+    struct_name: &str,
+    field_name: &str,
+    struct_map: &HashMap<String, StructDef>,
+) -> Result<ExprType, TypeError> {
+    Ok(if struct_map.contains_key(struct_name) {
+        if struct_map[struct_name].fields.contains_key(field_name) {
+            struct_map[struct_name].fields[field_name].expr_type.clone()
+        } else {
+            return Err(TypeError::UnknownField(
+                struct_name.to_string(),
+                field_name.to_string(),
+            ));
+        }
+    } else {
+        return Err(TypeError::UnknownStruct(struct_name.to_string()));
+    })
+}
+
 impl ExprType {
     pub fn of(
         expr: &Expr,
@@ -80,19 +99,18 @@ impl ExprType {
                     if variables.contains_key(parts[0]) {
                         match &variables[parts[0]] {
                             SVariable::Struct(_var_name, struct_name, _var) => {
-                                let struct_name = struct_name.to_string();
-                                if struct_map.contains_key(&struct_name) {
-                                    if struct_map[&struct_name].fields.contains_key(parts[1]) {
-                                        struct_map[&struct_name].fields[parts[1]].expr_type.clone()
-                                    } else {
-                                        return Err(TypeError::UnknownField(
-                                            struct_name.to_string(),
-                                            parts[1].to_string(),
-                                        ));
+                                let mut struct_name = struct_name.to_string();
+                                for i in 1..parts.len() {
+                                    let next_expr =
+                                        get_struct_field_type(&struct_name, parts[i], struct_map)?;
+                                    if let ExprType::Struct(s) = next_expr.clone() {
+                                        struct_name = s.to_string();
                                     }
-                                } else {
-                                    return Err(TypeError::UnknownStruct(struct_name.to_string()));
+                                    if i == parts.len() - 1 {
+                                        return Ok(next_expr);
+                                    }
                                 }
+                                unreachable!("should have already returned")
                             }
                             _v => {
                                 return Err(TypeError::TypeMismatchSpecific {

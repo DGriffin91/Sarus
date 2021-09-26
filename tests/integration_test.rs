@@ -1010,10 +1010,6 @@ fn main(a: f64) -> (c: f64) {
 #[test]
 fn struct_impl() -> anyhow::Result<()> {
     let code = r#"
-struct Line {
-    a: Point,
-    b: Point,
-}
 struct Point {
     x: f64,
     y: f64,
@@ -1039,6 +1035,80 @@ fn main(a: f64) -> (c: f64) {
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
     assert_eq!(374.16573867739413, func(a));
+    Ok(())
+}
+
+extern "C" fn dbgi(s: *const i8, a: i64) {
+    unsafe {
+        println!("{} {}", CStr::from_ptr(s).to_str().unwrap(), a);
+    }
+}
+
+#[test]
+fn struct_impl_nested() -> anyhow::Result<()> {
+    let code = r#"
+extern fn dbg(a: f64) -> () {}
+extern fn dbgi(s: &, a: i64) -> () {}
+struct Line {
+    a: Point,
+    b: Point,
+}
+//fn length(self: Line) -> (r: f64) {
+//    r = sqrt(pow(self.a.x - self.b.x, 2.0) + 
+//             pow(self.a.y - self.b.y, 2.0) + 
+//             pow(self.a.z - self.b.z, 2.0))
+//}
+struct Point {
+    x: f64,
+    y: f64,
+    z: f64,
+}
+//fn length(self: Point) -> (r: f64) {
+//    r = sqrt(pow(self.x, 2.0) + pow(self.y, 2.0) + pow(self.z, 2.0))
+//}
+fn main(a: f64) -> (c: f64) {
+    p1 = Point {
+        x: a,
+        y: 200.0,
+        z: 300.0,
+    }
+    p2 = Point {
+        x: a * 4.0,
+        y: 500.0,
+        z: 600.0,
+    }
+    l1 = Line {
+        a: p1,
+        b: p2,
+    }
+    //d = l1.b //struct is copied
+    dbg(p1.x)
+    dbg(p1.y)
+    dbg(p1.z)
+    dbg(p2.x)
+    dbg(p2.y)
+    dbg(p2.z)
+    dbg(l1.a.x)
+    dbg(l1.a.y)
+    dbg(l1.a.z)
+    dbg(l1.b.x) //TODO these don't get initialized
+    dbg(l1.b.y) //TODO these don't get initialized
+    dbg(l1.b.z) //TODO these don't get initialized
+    //e = d.x + l1.a.x //f64's are copied
+    //l1.a.y = e * d.z
+    //c = l1.length()
+}
+"#;
+    let a = 100.0f64;
+    let mut jit = jit::JIT::new(&[("dbg", dbg as *const u8), ("dbgi", dbgi as *const u8)]);
+    let ast = parser::program(&code)?;
+    let ast = sarus_std_lib::append_std_funcs(ast);
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
+    dbg!(func(a));
+    //assert_eq!(200.0, func(a));
+    //jit.print_clif(true);
     Ok(())
 }
 

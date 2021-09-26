@@ -3,7 +3,6 @@ use crate::sarus_std_lib;
 use crate::validator::validate_program;
 use crate::validator::ExprType;
 use cranelift::codegen::ir::immediates::Offset32;
-use cranelift::codegen::ir::Opcode;
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataContext, Linkage, Module};
@@ -878,10 +877,10 @@ impl<'a> FunctionTranslator<'a> {
         let idx_val = self.builder.ins().imul(mult_n, idx_val);
         let idx_ptr = self.builder.ins().iadd(idx_val, array_ptr);
 
-        let val =
-            self.builder
-                .ins()
-                .load(types::F64, MemFlags::trusted(), idx_ptr, Offset32::new(0));
+        let val = self
+            .builder
+            .ins()
+            .load(types::F64, MemFlags::new(), idx_ptr, Offset32::new(0));
         Ok(SValue::F64(val)) //todo, don't assume this is a float
     }
 
@@ -914,7 +913,7 @@ impl<'a> FunctionTranslator<'a> {
         let idx_ptr = self.builder.ins().iadd(idx_val, array_ptr);
 
         self.builder.ins().store(
-            MemFlags::trusted(),
+            MemFlags::new(),
             new_val.inner("array set")?,
             idx_ptr,
             Offset32::new(0),
@@ -1189,82 +1188,19 @@ impl<'a> FunctionTranslator<'a> {
             }
         }
 
-        let mut sig = self.module.make_signature();
-
-        let ptr_ty = self.module.target_config().pointer_type();
-
-        let name = &name;
-
-        if !self.funcs.contains_key(name) {
-            anyhow::bail!("function {} not found", name)
-        }
-        let func = self.funcs[name].clone();
-        if func.params.len() != args.len() {
-            anyhow::bail!(
-                "function call to {} has {} args, but function description has {}",
-                name,
-                args.len(),
-                func.params.len()
-            )
-        }
-
         let mut arg_values = Vec::new();
-        if func.extern_func {
-            if let Some(v) = self.translate_std(name, args)? {
-                return Ok(v);
-            }
-        }
-        for (arg, expr) in func.params.iter().zip(args.iter()) {
-            sig.params.push(AbiParam::new(
-                arg.expr_type
-                    .as_ref()
-                    .unwrap_or(&ExprType::F64)
-                    .cranelift_type(ptr_ty)?,
-            ));
+
+        for expr in args.iter() {
             arg_values.push(self.translate_expr(expr)?.inner("translate_call")?)
         }
 
-        for ret_arg in &func.returns {
-            sig.returns.push(AbiParam::new(
-                ret_arg
-                    .expr_type
-                    .as_ref()
-                    .unwrap_or(&ExprType::F64)
-                    .cranelift_type(ptr_ty)?,
-            ));
-        }
-        let callee = self
-            .module
-            .declare_function(&name, Linkage::Import, &sig)
-            .expect("problem declaring function");
-        let local_callee = self
-            .module
-            .declare_func_in_func(callee, &mut self.builder.func);
-        let call = self.builder.ins().call(local_callee, &arg_values);
-        let res = self.builder.inst_results(call);
-        if res.len() > 1 {
-            Ok(SValue::Tuple(
-                res.iter()
-                    .zip(func.returns.iter())
-                    .map(|(v, arg)| {
-                        SValue::from(arg.expr_type.as_ref().unwrap_or(&ExprType::F64), *v).unwrap()
-                    })
-                    .collect::<Vec<SValue>>(),
-            ))
-        } else if res.len() == 1 {
-            Ok(SValue::from(
-                &func
-                    .returns
-                    .first()
-                    .unwrap()
-                    .expr_type
-                    .as_ref()
-                    .unwrap_or(&ExprType::F64),
-                *res.first().unwrap(),
-            )?)
-        } else {
-            Ok(SValue::Void)
-        }
+        call_with_values(
+            &name,
+            &arg_values,
+            &mut self.funcs,
+            &mut self.module,
+            &mut self.builder,
+        )
     }
 
     fn translate_global_data_addr(&mut self, ptr_ty: Type, name: &str) -> Value {
@@ -1286,19 +1222,6 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.ins().global_value(ptr_ty, global_val)
     }
 
-    fn translate_std(&mut self, name: &str, args: &[Expr]) -> anyhow::Result<Option<SValue>> {
-        let mut vargs = Vec::new();
-        for arg in args {
-            vargs.push(self.translate_expr(arg)?.inner("translate_std")?);
-        }
-        sarus_std_lib::translate_std(
-            self.module.target_config().pointer_type(),
-            &mut self.builder,
-            name,
-            vargs.as_slice(),
-        )
-    }
-
     fn value_type(&self, val: Value) -> Type {
         self.builder.func.dfg.value_type(val)
     }
@@ -1308,6 +1231,7 @@ impl<'a> FunctionTranslator<'a> {
         name: &str,
         fields: &[StructAssignField],
     ) -> anyhow::Result<SValue> {
+        dbg!("translate_new_struct");
         let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
             self.struct_map[name].size,
@@ -1317,44 +1241,261 @@ impl<'a> FunctionTranslator<'a> {
             stack_slot,
             Offset32::new(0),
         );
+
+        //call_with_values(
+        //    "dbgi",
+        //    &[
+        //        self.translate_string(&"stack_slot_address".to_string())?
+        //            .inner("")?,
+        //        stack_slot_address,
+        //    ],
+        //    &self.funcs,
+        //    &mut self.module,
+        //    &mut self.builder,
+        //)?;
+
         for field in fields.iter() {
             let field_def = &self.struct_map[name].fields[&field.field_name];
-            let ty = field_def
-                .expr_type
-                .cranelift_type(self.module.target_config().pointer_type())?;
-            //TODO this won't work if the field is another struct
-            let v = self.translate_expr(&field.expr)?;
-            self.builder.ins().Store(
-                Opcode::Store,
-                ty,
-                MemFlags::new(),
-                Offset32::new(field_def.offset as i32),
-                v.inner("new_struct")?,
-                stack_slot_address,
-            );
+            let sval = self.translate_expr(&field.expr)?;
+
+            if let SValue::Struct(src_name, start_ptr) = sval {
+                dbg!(
+                    &name,
+                    self.struct_map[name].size,
+                    stack_slot_address,
+                    &src_name,
+                    field_def.offset,
+                    self.struct_map[&src_name].size,
+                    start_ptr,
+                );
+                //Copy bytes from src struct to dst struct
+                //TODO look at using emit_small_memory_copy
+                for i in 0..self.struct_map[&src_name].size {
+                    println!(
+                        "from {} {} to {} {}",
+                        start_ptr,
+                        i,
+                        stack_slot_address,
+                        field_def.offset + i
+                    );
+
+                    //call_with_values(
+                    //    "dbgi",
+                    //    &[
+                    //        self.translate_string(&format!(
+                    //            "from start_ptr {} offset {} : ",
+                    //            start_ptr, i
+                    //        ))?
+                    //        .inner("")?,
+                    //        start_ptr,
+                    //    ],
+                    //    &self.funcs,
+                    //    &mut self.module,
+                    //    &mut self.builder,
+                    //)?;
+                    //call_with_values(
+                    //    "dbgi",
+                    //    &[
+                    //        self.translate_string(&format!(
+                    //            "to stack_slot_address {} offset {} : ",
+                    //            stack_slot_address,
+                    //            field_def.offset + i
+                    //        ))?
+                    //        .inner("")?,
+                    //        stack_slot_address,
+                    //    ],
+                    //    &self.funcs,
+                    //    &mut self.module,
+                    //    &mut self.builder,
+                    //)?;
+                    let v = self.builder.ins().load(
+                        types::I8,
+                        MemFlags::new(),
+                        start_ptr,
+                        Offset32::new(i as i32),
+                    ); //Just copy one byte at a time
+                    self.builder.ins().store(
+                        MemFlags::new(),
+                        v,
+                        stack_slot_address,
+                        Offset32::new((field_def.offset + i) as i32),
+                    );
+                }
+            } else {
+                self.builder.ins().store(
+                    MemFlags::new(),
+                    sval.inner("new_struct")?,
+                    stack_slot_address,
+                    Offset32::new(field_def.offset as i32),
+                );
+            }
         }
         Ok(SValue::Struct(name.to_string(), stack_slot_address))
     }
 
     fn translate_struct_field(&mut self, name: &str) -> anyhow::Result<SValue> {
+        println!("translate_struct_field {}", name);
         let parts = name.split(".").collect::<Vec<&str>>();
         match &self.variables[parts[0]] {
             SVariable::Struct(_var_name, struct_name, var) => {
-                let struct_field = &self.struct_map[struct_name].fields[parts[1]];
-                let struct_var_ptr = self.builder.use_var(*var);
-
-                let val = self.builder.ins().load(
-                    struct_field
-                        .expr_type
-                        .cranelift_type(self.module.target_config().pointer_type())?,
-                    MemFlags::trusted(),
-                    struct_var_ptr,
-                    Offset32::new(struct_field.offset as i32),
-                );
-                SValue::from(&struct_field.expr_type, val)
+                let mut parent_struct_field = &self.struct_map[struct_name].fields[parts[1]];
+                let base_struct_var_ptr = self.builder.use_var(*var);
+                let mut offset = parent_struct_field.offset;
+                let mut struct_name = struct_name;
+                for i in 1..parts.len() {
+                    if let ExprType::Struct(name) = &parent_struct_field.expr_type {
+                        parent_struct_field = &self.struct_map[struct_name].fields[parts[i]];
+                        offset += parent_struct_field.offset;
+                        struct_name = name;
+                    } else {
+                        break;
+                    }
+                }
+                if let ExprType::Struct(name) = &parent_struct_field.expr_type {
+                    println!("{} offset {}", name, offset);
+                    let stack_slot_address = create_and_copy_to_stack_slot(
+                        self.module.target_config().pointer_type(),
+                        &mut self.builder,
+                        parent_struct_field.size,
+                        base_struct_var_ptr,
+                        offset,
+                    )?;
+                    Ok(SValue::Struct(name.to_string(), stack_slot_address))
+                } else {
+                    let val = self.builder.ins().load(
+                        parent_struct_field
+                            .expr_type
+                            .cranelift_type(self.module.target_config().pointer_type())?,
+                        MemFlags::new(),
+                        base_struct_var_ptr,
+                        Offset32::new(offset as i32),
+                    );
+                    return SValue::from(&parent_struct_field.expr_type, val);
+                }
             }
             _ => unreachable!("validator should catch this"),
         }
+    }
+}
+
+fn create_and_copy_to_stack_slot(
+    ptr_ty: types::Type,
+    builder: &mut FunctionBuilder,
+    size: u32,
+    src_ptr: Value,
+    offset: u32,
+) -> anyhow::Result<Value> {
+    let stack_slot =
+        builder.create_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size));
+    let stack_slot_address = builder
+        .ins()
+        .stack_addr(ptr_ty, stack_slot, Offset32::new(0));
+    //Copy bytes from src to dst stack_slot
+    //TODO look at using emit_small_memory_copy
+    dbg!("create_and_copy_to_stack_slot");
+    for i in 0..size {
+        println!(
+            "from {} {} to {} {}",
+            src_ptr,
+            (offset + i),
+            stack_slot_address,
+            i
+        );
+        let v = builder.ins().load(
+            types::I8,
+            MemFlags::new(),
+            src_ptr,
+            Offset32::new((offset + i) as i32),
+        ); //Just copy one byte at a time
+        builder.ins().store(
+            MemFlags::new(),
+            v,
+            stack_slot_address,
+            Offset32::new(i as i32),
+        );
+    }
+    Ok(stack_slot_address)
+}
+
+fn call_with_values(
+    name: &str,
+    arg_values: &[Value],
+    funcs: &HashMap<String, Function>,
+    module: &mut JITModule,
+    builder: &mut FunctionBuilder,
+) -> anyhow::Result<SValue> {
+    let name = &name.to_string();
+
+    if !funcs.contains_key(name) {
+        anyhow::bail!("function {} not found", name)
+    }
+    let func = funcs[name].clone();
+    if func.params.len() != arg_values.len() {
+        anyhow::bail!(
+            "function call to {} has {} args, but function description has {}",
+            name,
+            arg_values.len(),
+            func.params.len()
+        )
+    }
+
+    if func.extern_func {
+        if let Some(v) = sarus_std_lib::translate_std(
+            module.target_config().pointer_type(),
+            builder,
+            name,
+            arg_values,
+        )? {
+            return Ok(v);
+        }
+    }
+
+    let mut sig = module.make_signature();
+
+    let ptr_ty = module.target_config().pointer_type();
+
+    for val in arg_values.iter() {
+        sig.params
+            .push(AbiParam::new(builder.func.dfg.value_type(*val)));
+    }
+
+    for ret_arg in &func.returns {
+        sig.returns.push(AbiParam::new(
+            ret_arg
+                .expr_type
+                .as_ref()
+                .unwrap_or(&ExprType::F64)
+                .cranelift_type(ptr_ty)?,
+        ));
+    }
+    let callee = module
+        .declare_function(&name, Linkage::Import, &sig)
+        .expect("problem declaring function");
+    let local_callee = module.declare_func_in_func(callee, &mut builder.func);
+    let call = builder.ins().call(local_callee, &arg_values);
+    let res = builder.inst_results(call);
+    if res.len() > 1 {
+        Ok(SValue::Tuple(
+            res.iter()
+                .zip(func.returns.iter())
+                .map(|(v, arg)| {
+                    SValue::from(arg.expr_type.as_ref().unwrap_or(&ExprType::F64), *v).unwrap()
+                })
+                .collect::<Vec<SValue>>(),
+        ))
+    } else if res.len() == 1 {
+        Ok(SValue::from(
+            &func
+                .returns
+                .first()
+                .unwrap()
+                .expr_type
+                .as_ref()
+                .unwrap_or(&ExprType::F64),
+            *res.first().unwrap(),
+        )?)
+    } else {
+        Ok(SValue::Void)
     }
 }
 
