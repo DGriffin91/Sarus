@@ -92,7 +92,6 @@ impl ExprType {
         struct_map: &HashMap<String, StructDef>,
     ) -> Result<ExprType, TypeError> {
         let res = match expr {
-            //TODO don't assume all identifiers are floats
             Expr::Identifier(id_name) => {
                 if id_name.contains(".") {
                     let parts = id_name.split(".").collect::<Vec<&str>>();
@@ -115,7 +114,7 @@ impl ExprType {
                             _v => {
                                 return Err(TypeError::TypeMismatchSpecific {
                                     s: format!("{} is not a Struct", id_name),
-                                })
+                                });
                             }
                         }
                     } else {
@@ -234,25 +233,19 @@ impl ExprType {
             Expr::Call(fn_name, args, impl_func) => {
                 if *impl_func {
                     if let Some(self_var) = variables.get(&args[0].to_string()) {
-                        if let SVariable::Struct(_var_name, struct_name, _var) = self_var {
-                            let e = Expr::Call(
-                                format!("{}.{}", struct_name, fn_name),
-                                args.to_vec(),
-                                false,
-                            );
-                            return Ok(ExprType::of(
-                                &e,
-                                env,
-                                funcs,
-                                variables,
-                                constant_vars,
-                                struct_map,
-                            )?);
-                        } else {
-                            return Err(TypeError::TypeMismatchSpecific {
-                                s: format!("{} is not a Struct", self_var),
-                            });
-                        }
+                        let e = Expr::Call(
+                            format!("{}.{}", self_var.type_name().unwrap(), fn_name),
+                            args.to_vec(),
+                            false,
+                        );
+                        return Ok(ExprType::of(
+                            &e,
+                            env,
+                            funcs,
+                            variables,
+                            constant_vars,
+                            struct_map,
+                        )?);
                     } else {
                         return Err(TypeError::UnknownVariable(args[0].to_string()));
                     }

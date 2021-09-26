@@ -1171,18 +1171,14 @@ impl<'a> FunctionTranslator<'a> {
 
     fn translate_call(
         &mut self,
-        name: &str,
+        fn_name: &str,
         args: &[Expr],
         impl_func: bool,
     ) -> anyhow::Result<SValue> {
-        let mut name = name.to_string();
+        let mut fn_name = fn_name.to_string();
         if impl_func {
             if let Some(self_var) = self.variables.get(&args[0].to_string()) {
-                if let SVariable::Struct(_var_name, struct_name, _var) = self_var {
-                    name = format!("{}.{}", struct_name, name);
-                } else {
-                    unreachable!("should be caught by validator");
-                }
+                fn_name = format!("{}.{}", self_var.type_name()?, fn_name)
             } else {
                 unreachable!("should be caught by validator");
             }
@@ -1195,7 +1191,7 @@ impl<'a> FunctionTranslator<'a> {
         }
 
         call_with_values(
-            &name,
+            &fn_name,
             &arg_values,
             &mut self.funcs,
             &mut self.module,
@@ -1538,6 +1534,18 @@ impl SVariable {
             SVariable::Address(_, v) => *v,
             SVariable::Struct(_, _, v) => *v,
         }
+    }
+    pub fn type_name(&self) -> anyhow::Result<String> {
+        Ok(match self {
+            SVariable::Unknown(_, _) => anyhow::bail!("Unknown has no type name"),
+            SVariable::Bool(_, _) => "bool".to_string(),
+            SVariable::F64(_, _) => "f64".to_string(),
+            SVariable::I64(_, _) => "i64".to_string(),
+            SVariable::UnboundedArrayF64(_, _) => "&[f64]".to_string(),
+            SVariable::UnboundedArrayI64(_, _) => "&[i64]".to_string(),
+            SVariable::Address(_, _) => "&".to_string(),
+            SVariable::Struct(_, name, _) => name.to_string(),
+        })
     }
     fn expect_f64(&self, ctx: &str) -> anyhow::Result<Variable> {
         match self {
