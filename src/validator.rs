@@ -232,23 +232,21 @@ impl ExprType {
                 .unwrap_or(ExprType::Void),
             Expr::Call(fn_name, args, impl_func) => {
                 if *impl_func {
-                    if let Some(self_var) = variables.get(&args[0].to_string()) {
-                        let e = Expr::Call(
-                            format!("{}.{}", self_var.type_name().unwrap(), fn_name),
-                            args.to_vec(),
-                            false,
-                        );
-                        return Ok(ExprType::of(
-                            &e,
-                            env,
-                            funcs,
-                            variables,
-                            constant_vars,
-                            struct_map,
-                        )?);
-                    } else {
-                        return Err(TypeError::UnknownVariable(args[0].to_string()));
-                    }
+                    let self_expr =
+                        ExprType::of(&args[0], env, funcs, variables, constant_vars, struct_map)?;
+                    let e = Expr::Call(
+                        format!("{}.{}", self_expr.to_string(), fn_name),
+                        args.to_vec(),
+                        false,
+                    );
+                    return Ok(ExprType::of(
+                        &e,
+                        env,
+                        funcs,
+                        variables,
+                        constant_vars,
+                        struct_map,
+                    )?);
                 }
                 if let Some(d) = funcs.get(fn_name) {
                     if d.params.len() == args.len() {
@@ -287,6 +285,18 @@ impl ExprType {
                 } else {
                     return Err(TypeError::UnknownFunction(fn_name.to_string()));
                 }
+            }
+            Expr::ExpressionCall(expr, fn_name, args) => {
+                let mut args = args.to_vec();
+                args.insert(0, *expr.to_owned());
+                ExprType::of(
+                    &Expr::Call(fn_name.to_string(), args, true),
+                    env,
+                    funcs,
+                    variables,
+                    constant_vars,
+                    struct_map,
+                )?
             }
             Expr::GlobalDataAddr(_) => ExprType::F64,
             Expr::Parentheses(expr) => {

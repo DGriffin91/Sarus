@@ -85,6 +85,7 @@ pub enum Expr {
     WhileLoop(Box<Expr>, Vec<Expr>), //Should this take a block instead of Vec<Expr>?
     Block(Vec<Expr>),
     Call(String, Vec<Expr>, bool),
+    ExpressionCall(Box<Expr>, String, Vec<Expr>),
     GlobalDataAddr(String),
     Parentheses(Box<Expr>),
     ArrayGet(String, Box<Expr>),
@@ -166,6 +167,17 @@ impl Display for Expr {
             Expr::Call(func_name, args, _impl_func) => {
                 //todo print this correctly
                 write!(f, "{}(", func_name)?;
+                for (i, arg) in args.iter().enumerate() {
+                    write!(f, "{}", arg)?;
+                    if i < args.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")?;
+                Ok(())
+            }
+            Expr::ExpressionCall(expr, func_name, args) => {
+                write!(f, "{}.{}(", expr, func_name)?;
                 for (i, arg) in args.iter().enumerate() {
                     write!(f, "{}", arg)?;
                     if i < args.len() - 1 {
@@ -413,9 +425,6 @@ peg::parser!(pub grammar parser() for str {
         = i:var_identifier() _ "[" idx:expression() "]" _ "=" _ e:expression() {Expr::ArraySet(i, Box::new(idx), Box::new(e))}
 
 
-    rule unary_op() -> Expr = precedence!{
-        "!" e:expression() { Expr::Unaryop(Unaryop::Not, Box::new(e)) }
-    }
 
     rule binary_op() -> Expr = precedence!{
         a:@ _ "&&" _ b:(@) { Expr::Binop(Binop::LogicalAnd, Box::new(a), Box::new(b)) }
@@ -430,16 +439,23 @@ peg::parser!(pub grammar parser() for str {
         --
         a:@ _ "+" _ b:(@) { Expr::Binop(Binop::Add, Box::new(a), Box::new(b)) }
         i:var_identifier() _ "+=" _ a:(@) { Expr::AssignOp(Binop::Add, Box::new(i), Box::new(a)) }
-
+        --
         a:@ _ "-" _ b:(@) { Expr::Binop(Binop::Sub, Box::new(a), Box::new(b)) }
         i:var_identifier() _ "-=" _ a:(@) { Expr::AssignOp(Binop::Sub, Box::new(i), Box::new(a)) }
         --
         a:@ _ "*" _ b:(@) { Expr::Binop(Binop::Mul, Box::new(a), Box::new(b)) }
         i:var_identifier() _ "*=" _ a:(@) { Expr::AssignOp(Binop::Mul, Box::new(i), Box::new(a)) }
-
+        --
         a:@ _ "/" _ b:(@) { Expr::Binop(Binop::Div, Box::new(a), Box::new(b)) }
         i:var_identifier() _ "/=" _ a:(@) { Expr::AssignOp(Binop::Div, Box::new(i), Box::new(a)) }
         --
+        e:unary_op() "." func:identifier() "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
+            Expr::ExpressionCall(Box::new(e), func, args)
+        }
+        u:unary_op()  { u }
+    }
+
+    rule unary_op() -> Expr = precedence!{
         i:var_identifier() _ "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
             if i.contains(".") {
                 let mut parts = i.split(".").collect::<Vec<&str>>();
@@ -455,8 +471,7 @@ peg::parser!(pub grammar parser() for str {
         i:var_identifier() _ "[" idx:expression() "]" { Expr::ArrayGet(i, Box::new(idx)) }
         i:var_identifier() { Expr::Identifier(i) }
         l:literal() { l }
-        --
-        u:unary_op()  { u }
+        "!" e:expression() { Expr::Unaryop(Unaryop::Not, Box::new(e)) }
         --
         "(" e:expression() ")" { Expr::Parentheses(Box::new(e)) }
     }
@@ -467,7 +482,7 @@ peg::parser!(pub grammar parser() for str {
 
 
     rule var_identifier() -> (String)
-        = i:(identifier() ++ ".") {i.join(".")}
+        = i:(identifier() ++ ".") {i.join(".")} //TODO may need to re-think how chaining works
         / identifier()
 
     rule literal() -> Expr

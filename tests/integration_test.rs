@@ -104,7 +104,8 @@ fn nums() -> (r) {
 fn rounding() -> anyhow::Result<()> {
     let code = r#"
 fn main(a, b) -> (c) {
-    c = ceil(a) * floor(b) * trunc(a) * fract(a * b * -1.234) * round(1.5)
+    f = (1.5).floor()
+    c = a.ceil() * b.floor() * a.trunc() * (a * b * -1.234).fract() * (1.5).round()
 }
 "#;
 
@@ -128,7 +129,7 @@ fn minmax() -> anyhow::Result<()> {
     let ast = parser::program(
         r#"
     fn main(a, b) -> (c) {
-        c = min(a, b)
+        c = a.min(b)
     }
     "#,
     )?;
@@ -145,7 +146,7 @@ fn minmax() -> anyhow::Result<()> {
     let ast = parser::program(
         r#"
     fn main(a, b) -> (c) {
-        c = max(a, b)
+        c = a.max(b)
     }
     "#,
     )?;
@@ -516,7 +517,7 @@ fn int_to_float() -> anyhow::Result<()> {
     let code = r#"
     fn main(a, b) -> (e) {
         i = 2
-        e = float(i) * a * b * float(2) * 1.0 * float(1)
+        e = i.f64() * a * b * (2).f64() * 2.0 * (2).f64()
     }
 "#;
 
@@ -528,7 +529,7 @@ fn int_to_float() -> anyhow::Result<()> {
     jit.translate(ast.clone())?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
-    assert_eq!(80000.0, func(a, b));
+    assert_eq!(320000.0, func(a, b));
     Ok(())
 }
 
@@ -538,7 +539,7 @@ fn float_conversion() -> anyhow::Result<()> {
     fn main(a, b) -> (e) {
         i_a = int(a)
         e = if i_a < int(b) {
-            float(int(float(i_a)))
+            i_a.f64().i64().f64() //TODO chaining not working
         } else {
             2.0
         }
@@ -567,7 +568,7 @@ fn float_as_bool_error() -> anyhow::Result<()> {
         } else {
             2
         }
-        e = float(e_i)
+        e = e_i.f64()
     }
 "#;
     let a = 100.0f64;
@@ -585,7 +586,6 @@ fn float_as_bool_error() -> anyhow::Result<()> {
 
 #[test]
 fn array_return_from_if() -> anyhow::Result<()> {
-    //TODO using multiple arrays resulting in access violation
     let code = r#"
 fn main(arr1: &[f64], arr2: &[f64], b) -> () {
     arr3 = if b < 100.0 {
@@ -619,7 +619,7 @@ fn var_type_consistency() -> anyhow::Result<()> {
         n1 = n
         n2 = n1
         n3 = n2
-        e = float(n3)
+        e = n3.f64()
     }
 "#;
     let a = 100.0f64;
@@ -680,7 +680,8 @@ fn main(a: f64, b: f64) -> (c: f64) {
 fn i64_params() -> anyhow::Result<()> {
     let code = r#"
 fn main(a: f64, b: i64) -> (c: i64) {
-    c = int(a * (a - float(b)) * (a * (2.0 + float(b))))
+    e = a * (a - b.f64()) * (a * (2.0 + b.f64()))
+    c = e.i64()
 }
 "#;
     let a = 100.0f64;
@@ -703,7 +704,7 @@ fn main(a: f64, b: i64) -> (c: i64) {
     c = foo(a, b, 2)
 }
 fn foo(a: f64, b: i64, c: i64) -> (d: i64) {
-    d = int(a) + b + c
+    d = a.i64() + b + c
 }
 "#;
     let a = 100.0f64;
@@ -1122,7 +1123,7 @@ fn square(self: i64) -> (r: i64) {
     r = self * self
 }
 fn main(a: f64, b: i64) -> (c: f64) {
-    c = a.square() + float(b.square())
+    c = a.square() + b.square().f64()
 }
 "#;
     let a = 100.0f64;

@@ -40,25 +40,42 @@ fn decl(name: &str, params: Vec<(&str, ExprType)>, returns: Vec<(&str, ExprType)
 //couldn't get to work (STATUS_ACCESS_VIOLATION):
 // "asinh", "acosh", "atanh", "erf", "erfc", "lgamma", "gamma", "tgamma", "exp2", "exp10", "log2"
 const STD_1ARG_FF: [&str; 20] = [
-    "sin", "cos", "tan", "asin", "acos", "atan", "exp", "log", "log10", "sqrt", "sinh", "cosh",
-    "exp10", "tanh", // libc
-    "ceil", "floor", "trunc", "fract", "abs", "round", // built in std
+    "sin", // libc
+    "cos",
+    "tan",
+    "asin",
+    "acos",
+    "atan",
+    "exp",
+    "log",
+    "log10",
+    "sqrt",
+    "sinh",
+    "cosh",
+    "exp10",
+    "tanh",
+    "f64.ceil", // built in std
+    "f64.floor",
+    "f64.trunc",
+    "f64.fract",
+    "f64.abs",
+    "f64.round",
 ];
 const STD_1ARG_IF: [&str; 1] = [
-    "float", // built in std
+    "i64.f64", // built in std
 ];
 const STD_1ARG_FI: [&str; 1] = [
-    "int", // built in std
+    "f64.i64", // built in std
 ];
 
 //couldn't get to work (STATUS_ACCESS_VIOLATION):
 // "hypot", "expm1", "log1p"
 const STD_2ARG_FF: [&str; 4] = [
     "atan2", "pow", // libc
-    "min", "max", // built in std
+    "f64.min", "f64.max", // built in std
 ];
 const STD_2ARG_II: [&str; 2] = [
-    "imin", "imax", // built in std
+    "i64.min", "i64.max", // built in std
 ];
 
 pub fn append_std_funcs(mut prog: Vec<Declaration>) -> Vec<Declaration> {
@@ -112,26 +129,26 @@ pub(crate) fn translate_std(
     args: &[Value],
 ) -> anyhow::Result<Option<SValue>> {
     match name {
-        "trunc" => Ok(Some(SValue::F64(builder.ins().trunc(args[0])))),
-        "floor" => Ok(Some(SValue::F64(builder.ins().floor(args[0])))),
-        "ceil" => Ok(Some(SValue::F64(builder.ins().ceil(args[0])))),
-        "fract" => {
+        "f64.trunc" => Ok(Some(SValue::F64(builder.ins().trunc(args[0])))),
+        "f64.floor" => Ok(Some(SValue::F64(builder.ins().floor(args[0])))),
+        "f64.ceil" => Ok(Some(SValue::F64(builder.ins().ceil(args[0])))),
+        "f64.fract" => {
             let v_int = builder.ins().trunc(args[0]);
             let v = builder.ins().fsub(args[0], v_int);
             Ok(Some(SValue::F64(v)))
         }
-        "abs" => Ok(Some(SValue::F64(builder.ins().fabs(args[0])))),
-        "round" => Ok(Some(SValue::F64(builder.ins().nearest(args[0])))),
-        "int" => Ok(Some(SValue::I64(
+        "f64.abs" => Ok(Some(SValue::F64(builder.ins().fabs(args[0])))),
+        "f64.round" => Ok(Some(SValue::F64(builder.ins().nearest(args[0])))),
+        "f64.i64" => Ok(Some(SValue::I64(
             builder.ins().fcvt_to_sint(types::I64, args[0]),
         ))),
-        "float" => Ok(Some(SValue::F64(
+        "i64.f64" => Ok(Some(SValue::F64(
             builder.ins().fcvt_from_sint(types::F64, args[0]),
         ))),
-        "min" => Ok(Some(SValue::F64(builder.ins().fmin(args[0], args[1])))),
-        "max" => Ok(Some(SValue::F64(builder.ins().fmax(args[0], args[1])))),
-        "imin" => Ok(Some(SValue::I64(builder.ins().imin(args[0], args[1])))),
-        "imax" => Ok(Some(SValue::I64(builder.ins().imax(args[0], args[1])))),
+        "f64.min" => Ok(Some(SValue::F64(builder.ins().fmin(args[0], args[1])))),
+        "f64.max" => Ok(Some(SValue::F64(builder.ins().fmax(args[0], args[1])))),
+        "i64.min" => Ok(Some(SValue::I64(builder.ins().imin(args[0], args[1])))),
+        "i64.max" => Ok(Some(SValue::I64(builder.ins().imax(args[0], args[1])))),
         _ => Ok(None),
     }
 }

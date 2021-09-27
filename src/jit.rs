@@ -384,8 +384,8 @@ impl Display for SValue {
             SValue::UnboundedArrayI64(_) => write!(f, "&[i64]"),
             SValue::Address(_) => write!(f, "&"),
             SValue::Void => write!(f, "void"),
-            SValue::Tuple(v) => write!(f, "Tuple ({})", v.len()),
-            SValue::Struct(name, _) => write!(f, "Struct ({})", name),
+            SValue::Tuple(v) => write!(f, "({})", v.len()),
+            SValue::Struct(name, _) => write!(f, "{}", name),
         }
     }
 }
@@ -491,6 +491,11 @@ impl<'a> FunctionTranslator<'a> {
             Expr::Unaryop(op, lhs) => self.translate_unaryop(*op, lhs),
             Expr::Compare(cmp, lhs, rhs) => self.translate_cmp(*cmp, lhs, rhs),
             Expr::Call(name, args, impl_func) => self.translate_call(name, args, *impl_func),
+            Expr::ExpressionCall(expr, fn_name, args) => {
+                let mut args = args.clone(); //TODO do this without clone
+                args.insert(0, *expr.to_owned());
+                self.translate_call(fn_name, &args, true)
+            }
             Expr::GlobalDataAddr(name) => Ok(SValue::UnboundedArrayF64(
                 self.translate_global_data_addr(self.module.target_config().pointer_type(), name),
             )),
@@ -511,7 +516,7 @@ impl<'a> FunctionTranslator<'a> {
                             SVariable::UnboundedArrayI64(_, v) => {
                                 SValue::UnboundedArrayF64(self.builder.use_var(*v))
                             }
-                            SVariable::Struct(varname, structname, v) => {
+                            SVariable::Struct(_varname, structname, v) => {
                                 SValue::Struct(structname.to_string(), self.builder.use_var(*v))
                             }
                         }),
@@ -1177,11 +1182,8 @@ impl<'a> FunctionTranslator<'a> {
     ) -> anyhow::Result<SValue> {
         let mut fn_name = fn_name.to_string();
         if impl_func {
-            if let Some(self_var) = self.variables.get(&args[0].to_string()) {
-                fn_name = format!("{}.{}", self_var.type_name()?, fn_name)
-            } else {
-                unreachable!("should be caught by validator");
-            }
+            let self_expr = self.translate_expr(&args[0])?;
+            fn_name = format!("{}.{}", self_expr.to_string(), fn_name)
         }
 
         let mut arg_values = Vec::new();
