@@ -176,7 +176,7 @@ fn build_graph_func(
 
         body.push(Expr::Assign(
             make_nonempty(return_var_names).unwrap(),
-            make_nonempty(vec![Expr::Call(node.func_name.clone(), param_names, false)]).unwrap(),
+            make_nonempty(vec![Expr::Call(node.func_name.clone(), param_names)]).unwrap(),
         ))
     }
 

@@ -537,8 +537,8 @@ fn int_to_float() -> anyhow::Result<()> {
 fn float_conversion() -> anyhow::Result<()> {
     let code = r#"
     fn main(a, b) -> (e) {
-        i_a = int(a)
-        e = if i_a < int(b) {
+        i_a = a.i64()
+        e = if i_a < b.i64() {
             i_a.f64().i64().f64() //TODO chaining not working
         } else {
             2.0
@@ -1067,14 +1067,14 @@ struct Point {
 //fn length(self: Point) -> (r: f64) {
 //    r = sqrt(pow(self.x, 2.0) + pow(self.y, 2.0) + pow(self.z, 2.0))
 //}
-fn main(a: f64) -> (c: f64) {
+fn main(n: f64) -> (c: f64) {
     p1 = Point {
-        x: a,
+        x: n,
         y: 200.0,
         z: 300.0,
     }
     p2 = Point {
-        x: a * 4.0,
+        x: n * 4.0,
         y: 500.0,
         z: 600.0,
     }
@@ -1082,7 +1082,7 @@ fn main(a: f64) -> (c: f64) {
         a: p1,
         b: p2,
     }
-    //d = l1.b //struct is copied
+    //d = l1.c //struct is copied
     dbg(p1.x)
     dbg(p1.y)
     dbg(p1.z)
@@ -1135,6 +1135,26 @@ fn main(a: f64, b: i64) -> (c: f64) {
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, i64) -> f64>(func_ptr) };
     assert_eq!(20000.0, func(a, b));
+    Ok(())
+}
+
+#[test]
+fn stacked_paren() -> anyhow::Result<()> {
+    let code = r#"
+fn main(a: f64) -> (c: bool) {
+    d = a.i64().f64().i64().f64()
+    e = ((((d).i64()).f64()).i64()).f64()
+    c = d == e
+}
+"#;
+    let a = 100.0f64;
+    let mut jit = jit::JIT::default();
+    let ast = parser::program(&code)?;
+    let ast = sarus_std_lib::append_std_funcs(ast);
+    jit.translate(ast.clone())?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> bool>(func_ptr) };
+    assert_eq!(true, func(a));
     Ok(())
 }
 

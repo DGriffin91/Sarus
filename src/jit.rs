@@ -2,10 +2,12 @@ use crate::frontend::*;
 use crate::sarus_std_lib;
 use crate::validator::validate_program;
 use crate::validator::ExprType;
+use crate::validator::Lval;
 use cranelift::codegen::ir::immediates::Offset32;
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataContext, Linkage, Module};
+use serde::__private::de::IdentifierDeserializer;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::fmt::Display;
@@ -246,6 +248,8 @@ impl JIT {
         let constant_vars = sarus_std_lib::get_constants();
         // The toy language allows variables to be declared implicitly.
         // Walk the AST and declare all implicitly-declared variables.
+
+        println!("declare_variables {}", func.name);
         let variables = declare_variables(
             float,
             &mut builder,
@@ -264,6 +268,8 @@ impl JIT {
         self.variables
             .insert(func.name.to_string(), variables.clone());
 
+        println!("validate_program {}", func.name);
+
         //Check every statement, this can catch funcs with no assignment, etc...
         validate_program(
             &func.body,
@@ -274,10 +280,14 @@ impl JIT {
             &struct_map,
         )?;
 
+        println!("FunctionTranslator {}", func.name);
+
         // Now translate the statements of the function body.
         let mut trans = FunctionTranslator {
             builder,
             variables,
+            constant_vars,
+            env,
             funcs,
             struct_map,
             module: &mut self.module,
@@ -471,6 +481,8 @@ struct FunctionTranslator<'a> {
     funcs: HashMap<String, Function>,
     struct_map: &'a HashMap<String, StructDef>,
     module: &'a mut JITModule,
+    constant_vars: HashMap<String, f64>,
+    env: &'a [Declaration],
 }
 
 impl<'a> FunctionTranslator<'a> {
@@ -490,41 +502,32 @@ impl<'a> FunctionTranslator<'a> {
             Expr::Binop(op, lhs, rhs) => self.translate_binop(*op, lhs, rhs),
             Expr::Unaryop(op, lhs) => self.translate_unaryop(*op, lhs),
             Expr::Compare(cmp, lhs, rhs) => self.translate_cmp(*cmp, lhs, rhs),
-            Expr::Call(name, args, impl_func) => self.translate_call(name, args, *impl_func),
-            Expr::ExpressionCall(expr, fn_name, args) => {
-                let mut args = args.clone(); //TODO do this without clone
-                args.insert(0, *expr.to_owned());
-                self.translate_call(fn_name, &args, true)
-            }
+            Expr::Call(name, args) => self.translate_call(name, args, None),
             Expr::GlobalDataAddr(name) => Ok(SValue::UnboundedArrayF64(
                 self.translate_global_data_addr(self.module.target_config().pointer_type(), name),
             )),
             Expr::Identifier(name) => {
-                if name.contains(".") {
-                    self.translate_struct_field(name)
-                } else {
-                    match self.variables.get(name) {
-                        Some(var) => Ok(match var {
-                            SVariable::Unknown(_, v) => SValue::Unknown(self.builder.use_var(*v)),
-                            SVariable::Bool(_, v) => SValue::Bool(self.builder.use_var(*v)),
-                            SVariable::F64(_, v) => SValue::F64(self.builder.use_var(*v)),
-                            SVariable::I64(_, v) => SValue::I64(self.builder.use_var(*v)),
-                            SVariable::Address(_, v) => SValue::Address(self.builder.use_var(*v)),
-                            SVariable::UnboundedArrayF64(_, v) => {
-                                SValue::UnboundedArrayF64(self.builder.use_var(*v))
-                            }
-                            SVariable::UnboundedArrayI64(_, v) => {
-                                SValue::UnboundedArrayF64(self.builder.use_var(*v))
-                            }
-                            SVariable::Struct(_varname, structname, v) => {
-                                SValue::Struct(structname.to_string(), self.builder.use_var(*v))
-                            }
-                        }),
-                        None => Ok(SValue::F64(
-                            //TODO Don't assume this is a float (this is used for math const)
-                            self.translate_global_data_addr(types::F64, name),
-                        )), //Try to load global
-                    }
+                match self.variables.get(name) {
+                    Some(var) => Ok(match var {
+                        SVariable::Unknown(_, v) => SValue::Unknown(self.builder.use_var(*v)),
+                        SVariable::Bool(_, v) => SValue::Bool(self.builder.use_var(*v)),
+                        SVariable::F64(_, v) => SValue::F64(self.builder.use_var(*v)),
+                        SVariable::I64(_, v) => SValue::I64(self.builder.use_var(*v)),
+                        SVariable::Address(_, v) => SValue::Address(self.builder.use_var(*v)),
+                        SVariable::UnboundedArrayF64(_, v) => {
+                            SValue::UnboundedArrayF64(self.builder.use_var(*v))
+                        }
+                        SVariable::UnboundedArrayI64(_, v) => {
+                            SValue::UnboundedArrayF64(self.builder.use_var(*v))
+                        }
+                        SVariable::Struct(_varname, structname, v) => {
+                            SValue::Struct(structname.to_string(), self.builder.use_var(*v))
+                        }
+                    }),
+                    None => Ok(SValue::F64(
+                        //TODO Don't assume this is a float (this is used for math const)
+                        self.translate_global_data_addr(types::F64, name),
+                    )), //Try to load global
                 }
             }
             Expr::Assign(names, expr) => self.translate_assign(names, expr),
@@ -581,20 +584,74 @@ impl<'a> FunctionTranslator<'a> {
     }
 
     fn translate_binop(&mut self, op: Binop, lhs: &Expr, rhs: &Expr) -> anyhow::Result<SValue> {
-        let lhs = self.translate_expr(lhs)?;
-        let rhs = self.translate_expr(rhs)?;
-        match lhs {
-            SValue::F64(a) => match rhs {
+        if let Binop::DotAccess = op {
+            let mut lval = None;
+            let t = ExprType::of(
+                &Expr::Binop(
+                    Binop::DotAccess,
+                    Box::new(lhs.clone()),
+                    Box::new(rhs.clone()),
+                ),
+                &mut lval,
+                self.env,
+                &self.funcs,
+                &self.variables,
+                &self.constant_vars,
+                &self.struct_map,
+            )?;
+            //TODO Refactor, test with array access, make more struct access tests
+            if let Some(lval) = lval {
+                let mut parts = Vec::new();
+                let mut last_expr = None;
+                for (i, expr) in lval.expr.iter().enumerate() {
+                    match expr {
+                        Expr::Parentheses(e) => {
+                            last_expr = Some(self.translate_expr(e)?);
+                        }
+                        Expr::Identifier(s) => {
+                            parts.push(s.as_str());
+                            if i == lval.expr.len() - 1 {
+                                last_expr = Some(self.translate_struct_field(parts.clone())?);
+                            }
+                            //TODO this can't be used after other Expr types
+                        }
+                        Expr::Call(name, args) => {
+                            last_expr = if last_expr.is_none() {
+                                let e = Some(self.translate_expr(&lval.expr[0].to_owned())?);
+                                Some(self.translate_call(name, &args, e)?)
+                            } else {
+                                Some(self.translate_call(name, &args, last_expr)?)
+                            };
+                        }
+                        _ => {
+                            panic!("non identifier/call found")
+                        }
+                    }
+                }
+                if let Some(last_expr) = last_expr {
+                    return Ok(last_expr);
+                } else {
+                    panic!("no last_expr found")
+                }
+            } else {
+                panic!("no lval found")
+            }
+        }
+
+        let lhs_v = self.translate_expr(lhs)?;
+        let rhs_v = self.translate_expr(rhs)?;
+        match lhs_v {
+            SValue::F64(a) => match rhs_v {
                 SValue::F64(b) => Ok(SValue::F64(self.binop_float(op, a, b)?)),
-                _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs),
+                _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs_v, op, rhs_v),
             },
-            SValue::I64(a) => match rhs {
+            SValue::I64(a) => match rhs_v {
                 SValue::I64(b) => Ok(SValue::I64(self.binop_int(op, a, b)?)),
-                _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs),
+                _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs_v, op, rhs_v),
             },
-            SValue::Bool(a) => match rhs {
+            SValue::Bool(a) => match rhs_v {
                 SValue::Bool(b) => Ok(SValue::Bool(self.binop_bool(op, a, b)?)),
-                _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs),
+                _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs_v, op, rhs_v),
             },
             SValue::Void
             | SValue::Unknown(_)
@@ -603,7 +660,7 @@ impl<'a> FunctionTranslator<'a> {
             | SValue::Address(_)
             | SValue::Struct(_, _)
             | SValue::Tuple(_) => {
-                anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs)
+                anyhow::bail!("operation not supported: {:?} {} {:?}", lhs_v, op, rhs_v)
             }
         }
     }
@@ -640,7 +697,7 @@ impl<'a> FunctionTranslator<'a> {
             Binop::Sub => self.builder.ins().fsub(lhs, rhs),
             Binop::Mul => self.builder.ins().fmul(lhs, rhs),
             Binop::Div => self.builder.ins().fdiv(lhs, rhs),
-            Binop::LogicalAnd | Binop::LogicalOr => {
+            Binop::LogicalAnd | Binop::LogicalOr | Binop::DotAccess => {
                 anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs)
             }
         })
@@ -652,7 +709,7 @@ impl<'a> FunctionTranslator<'a> {
             Binop::Sub => self.builder.ins().isub(lhs, rhs),
             Binop::Mul => self.builder.ins().imul(lhs, rhs),
             Binop::Div => self.builder.ins().sdiv(lhs, rhs),
-            Binop::LogicalAnd | Binop::LogicalOr => {
+            Binop::LogicalAnd | Binop::LogicalOr | Binop::DotAccess => {
                 anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs)
             }
         })
@@ -943,7 +1000,7 @@ impl<'a> FunctionTranslator<'a> {
                     Binop::Sub => self.builder.ins().fsub(orig_value, v),
                     Binop::Mul => self.builder.ins().fmul(orig_value, v),
                     Binop::Div => self.builder.ins().fdiv(orig_value, v),
-                    Binop::LogicalAnd | Binop::LogicalOr => {
+                    Binop::LogicalAnd | Binop::LogicalOr | Binop::DotAccess => {
                         anyhow::bail!("operation not supported: {:?} {} {:?}", orig_value, op, v)
                     }
                 };
@@ -961,7 +1018,7 @@ impl<'a> FunctionTranslator<'a> {
                     Binop::Sub => self.builder.ins().isub(orig_value, v),
                     Binop::Mul => self.builder.ins().imul(orig_value, v),
                     Binop::Div => self.builder.ins().sdiv(orig_value, v),
-                    Binop::LogicalAnd | Binop::LogicalOr => {
+                    Binop::LogicalAnd | Binop::LogicalOr | Binop::DotAccess => {
                         anyhow::bail!("operation not supported: {:?} {} {:?}", orig_value, op, v)
                     }
                 };
@@ -1178,15 +1235,14 @@ impl<'a> FunctionTranslator<'a> {
         &mut self,
         fn_name: &str,
         args: &[Expr],
-        impl_func: bool,
+        impl_val: Option<SValue>,
     ) -> anyhow::Result<SValue> {
         let mut fn_name = fn_name.to_string();
-        if impl_func {
-            let self_expr = self.translate_expr(&args[0])?;
-            fn_name = format!("{}.{}", self_expr.to_string(), fn_name)
-        }
-
         let mut arg_values = Vec::new();
+        if let Some(impl_func) = impl_val {
+            fn_name = format!("{}.{}", impl_func.to_string(), fn_name);
+            arg_values.push(impl_func.inner("translate_call")?);
+        }
 
         for expr in args.iter() {
             arg_values.push(self.translate_expr(expr)?.inner("translate_call")?)
@@ -1331,9 +1387,9 @@ impl<'a> FunctionTranslator<'a> {
         Ok(SValue::Struct(name.to_string(), stack_slot_address))
     }
 
-    fn translate_struct_field(&mut self, name: &str) -> anyhow::Result<SValue> {
-        println!("translate_struct_field {}", name);
-        let parts = name.split(".").collect::<Vec<&str>>();
+    fn translate_struct_field(&mut self, parts: Vec<&str>) -> anyhow::Result<SValue> {
+        println!("translate_struct_field {:?}", parts);
+        //let parts = name.split(".").collect::<Vec<&str>>();
         match &self.variables[parts[0]] {
             SVariable::Struct(_var_name, struct_name, var) => {
                 let mut parent_struct_field = &self.struct_map[struct_name].fields[parts[1]];
@@ -1782,7 +1838,15 @@ fn declare_variable_from_expr(
             )?;
         }
         expr => {
-            let expr_type = ExprType::of(expr, &env, funcs, variables, constant_vars, struct_map)?;
+            let expr_type = ExprType::of(
+                expr,
+                &mut None,
+                &env,
+                funcs,
+                variables,
+                constant_vars,
+                struct_map,
+            )?;
             declare_variable_from_type(
                 ptr_type, &expr_type, builder, variables, index, names, env,
             )?;
