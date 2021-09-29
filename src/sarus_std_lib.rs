@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::ffi::CStr;
 
 use cranelift::frontend::FunctionBuilder;
 use cranelift::prelude::{types, InstBuilder, Value};
+use cranelift_jit::JITBuilder;
 
 use crate::frontend::Arg;
 use crate::hashmap;
@@ -78,6 +80,55 @@ const STD_2ARG_II: [&str; 2] = [
     "i64.min", "i64.max", // built in std
 ];
 
+extern "C" fn f64_print(x: f64) {
+    print!("{}", x);
+}
+
+extern "C" fn i64_print(x: i64) {
+    print!("{}", x);
+}
+
+extern "C" fn bool_print(x: bool) {
+    print!("{}", x);
+}
+
+extern "C" fn str_print(s: *const i8) {
+    unsafe {
+        print!("{}", CStr::from_ptr(s).to_str().unwrap());
+    }
+}
+
+extern "C" fn f64_println(x: f64) {
+    println!("{}", x);
+}
+
+extern "C" fn i64_println(x: i64) {
+    println!("{}", x);
+}
+
+extern "C" fn bool_println(x: bool) {
+    println!("{}", x);
+}
+
+extern "C" fn str_println(s: *const i8) {
+    unsafe {
+        println!("{}", CStr::from_ptr(s).to_str().unwrap());
+    }
+}
+
+pub fn append_std_symbols(jit_builder: &mut JITBuilder) {
+    jit_builder.symbols([
+        ("f64.print", f64_print as *const u8),
+        ("i64.print", i64_print as *const u8),
+        ("bool.print", bool_print as *const u8),
+        ("&.print", str_print as *const u8), //TODO setup actual str type
+        ("f64.println", f64_println as *const u8),
+        ("i64.println", i64_println as *const u8),
+        ("bool.println", bool_println as *const u8),
+        ("&.println", str_println as *const u8), //TODO setup actual str type
+    ]);
+}
+
 pub fn append_std_funcs(mut prog: Vec<Declaration>) -> Vec<Declaration> {
     for n in STD_1ARG_FF {
         prog.push(decl(
@@ -114,6 +165,15 @@ pub fn append_std_funcs(mut prog: Vec<Declaration>) -> Vec<Declaration> {
             vec![("z", ExprType::I64)],
         ));
     }
+    prog.push(decl("f64.print", vec![("x", ExprType::F64)], vec![]));
+    prog.push(decl("i64.print", vec![("x", ExprType::I64)], vec![]));
+    prog.push(decl("bool.print", vec![("x", ExprType::Bool)], vec![]));
+    prog.push(decl("&.print", vec![("x", ExprType::Address)], vec![]));
+    prog.push(decl("f64.println", vec![("x", ExprType::F64)], vec![]));
+    prog.push(decl("i64.println", vec![("x", ExprType::I64)], vec![]));
+    prog.push(decl("bool.println", vec![("x", ExprType::Bool)], vec![]));
+    prog.push(decl("&.println", vec![("x", ExprType::Address)], vec![]));
+
     //prog.push(decl(
     //    "bytes",
     //    vec![("size", ExprType::I64)],

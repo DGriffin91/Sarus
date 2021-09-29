@@ -2,12 +2,10 @@ use crate::frontend::*;
 use crate::sarus_std_lib;
 use crate::validator::validate_program;
 use crate::validator::ExprType;
-use crate::validator::Lval;
 use cranelift::codegen::ir::immediates::Offset32;
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataContext, Linkage, Module};
-use serde::__private::de::IdentifierDeserializer;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::fmt::Display;
@@ -53,15 +51,13 @@ impl Default for JIT {
     }
 }
 
+pub fn new_jit_builder() -> JITBuilder {
+    JITBuilder::new(cranelift_module::default_libcall_names())
+}
+
 impl JIT {
-    pub fn new(symbols: &[(&str, *const u8)]) -> Self {
-        let mut builder = JITBuilder::new(cranelift_module::default_libcall_names());
-
-        for (name, func) in symbols {
-            builder.symbol(*name, *func);
-        }
-
-        let module = JITModule::new(builder);
+    pub fn from(jit_builder: JITBuilder) -> Self {
+        let module = JITModule::new(jit_builder);
         Self {
             builder_context: FunctionBuilderContext::new(),
             ctx: module.make_context(),
@@ -459,6 +455,12 @@ impl SValue {
             v => anyhow::bail!("incorrect type {} expected UnboundedArrayI64 {}", v, ctx),
         }
     }
+    fn expect_address(&self, ctx: &str) -> anyhow::Result<Value> {
+        match self {
+            SValue::Address(v) => Ok(*v),
+            v => anyhow::bail!("incorrect type {} expected Address {}", v, ctx),
+        }
+    }
     fn expect_struct(&self, name: &str, ctx: &str) -> anyhow::Result<Value> {
         match self {
             SValue::Struct(sname, v) => {
@@ -580,13 +582,13 @@ impl<'a> FunctionTranslator<'a> {
                 Offset32::new(i as i32),
             );
         }
-        Ok(SValue::UnboundedArrayI64(stack_slot_address))
+        Ok(SValue::Address(stack_slot_address))
     }
 
     fn translate_binop(&mut self, op: Binop, lhs: &Expr, rhs: &Expr) -> anyhow::Result<SValue> {
         if let Binop::DotAccess = op {
             let mut lval = None;
-            let t = ExprType::of(
+            let _t = ExprType::of(
                 &Expr::Binop(
                     Binop::DotAccess,
                     Box::new(lhs.clone()),
@@ -600,30 +602,39 @@ impl<'a> FunctionTranslator<'a> {
                 &self.struct_map,
             )?;
             //TODO Refactor, test with array access, make more struct access tests
+
             if let Some(lval) = lval {
                 let mut parts = Vec::new();
                 let mut last_expr = None;
+                let len = lval.expr.len();
                 for (i, expr) in lval.expr.iter().enumerate() {
                     match expr {
                         Expr::Parentheses(e) => {
                             last_expr = Some(self.translate_expr(e)?);
                         }
-                        Expr::Identifier(s) => {
+                        Expr::Identifier(s) | Expr::LiteralString(s) => {
                             parts.push(s.as_str());
-                            if i == lval.expr.len() - 1 {
+                            if i == len - 1 {
+                                //if this is the last one
                                 last_expr = Some(self.translate_struct_field(parts.clone())?);
+                            } else if i < len - 1 {
+                                //if this is not the last one
+                                if let Expr::Call(..) = lval.expr[i + 1] {
+                                    //and the next is a call
+                                    last_expr = if parts.len() == 1 {
+                                        Some(self.translate_expr(&lval.expr[i])?)
+                                    } else {
+                                        Some(self.translate_struct_field(parts.clone())?)
+                                    }
+                                }
                             }
                             //TODO this can't be used after other Expr types
                         }
                         Expr::Call(name, args) => {
-                            last_expr = if last_expr.is_none() {
-                                let e = Some(self.translate_expr(&lval.expr[0].to_owned())?);
-                                Some(self.translate_call(name, &args, e)?)
-                            } else {
-                                Some(self.translate_call(name, &args, last_expr)?)
-                            };
+                            last_expr = Some(self.translate_call(name, &args, last_expr)?);
                         }
-                        _ => {
+                        a => {
+                            dbg!(a);
                             panic!("non identifier/call found")
                         }
                     }
