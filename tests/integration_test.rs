@@ -1,4 +1,3 @@
-use cranelift_jit::JITBuilder;
 use serde::Deserialize;
 use std::{collections::HashMap, f64::consts::*, ffi::CStr, mem};
 
@@ -927,10 +926,9 @@ fn main(a: f64, b: f64) -> (c: f64) {
 "#;
     let a = 100.0f64;
     let b = 100.0f64;
-    let mut jit =
-        default_std_jit_from_code_with_importer(&code, &|_ast, jit_builder: &mut JITBuilder| {
-            jit_builder.symbols([("mult", mult as *const u8), ("dbg", dbg as *const u8)]);
-        })?;
+    let mut jit = default_std_jit_from_code_with_importer(&code, |_ast, jit_builder| {
+        jit_builder.symbols([("mult", mult as *const u8), ("dbg", dbg as *const u8)]);
+    })?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(mult(a, b), func(a, b));
@@ -957,10 +955,9 @@ extern fn print(s: &) -> () {}
 "#;
     let a = 100.0f64;
     let b = 100.0f64;
-    let mut jit =
-        default_std_jit_from_code_with_importer(&code, &|_ast, jit_builder: &mut JITBuilder| {
-            jit_builder.symbols([("print", prt2 as *const u8)]);
-        })?;
+    let mut jit = default_std_jit_from_code_with_importer(&code, |_ast, jit_builder| {
+        jit_builder.symbols([("print", prt2 as *const u8)]);
+    })?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     func(a, b);
@@ -1136,10 +1133,9 @@ fn main(n: f64) -> (c: f64) {
 }
 "#;
     let a = 100.0f64;
-    let mut jit =
-        default_std_jit_from_code_with_importer(&code, &|_ast, jit_builder: &mut JITBuilder| {
-            jit_builder.symbols([("dbgf", dbgf as *const u8), ("dbgi", dbgi as *const u8)]);
-        })?;
+    let mut jit = default_std_jit_from_code_with_importer(&code, |_ast, jit_builder| {
+        jit_builder.symbols([("dbgf", dbgf as *const u8), ("dbgi", dbgi as *const u8)]);
+    })?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
     dbg!(func(a));
@@ -1242,10 +1238,9 @@ fn main(n: f64) -> (c: f64) {
 }
 "#;
     let a = 100.0f64;
-    let mut jit =
-        default_std_jit_from_code_with_importer(&code, &|_ast, jit_builder: &mut JITBuilder| {
-            jit_builder.symbols([("dbgf", dbgf as *const u8), ("dbgi", dbgi as *const u8)]);
-        })?;
+    let mut jit = default_std_jit_from_code_with_importer(&code, |_ast, jit_builder| {
+        jit_builder.symbols([("dbgf", dbgf as *const u8), ("dbgi", dbgi as *const u8)]);
+    })?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
     dbg!(func(a));

@@ -35,7 +35,7 @@ pub fn default_std_jit_from_code(code: &str) -> anyhow::Result<jit::JIT> {
 //TODO use builder pattern?
 pub fn default_std_jit_from_code_with_importer(
     code: &str,
-    importer: &dyn Fn(&mut Vec<Declaration>, &mut JITBuilder),
+    importer: impl FnOnce(&mut Vec<Declaration>, &mut JITBuilder),
 ) -> anyhow::Result<jit::JIT> {
     let mut ast = parser::program(&code)?;
     let mut jit_builder = jit::new_jit_builder();
