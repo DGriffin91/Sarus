@@ -1,3 +1,4 @@
+use cranelift_jit::JITBuilder;
 use serde::Deserialize;
 use std::{collections::HashMap, f64::consts::*, ffi::CStr, mem};
 
@@ -13,7 +14,7 @@ fn main(a, b) -> (c) {
 
     let a = 100.0f64;
     let b = 200.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(a * (a - b) * (a * (2.0 + b)), func(a, b));
@@ -85,7 +86,7 @@ fn nums() -> (r) {
         + TAU;
 
     let epsilon = 0.00000000000001;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     let result = func(a, b);
@@ -158,7 +159,7 @@ fn nums() -> (r) {
         + TAU;
 
     let epsilon = 0.00000000000001;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     let result = func(a, b);
@@ -177,7 +178,7 @@ fn main(a, b) -> (c) {
 
     let a = 100.0f64;
     let b = 200.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(
@@ -196,7 +197,7 @@ fn minmax() -> anyhow::Result<()> {
     "#;
     let a = 100.0f64;
     let b = 200.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(a, func(a, b));
@@ -208,7 +209,7 @@ fn minmax() -> anyhow::Result<()> {
     "#;
     let a = 100.0f64;
     let b = 200.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(b, func(a, b));
@@ -252,7 +253,7 @@ fn foodd(a, b) -> (c) {
 
     let a = 100.0f64;
     let b = 200.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(601.0, func(a, b));
@@ -295,7 +296,7 @@ fn multiple_returns() -> anyhow::Result<()> {
 
     let a = 100.0f64;
     let b = 200.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(6893909.333333333, func(a, b));
@@ -318,7 +319,7 @@ fn bools() -> anyhow::Result<()> {
 "#;
     let a = 100.0f64;
     let b = 200.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(20000.0, func(a, b));
@@ -338,7 +339,7 @@ fn ifelse_assign() -> anyhow::Result<()> {
 "#;
     let a = 100.0f64;
     let b = 200.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(20000.0, func(a, b));
@@ -354,7 +355,7 @@ fn order() -> anyhow::Result<()> {
 "#;
     let a = 100.0f64;
     let b = 200.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(100.0, func(a, b));
@@ -374,7 +375,7 @@ fn main(arr: &[f64], b) -> () {
 
     let mut arr = [1.0, 2.0, 3.0, 4.0];
     let b = 200.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(*mut f64, f64)>(func_ptr) };
     func(arr.as_mut_ptr(), b);
@@ -390,7 +391,7 @@ fn negative() -> anyhow::Result<()> {
     }
 "#;
     let a = -100.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
     assert_eq!(-101.0, func(a));
@@ -428,7 +429,7 @@ fn compiled_graph() -> anyhow::Result<()> {
 "#;
 
     let mut audio = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("graph")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [f64; 8])>(func_ptr) };
     dbg!(func(&mut audio));
@@ -490,7 +491,7 @@ fn metadata() -> anyhow::Result<()> {
     }
 "#;
     let ast = parser::program(&code)?;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
 
     let func_meta: Option<Metadata> = ast.iter().find_map(|d| match d {
         frontend::Declaration::Metadata(head, body) => {
@@ -532,7 +533,7 @@ fn int_while_loop() -> anyhow::Result<()> {
 
     let a = 100.0f64;
     let b = 200.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(2048.0, func(a, b));
@@ -550,7 +551,7 @@ fn int_to_float() -> anyhow::Result<()> {
 
     let a = 100.0f64;
     let b = 200.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(320000.0, func(a, b));
@@ -571,7 +572,7 @@ fn float_conversion() -> anyhow::Result<()> {
 "#;
     let a = 100.0f64;
     let b = 200.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(100.0, func(a, b));
@@ -593,7 +594,7 @@ fn float_as_bool_error() -> anyhow::Result<()> {
 "#;
     let a = 100.0f64;
     let b = 200.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(1.0, func(a, b));
@@ -616,7 +617,7 @@ fn main(arr1: &[f64], arr2: &[f64], b) -> () {
     let mut arr1 = [1.0, 2.0, 3.0, 4.0];
     let mut arr2 = [10.0, 20.0, 30.0, 40.0];
     let b = 200.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(*mut f64, *mut f64, f64)>(func_ptr) };
     func(arr1.as_mut_ptr(), arr2.as_mut_ptr(), b);
@@ -637,7 +638,7 @@ fn var_type_consistency() -> anyhow::Result<()> {
 "#;
     let a = 100.0f64;
     let b = 200.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(1.0, func(a, b));
@@ -655,7 +656,7 @@ fn three_inputs() -> anyhow::Result<()> {
     let a = 100.0f64;
     let b = 200.0f64;
     let c = 300.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64, f64) -> f64>(func_ptr) };
     assert_eq!(600.0, func(a, b, c));
@@ -671,7 +672,7 @@ fn main(a: f64, b: f64) -> (c: f64) {
 "#;
     let a = 100.0f64;
     let b = 200.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(a * (a - b) * (a * (2.0 + b)), func(a, b));
@@ -688,7 +689,7 @@ fn main(a: f64, b: i64) -> (c: i64) {
 "#;
     let a = 100.0f64;
     let b = 200.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, i64) -> i64>(func_ptr) };
     assert_eq!((a * (a - b) * (a * (2.0 + b))) as i64, func(a, b as i64));
@@ -708,7 +709,7 @@ fn foo(a: f64, b: i64, c: i64) -> (d: i64) {
 "#;
     let a = 100.0f64;
     let b = 200.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, i64) -> i64>(func_ptr) };
     assert_eq!(302, func(a, b as i64));
@@ -727,7 +728,7 @@ fn main(a: f64, b: bool) -> (c: f64) {
 }
 "#;
     let a = 100.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, bool) -> f64>(func_ptr) };
     assert_eq!(a, func(a, true));
@@ -790,7 +791,7 @@ fn parenassign() -> (c: bool) {
     c = ((1.0 < 2.0) && (2.0 < 3.0) && true)
 }
 "#;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let f = unsafe { mem::transmute::<_, extern "C" fn(bool, bool) -> bool>(jit.get_func("and")?) };
     assert_eq!(true, f(true, true));
     assert_eq!(false, f(true, false));
@@ -885,7 +886,7 @@ fn parenassign() -> (c: bool) {
     c = !((1.0 < 2.0) && (2.0 < 3.0) && true)
 }
 "#;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("direct")?) };
     assert_eq!(false, f());
     let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("direct2")?) };
@@ -926,10 +927,10 @@ fn main(a: f64, b: f64) -> (c: f64) {
 "#;
     let a = 100.0f64;
     let b = 100.0f64;
-    let mut jit = default_std_jit_from_code(
-        &code,
-        Some(vec![("mult", mult as *const u8), ("dbg", dbg as *const u8)]),
-    )?;
+    let mut jit =
+        default_std_jit_from_code_with_importer(&code, &|_ast, jit_builder: &mut JITBuilder| {
+            jit_builder.symbols([("mult", mult as *const u8), ("dbg", dbg as *const u8)]);
+        })?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(mult(a, b), func(a, b));
@@ -956,7 +957,10 @@ extern fn print(s: &) -> () {}
 "#;
     let a = 100.0f64;
     let b = 100.0f64;
-    let mut jit = default_std_jit_from_code(&code, Some(vec![("print", prt2 as *const u8)]))?;
+    let mut jit =
+        default_std_jit_from_code_with_importer(&code, &|_ast, jit_builder: &mut JITBuilder| {
+            jit_builder.symbols([("print", prt2 as *const u8)]);
+        })?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     func(a, b);
@@ -982,7 +986,7 @@ fn main(a: f64) -> (c: f64) {
 }
 "#;
     let a = 100.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
     assert_eq!(600.0, func(a));
@@ -1010,7 +1014,7 @@ fn main(a: f64) -> (c: f64) {
 }
 "#;
     let a = 100.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
     assert_eq!(374.16573867739413, func(a));
@@ -1132,13 +1136,10 @@ fn main(n: f64) -> (c: f64) {
 }
 "#;
     let a = 100.0f64;
-    let mut jit = default_std_jit_from_code(
-        &code,
-        Some(vec![
-            ("dbgf", dbgf as *const u8),
-            ("dbgi", dbgi as *const u8),
-        ]),
-    )?;
+    let mut jit =
+        default_std_jit_from_code_with_importer(&code, &|_ast, jit_builder: &mut JITBuilder| {
+            jit_builder.symbols([("dbgf", dbgf as *const u8), ("dbgi", dbgi as *const u8)]);
+        })?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
     dbg!(func(a));
@@ -1187,7 +1188,7 @@ fn main(n: f64) -> (c: f64) {
     let ast = parser::program(&code)?;
     dbg!(&ast);
     let a = 100.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
     dbg!(func(a));
@@ -1241,13 +1242,10 @@ fn main(n: f64) -> (c: f64) {
 }
 "#;
     let a = 100.0f64;
-    let mut jit = default_std_jit_from_code(
-        &code,
-        Some(vec![
-            ("dbgf", dbgf as *const u8),
-            ("dbgi", dbgi as *const u8),
-        ]),
-    )?;
+    let mut jit =
+        default_std_jit_from_code_with_importer(&code, &|_ast, jit_builder: &mut JITBuilder| {
+            jit_builder.symbols([("dbgf", dbgf as *const u8), ("dbgi", dbgi as *const u8)]);
+        })?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
     dbg!(func(a));
@@ -1270,7 +1268,7 @@ fn main(a: f64, b: i64) -> (c: f64) {
 "#;
     let a = 100.0f64;
     let b = 100i64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, i64) -> f64>(func_ptr) };
     assert_eq!(20000.0, func(a, b));
@@ -1287,7 +1285,7 @@ fn main(a: f64) -> (c: bool) {
 }
 "#;
     let a = 100.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> bool>(func_ptr) };
     assert_eq!(true, func(a));
@@ -1368,7 +1366,7 @@ fn main(n: f64) -> (c: f64) {
 }
 "#;
     let a = 100.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
     dbg!(func(a));
@@ -1428,7 +1426,7 @@ fn main(n: f64) -> (c: f64) {
 }
 "#;
     let a = 100.0f64;
-    let mut jit = default_std_jit_from_code(&code, None)?;
+    let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
     dbg!(func(a));

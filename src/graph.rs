@@ -44,10 +44,10 @@ impl Graph {
         jit.add_math_constants()?;
 
         // Generate AST from string
-        let ast = parser::program(&code)?;
+        let mut ast = parser::program(&code)?;
 
         // Add STD lib to ast
-        let mut ast = sarus_std_lib::append_std_funcs(ast);
+        sarus_std_lib::append_std_funcs(&mut ast);
 
         let node_execution_order = order_connections(&connections, &nodes);
 

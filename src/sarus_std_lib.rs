@@ -191,9 +191,9 @@ macro_rules! decl {
 
 #[rustfmt::skip]
 pub fn append_std_math(
-    mut prog: Vec<Declaration>,
+    prog: &mut Vec<Declaration>,
     jit_builder: &mut JITBuilder,
-) -> Vec<Declaration> {
+) {
     let jb = jit_builder;
     decl!(prog, jb, "f64.signum",           f64::signum,           (E::F64),                 (E::F64));
     decl!(prog, jb, "f64.copysign",         f64::copysign,         (E::F64, E::F64),         (E::F64));
@@ -259,10 +259,9 @@ pub fn append_std_math(
     "f64.min"
     "f64.max"
     */
-    prog  
 }
 
-pub fn append_std_funcs(mut prog: Vec<Declaration>) -> Vec<Declaration> {
+pub fn append_std_funcs(prog: &mut Vec<Declaration>) {
     for n in STD_1ARG_FF {
         prog.push(decl(n, vec![("x", E::F64)], vec![("y", E::F64)]));
     }
@@ -320,7 +319,6 @@ pub fn append_std_funcs(mut prog: Vec<Declaration>) -> Vec<Declaration> {
     //    vec![("size", ExprType::I64)],
     //    vec![("mem", ExprType::Address)],
     //));
-    prog
 }
 
 pub(crate) fn translate_std(
