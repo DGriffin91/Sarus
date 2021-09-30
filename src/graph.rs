@@ -3,7 +3,9 @@ use std::{collections::HashMap, fmt::Debug};
 use toposort_scc::IndexGraph;
 
 use crate::{
-    frontend::{make_nonempty, parser, Arg, Binop, Cmp, Declaration, Expr, Function},
+    frontend::{
+        assign_op_to_assign, make_nonempty, parser, Arg, Binop, Cmp, Declaration, Expr, Function,
+    },
     jit, sarus_std_lib,
     validator::ExprType,
 };
@@ -205,11 +207,10 @@ fn build_graph_func(
         Box::new(Expr::Identifier("vOUTPUT_dst".to_string())),
     ));
 
-    body.push(Expr::AssignOp(
-        //i += 1
+    body.push(assign_op_to_assign(
         Binop::Add,
-        Box::new("i".to_string()),
-        Box::new(Expr::LiteralInt("1".to_string())),
+        vec!["i".to_string()],
+        Expr::LiteralInt("1".to_string()),
     ));
 
     main_body.push(Expr::WhileLoop(

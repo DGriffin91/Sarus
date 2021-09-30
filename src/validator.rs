@@ -101,17 +101,23 @@ impl ExprType {
     ) -> Result<ExprType, TypeError> {
         let res = match expr {
             Expr::Identifier(id_name) => {
-                if let Some(lval) = lval {
+                let parts = if let Some(lval) = lval {
                     let mut parts = Vec::new();
                     for expr in &lval.expr {
                         if let Expr::Identifier(s) = expr {
                             parts.push(s.as_str());
                         } else {
-                            dbg!(&lval);
                             panic!("non identifier found")
                         }
                     }
                     parts.push(id_name);
+                    Some(parts)
+                } else if id_name.contains(".") {
+                    Some(id_name.split(".").collect::<Vec<&str>>())
+                } else {
+                    None
+                };
+                if let Some(parts) = parts {
                     //TODO Refactor?
                     if variables.contains_key(parts[0]) {
                         match &variables[parts[0]] {
@@ -136,6 +142,7 @@ impl ExprType {
                             }
                         }
                     } else {
+                        dbg!(&id_name);
                         return Err(TypeError::UnknownVariable(id_name.to_string()));
                     }
                 } else if variables.contains_key(id_name) {
@@ -154,6 +161,7 @@ impl ExprType {
                 } else if constant_vars.contains_key(id_name) {
                     ExprType::F64 //All constants are currently math like PI, TAU...
                 } else {
+                    dbg!(&id_name);
                     return Err(TypeError::UnknownVariable(id_name.to_string()));
                 }
             }

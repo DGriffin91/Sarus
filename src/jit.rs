@@ -533,7 +533,12 @@ impl<'a> FunctionTranslator<'a> {
                 }
             }
             Expr::Assign(names, expr) => self.translate_assign(names, expr),
-            Expr::AssignOp(op, lhs, rhs) => self.translate_math_assign(*op, lhs, rhs),
+            Expr::AssignOp(_op, _lhs, _rhs) => {
+                unimplemented!("currently AssignOp is turned into seperate assign and op")
+                //self.translate_math_assign(*op, lhs, rhs),
+                //for what this used to look like see:
+                //https://github.com/DGriffin91/sarus/tree/cd4bf6472bf02f00ea6037d606842ec84d0ff205
+            }
             Expr::NewStruct(struct_name, fields) => self.translate_new_struct(struct_name, fields),
             Expr::IfThen(condition, then_body) => {
                 self.translate_if_then(condition, then_body)?;
@@ -633,7 +638,6 @@ impl<'a> FunctionTranslator<'a> {
                         Expr::Call(name, args) => {
                             last_expr = Some(self.translate_call(name, &args, last_expr)?);
                         }
-                        //Expr::AssignOp(name, args) //TODO
                         a => {
                             dbg!(a);
                             panic!("non identifier/call found")
@@ -943,70 +947,6 @@ impl<'a> FunctionTranslator<'a> {
             Offset32::new(0),
         );
         Ok(SValue::Void)
-    }
-
-    fn translate_math_assign(
-        &mut self,
-        op: Binop,
-        name: &str,
-        expr: &Expr,
-    ) -> anyhow::Result<SValue> {
-        match self.translate_expr(expr)? {
-            SValue::F64(v) => {
-                let orig_variable = self.variables.get(&*name).unwrap();
-                let orig_value = self
-                    .builder
-                    .use_var(orig_variable.expect_f64("math_assign")?);
-                let added_val = match op {
-                    Binop::Add => self.builder.ins().fadd(orig_value, v),
-                    Binop::Sub => self.builder.ins().fsub(orig_value, v),
-                    Binop::Mul => self.builder.ins().fmul(orig_value, v),
-                    Binop::Div => self.builder.ins().fdiv(orig_value, v),
-                    Binop::LogicalAnd | Binop::LogicalOr | Binop::DotAccess => {
-                        anyhow::bail!("operation not supported: {:?} {} {:?}", orig_value, op, v)
-                    }
-                };
-                self.builder
-                    .def_var(orig_variable.expect_f64("math_assign")?, added_val);
-                Ok(SValue::F64(added_val))
-            }
-            SValue::I64(v) => {
-                let orig_variable = self.variables.get(&*name).unwrap();
-                let orig_value = self
-                    .builder
-                    .use_var(orig_variable.expect_i64("math_assign")?);
-                let added_val = match op {
-                    Binop::Add => self.builder.ins().iadd(orig_value, v),
-                    Binop::Sub => self.builder.ins().isub(orig_value, v),
-                    Binop::Mul => self.builder.ins().imul(orig_value, v),
-                    Binop::Div => self.builder.ins().sdiv(orig_value, v),
-                    Binop::LogicalAnd | Binop::LogicalOr | Binop::DotAccess => {
-                        anyhow::bail!("operation not supported: {:?} {} {:?}", orig_value, op, v)
-                    }
-                };
-                self.builder
-                    .def_var(orig_variable.expect_i64("math_assign")?, added_val);
-                Ok(SValue::I64(added_val))
-            }
-            SValue::Void => anyhow::bail!("math assign Void not supported"),
-            SValue::Unknown(_) => anyhow::bail!("math assign unknown not supported"),
-            SValue::Bool(_) => anyhow::bail!("math assign bool not supported"),
-            SValue::Tuple(_) => anyhow::bail!("math assign tuple not supported"),
-            SValue::UnboundedArrayF64(_) => {
-                anyhow::bail!("math assign UnboundedArrayF64 not supported")
-            }
-            SValue::UnboundedArrayI64(_) => {
-                anyhow::bail!("math assign UnboundedArrayI64 not supported")
-            }
-            SValue::Address(_) => {
-                //TODO support this for pointer math
-                anyhow::bail!("math assign Address not supported")
-            }
-            SValue::Struct(_, _) => {
-                //TODO support this for pointer math
-                anyhow::bail!("math assign Struct not supported")
-            }
-        }
     }
 
     fn translate_if_then(

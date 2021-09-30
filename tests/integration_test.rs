@@ -1054,8 +1054,24 @@ fn main(n: f64) -> (c: f64) {
     d.y.assert_eq(l1.b.y)
     d.z.assert_eq(l1.b.z)
 
-    //l1.b.x += 1.0 //TODO AssignOp
-    //TODO translate_math_assign should probably generate a math expr and call that, then call assign
+    prev_x = l1.b.x
+    prev_y = l1.b.y
+    prev_z = l1.b.z
+    prev_z2 = l1.a.z
+
+    l1.b.x += 2.0
+    l1.b.y -= 2.0
+    l1.b.z *= 2.0
+    l1.a.z /= 2.0
+
+    l1.b.x.assert_eq(prev_x + 2.0)
+    l1.b.y.assert_eq(prev_y - 2.0)
+    l1.b.z.assert_eq(prev_z * 2.0)
+    l1.a.z.assert_eq(prev_z2 / 2.0)
+
+    //What about something like:?
+    //a.l.f().e = a.b.c
+    //I guess this isn't an issue while references can't be returned.
     
 }
 "#;
@@ -1067,6 +1083,55 @@ fn main(n: f64) -> (c: f64) {
             ("dbgi", dbgi as *const u8),
         ]),
     )?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
+    dbg!(func(a));
+    //assert_eq!(200.0, func(a));
+    //jit.print_clif(true);
+    Ok(())
+}
+
+#[test]
+fn struct_assign_op() -> anyhow::Result<()> {
+    let code = r#"
+struct Line {
+    a: Point,
+    b: Point,
+}
+
+struct Point {
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+fn main(n: f64) -> (c: f64) {
+    p1 = Point {
+        x: n,
+        y: 200.0,
+        z: 300.0,
+    }
+    p2 = Point {
+        x: n * 4.0,
+        y: 500.0,
+        z: 600.0,
+    }
+    l1 = Line {
+        a: p1,
+        b: p2,
+    }
+
+
+    l1.b.x = l1.b.x + 1.0
+    l1.b.x += 1.0
+    
+}
+"#;
+
+    let ast = parser::program(&code)?;
+    dbg!(&ast);
+    let a = 100.0f64;
+    let mut jit = default_std_jit_from_code(&code, None)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
     dbg!(func(a));
