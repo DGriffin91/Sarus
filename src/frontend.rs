@@ -404,7 +404,7 @@ peg::parser!(pub grammar parser() for str {
         { Expr::WhileLoop(Box::new(e), body) }
 
     rule assignment() -> Expr
-        = assignments:((i:identifier() {i}) ** comma()) _ "=" args:((_ e:expression() _ {e}) ** comma()) {?
+        = assignments:((i:(identifier() ++ ".") {i.join(".")}) ** comma()) _ "=" args:((_ e:expression() _ {e}) ** comma()) {?
             make_nonempty(assignments)
                 .and_then(|assignments| make_nonempty(args)
                 .map(|args| Expr::Assign(assignments, args)))

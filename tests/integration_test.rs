@@ -989,11 +989,12 @@ fn print(self: Line) -> () {
     "}".println()
 }
 
-//fn length(self: Line) -> (r: f64) {
-//    r = sqrt(pow(self.a.x - self.b.x, 2.0) + 
-//             pow(self.a.y - self.b.y, 2.0) + 
-//             pow(self.a.z - self.b.z, 2.0))
-//}
+fn length(self: Line) -> (r: f64) {
+    r = sqrt(pow(self.a.x - self.b.x, 2.0) + 
+             pow(self.a.y - self.b.y, 2.0) + 
+             pow(self.a.z - self.b.z, 2.0))
+}
+
 struct Point {
     x: f64,
     y: f64,
@@ -1008,9 +1009,10 @@ fn print(self: Point) -> () {
     "}".println()
 }
 
-//fn length(self: Point) -> (r: f64) {
-//    r = sqrt(pow(self.x, 2.0) + pow(self.y, 2.0) + pow(self.z, 2.0))
-//}
+fn length(self: Point) -> (r: f64) {
+    r = sqrt(pow(self.x, 2.0) + pow(self.y, 2.0) + pow(self.z, 2.0))
+}
+
 fn main(n: f64) -> (c: f64) {
     p1 = Point {
         x: n,
@@ -1029,13 +1031,32 @@ fn main(n: f64) -> (c: f64) {
     p1.print()
     p2.print()
     l1.print()
-    //d = l1.c //struct is copied
-    l1.b.x.println() //TODO these don't get initialized
-    l1.b.y.println() //TODO these don't get initialized
-    l1.b.z.println() //TODO these don't get initialized
-    ////e = d.x + l1.a.x //f64's are copied
-    ////l1.a.y = e * d.z
-    ////c = l1.length()
+    d = l1.a //struct is copied
+    e = d.x + l1.a.x //f64's are copied
+    d.print() //TODO This should work
+    
+    p1.y = e * d.z
+    p1.y.assert_eq(e * d.z)
+
+    c = l1.length()
+
+    l1.a = l1.b
+    l1.a.x.assert_eq(l1.b.x)
+    l1.a.y.assert_eq(l1.b.y)
+    l1.a.z.assert_eq(l1.b.z)
+
+    l1.a.x, l1.a.y, l1.a.z, d = l1.a.x, l1.a.x, l1.a.x, l1.b
+    l1.a.x.assert_eq(l1.b.x)
+    l1.a.y.assert_eq(l1.b.x)
+    l1.a.z.assert_eq(l1.b.x)
+    
+    d.x.assert_eq(l1.b.x)
+    d.y.assert_eq(l1.b.y)
+    d.z.assert_eq(l1.b.z)
+
+    //l1.b.x += 1.0 //TODO AssignOp
+    //TODO translate_math_assign should probably generate a math expr and call that, then call assign
+    
 }
 "#;
     let a = 100.0f64;

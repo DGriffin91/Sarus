@@ -116,6 +116,26 @@ extern "C" fn str_println(s: *const i8) {
     }
 }
 
+extern "C" fn f64_assert_eq(x: f64, y: f64) {
+    assert_eq!(x, y);
+}
+
+extern "C" fn i64_assert_eq(x: i64, y: i64) {
+    assert_eq!(x, y);
+}
+
+extern "C" fn bool_assert_eq(x: bool, y: bool) {
+    assert_eq!(x, y);
+}
+
+extern "C" fn str_assert_eq(s1: *const i8, s2: *const i8) {
+    unsafe {
+        let s1 = CStr::from_ptr(s1).to_str().unwrap();
+        let s2 = CStr::from_ptr(s2).to_str().unwrap();
+        assert_eq!(s1, s2);
+    }
+}
+
 pub fn append_std_symbols(jit_builder: &mut JITBuilder) {
     jit_builder.symbols([
         ("f64.print", f64_print as *const u8),
@@ -126,6 +146,10 @@ pub fn append_std_symbols(jit_builder: &mut JITBuilder) {
         ("i64.println", i64_println as *const u8),
         ("bool.println", bool_println as *const u8),
         ("&.println", str_println as *const u8), //TODO setup actual str type
+        ("f64.assert_eq", f64_assert_eq as *const u8),
+        ("i64.assert_eq", i64_assert_eq as *const u8),
+        ("bool.assert_eq", bool_assert_eq as *const u8),
+        ("&.assert_eq", str_assert_eq as *const u8), //TODO setup actual str type
     ]);
 }
 
@@ -173,6 +197,26 @@ pub fn append_std_funcs(mut prog: Vec<Declaration>) -> Vec<Declaration> {
     prog.push(decl("i64.println", vec![("x", ExprType::I64)], vec![]));
     prog.push(decl("bool.println", vec![("x", ExprType::Bool)], vec![]));
     prog.push(decl("&.println", vec![("x", ExprType::Address)], vec![]));
+    prog.push(decl(
+        "f64.assert_eq",
+        vec![("x", ExprType::F64), ("y", ExprType::F64)],
+        vec![],
+    ));
+    prog.push(decl(
+        "i64.assert_eq",
+        vec![("x", ExprType::I64), ("y", ExprType::I64)],
+        vec![],
+    ));
+    prog.push(decl(
+        "bool.assert_eq",
+        vec![("x", ExprType::Bool), ("y", ExprType::Bool)],
+        vec![],
+    ));
+    prog.push(decl(
+        "&.assert_eq",
+        vec![("x", ExprType::Address), ("y", ExprType::Address)],
+        vec![],
+    ));
 
     //prog.push(decl(
     //    "bytes",

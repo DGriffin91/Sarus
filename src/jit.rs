@@ -616,7 +616,7 @@ impl<'a> FunctionTranslator<'a> {
                             parts.push(s.as_str());
                             if i == len - 1 {
                                 //if this is the last one
-                                last_expr = Some(self.translate_struct_field(parts.clone())?);
+                                last_expr = Some(self.get_struct_field(parts.clone())?);
                             } else if i < len - 1 {
                                 //if this is not the last one
                                 if let Expr::Call(..) = lval.expr[i + 1] {
@@ -624,7 +624,7 @@ impl<'a> FunctionTranslator<'a> {
                                     last_expr = if parts.len() == 1 {
                                         Some(self.translate_expr(&lval.expr[i])?)
                                     } else {
-                                        Some(self.translate_struct_field(parts.clone())?)
+                                        Some(self.get_struct_field(parts.clone())?)
                                     }
                                 }
                             }
@@ -633,6 +633,7 @@ impl<'a> FunctionTranslator<'a> {
                         Expr::Call(name, args) => {
                             last_expr = Some(self.translate_call(name, &args, last_expr)?);
                         }
+                        //Expr::AssignOp(name, args) //TODO
                         a => {
                             dbg!(a);
                             panic!("non identifier/call found")
@@ -833,100 +834,50 @@ impl<'a> FunctionTranslator<'a> {
         //But if there is not, use the output of the first expression:
         //eg: `a, b = func_that_outputs_2_floats(1.0)`
         if names.len() == expr.len() {
-            let mut values = Vec::new();
             for (i, name) in names.iter().enumerate() {
-                let expr = self.translate_expr(expr.get(i).unwrap())?;
-                let var = match self.variables.get(name) {
-                    Some(v) => v,
-                    None => anyhow::bail!("variable {} not found", name),
-                };
-                match expr {
-                    SValue::Tuple(_) => anyhow::bail!("operation not supported: assign Tuple"),
-                    SValue::Void => anyhow::bail!("operation not supported: assign Void"),
-                    SValue::Unknown(v) => {
-                        values.push(SValue::Unknown(v));
-                        self.builder.def_var(var.inner(), v);
-                        v
-                    }
-                    SValue::Bool(v) => {
-                        values.push(SValue::Bool(v));
-                        self.builder.def_var(var.expect_bool("assign")?, v);
-                        v
-                    }
-                    SValue::F64(v) => {
-                        values.push(SValue::F64(v));
-                        self.builder.def_var(var.expect_f64("assign")?, v);
-                        v
-                    }
-                    SValue::I64(v) => {
-                        values.push(SValue::I64(v));
-                        self.builder.def_var(var.expect_i64("assign")?, v);
-                        v
-                    }
-                    SValue::UnboundedArrayF64(v) => {
-                        values.push(SValue::UnboundedArrayF64(v));
-                        self.builder
-                            .def_var(var.expect_unbounded_array_f64("assign")?, v);
-                        v
-                    }
-                    SValue::UnboundedArrayI64(v) => {
-                        values.push(SValue::UnboundedArrayI64(v));
-                        self.builder
-                            .def_var(var.expect_unbounded_array_i64("assign")?, v);
-                        v
-                    }
-                    SValue::Address(v) => {
-                        values.push(SValue::Address(v));
-                        self.builder.def_var(var.expect_address("assign")?, v);
-                        v
-                    }
-                    SValue::Struct(name, v) => {
-                        values.push(SValue::Struct(name.clone(), v));
-                        self.builder.def_var(var.expect_struct(&name, "assign")?, v);
-                        v
-                    }
-                };
+                let val = self.translate_expr(expr.get(i).unwrap())?;
+                if name.contains(".") {
+                    let parts = name.split(".").collect::<Vec<&str>>();
+                    //TODO if val is a struct then does translate_expr above make an unnecessary copy?
+                    self.set_struct_field(parts, val)?
+                } else {
+                    let var = match self.variables.get(name) {
+                        Some(v) => v,
+                        None => anyhow::bail!("variable {} not found", name),
+                    };
+                    self.builder
+                        .def_var(var.inner(), val.inner("translate_assign")?);
+                }
             }
-            if values.len() > 1 {
-                Ok(SValue::Tuple(
-                    values.iter().map(|v| v.clone()).collect::<Vec<SValue>>(),
-                ))
-            } else if values.len() == 1 {
-                Ok(values.first().unwrap().clone())
-            } else {
-                Ok(SValue::Void)
-            }
+            Ok(SValue::Void)
         } else {
             match self.translate_expr(expr.first().unwrap())? {
                 SValue::Tuple(values) => {
                     for (i, name) in names.iter().enumerate() {
-                        let variable = match self.variables.get(name) {
-                            Some(v) => v,
-                            None => anyhow::bail!("variable {} not found", name),
-                        };
+                        if name.contains(".") {
+                            let parts = name.split(".").collect::<Vec<&str>>();
+                            self.set_struct_field(parts, values[i].clone())?
+                        } else {
+                            let var = match self.variables.get(name) {
+                                Some(v) => v,
+                                None => anyhow::bail!("variable {} not found", name),
+                            };
+                            self.builder
+                                .def_var(var.inner(), values[i].inner("translate_assign")?);
+                        }
+                    }
 
-                        self.builder
-                            .def_var(variable.inner(), values[i].inner("assign")?);
-                    }
-                    if values.len() > 1 {
-                        Ok(SValue::Tuple(
-                            values.iter().map(|v| v.clone()).collect::<Vec<SValue>>(),
-                        ))
-                    } else if values.len() == 1 {
-                        Ok(values.first().unwrap().clone())
-                    } else {
-                        Ok(SValue::Void)
-                    }
+                    Ok(SValue::Void)
                 }
-                SValue::Void => anyhow::bail!("operation not supported {:?}", expr),
-                SValue::Unknown(_) => anyhow::bail!("operation not supported {:?}", expr),
-                SValue::Bool(_) => anyhow::bail!("operation not supported {:?}", expr),
-                SValue::F64(_) => anyhow::bail!("operation not supported {:?}", expr),
-                SValue::I64(_) => anyhow::bail!("operation not supported {:?}", expr),
-                SValue::UnboundedArrayF64(_) => anyhow::bail!("operation not supported {:?}", expr),
-                SValue::UnboundedArrayI64(_) => anyhow::bail!("operation not supported {:?}", expr),
-                SValue::Address(_) => anyhow::bail!("operation not supported {:?}", expr),
-                SValue::Struct(_, _) => anyhow::bail!("operation not supported {:?}", expr),
+                SValue::Void
+                | SValue::Unknown(_)
+                | SValue::Bool(_)
+                | SValue::F64(_)
+                | SValue::I64(_)
+                | SValue::UnboundedArrayF64(_)
+                | SValue::UnboundedArrayI64(_)
+                | SValue::Address(_)
+                | SValue::Struct(_, _) => anyhow::bail!("operation not supported {:?}", expr),
             }
         }
     }
@@ -1296,12 +1247,10 @@ impl<'a> FunctionTranslator<'a> {
         name: &str,
         fields: &[StructAssignField],
     ) -> anyhow::Result<SValue> {
-        //println!("translate_new_struct {}", name);
         let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
             self.struct_map[name].size,
         ));
-        //dbg!(self.struct_map);
 
         for field in fields.iter() {
             let dst_field_def = &self.struct_map[name].fields[&field.field_name];
@@ -1313,39 +1262,6 @@ impl<'a> FunctionTranslator<'a> {
                     stack_slot,
                     Offset32::new(dst_field_def.offset as i32), //TODO this shouldn't need to be *2
                 );
-                //dbg!(
-                //    &name,
-                //    self.struct_map[name].size,
-                //    stack_slot_address,
-                //    &src_name,
-                //    dst_field_def.offset,
-                //    self.struct_map[&src_name].size,
-                //    src_start_ptr,
-                //);
-
-                //call_with_values(
-                //    "dbgi",
-                //    &[
-                //        self.translate_string(&"stack_slot_address".to_string())?
-                //            .inner("")?,
-                //        stack_slot_address,
-                //    ],
-                //    &self.funcs,
-                //    &mut self.module,
-                //    &mut self.builder,
-                //)?;
-
-                //call_with_values(
-                //    "dbgi",
-                //    &[
-                //        self.translate_string(&"src_start_ptr".to_string())?
-                //            .inner("")?,
-                //        src_start_ptr,
-                //    ],
-                //    &self.funcs,
-                //    &mut self.module,
-                //    &mut self.builder,
-                //)?;
 
                 self.builder.emit_small_memory_copy(
                     self.module.target_config(),
@@ -1357,110 +1273,11 @@ impl<'a> FunctionTranslator<'a> {
                     true,
                     MemFlags::new(),
                 );
-
-                //let size_value = self.builder.ins().iconst(
-                //    self.module.target_config().pointer_type(),
-                //    dst_field_def.size as i64, //self.struct_map[&src_name].size as i64,
-                //);
-
-                //let val = self.builder.ins().load(
-                //    types::F64,
-                //    MemFlags::new(),
-                //    src_start_ptr,
-                //    Offset32::new(0),
-                //);
-
-                //call_with_values(
-                //    "dbgf",
-                //    &[
-                //        self.translate_string(&"src_val".to_string())?.inner("")?,
-                //        val,
-                //    ],
-                //    &self.funcs,
-                //    &mut self.module,
-                //    &mut self.builder,
-                //)?;
-
-                //let offset = self.builder.ins().iconst(
-                //    self.module.target_config().pointer_type(),
-                //    field_def.offset as i64,
-                //);
-                //let stack_slot_address_with_offset =
-                //    self.builder.ins().iadd(stack_slot_address, offset);
-                //self.builder.call_memcpy(
-                //    self.module.target_config(),
-                //    stack_slot_address,
-                //    src_start_ptr,
-                //    size_value,
-                //);
-
-                //Copy bytes from src struct to dst struct
-                //TODO look at using emit_small_memory_copy
-                /*
-                for i in 0..self.struct_map[&src_name].size {
-                    println!(
-                        "from {} {} to {} {}",
-                        src_start_ptr,
-                        i,
-                        stack_slot_address,
-                        field_def.offset + i
-                    );
-
-                    //call_with_values(
-                    //    "dbgi",
-                    //    &[
-                    //        self.translate_string(&format!(
-                    //            "from src_start_ptr {} offset {} : ",
-                    //            src_start_ptr, i
-                    //        ))?
-                    //        .inner("")?,
-                    //        src_start_ptr,
-                    //    ],
-                    //    &self.funcs,
-                    //    &mut self.module,
-                    //    &mut self.builder,
-                    //)?;
-                    //call_with_values(
-                    //    "dbgi",
-                    //    &[
-                    //        self.translate_string(&format!(
-                    //            "to stack_slot_address {} offset {} : ",
-                    //            stack_slot_address,
-                    //            field_def.offset + i
-                    //        ))?
-                    //        .inner("")?,
-                    //        stack_slot_address,
-                    //    ],
-                    //    &self.funcs,
-                    //    &mut self.module,
-                    //    &mut self.builder,
-                    //)?;
-                    let v = self.builder.ins().load(
-                        types::I8,
-                        MemFlags::new(),
-                        src_start_ptr,
-                        Offset32::new(i as i32),
-                    ); //Just copy one byte at a time
-                    self.builder.ins().store(
-                        MemFlags::new(),
-                        v,
-                        stack_slot_address,
-                        Offset32::new((field_def.offset + i) as i32),
-                    );
-                }
-                */
             } else {
                 let stack_slot_address = self.builder.ins().stack_addr(
                     self.module.target_config().pointer_type(),
                     stack_slot,
                     Offset32::new(dst_field_def.offset as i32),
-                );
-                dbg!(
-                    &name,
-                    self.struct_map[name].size,
-                    stack_slot_address,
-                    dst_field_def.offset,
-                    &sval,
                 );
 
                 self.builder.ins().store(
@@ -1479,7 +1296,10 @@ impl<'a> FunctionTranslator<'a> {
         Ok(SValue::Struct(name.to_string(), stack_slot_address))
     }
 
-    fn translate_struct_field(&mut self, parts: Vec<&str>) -> anyhow::Result<SValue> {
+    fn get_struct_field_location(
+        &mut self,
+        parts: Vec<&str>,
+    ) -> anyhow::Result<(StructField, Value, u32)> {
         match &self.variables[parts[0]] {
             SVariable::Struct(_var_name, struct_name, var) => {
                 let mut parent_struct_field = &self.struct_map[struct_name].fields[parts[1]];
@@ -1498,29 +1318,70 @@ impl<'a> FunctionTranslator<'a> {
                         }
                     }
                 }
-                if let ExprType::Struct(name) = &parent_struct_field.expr_type {
-                    println!("{} offset {}", name, offset);
-                    let stack_slot_address = create_and_copy_to_stack_slot(
-                        self.module.target_config(),
-                        &mut self.builder,
-                        parent_struct_field.size,
-                        base_struct_var_ptr,
-                        offset,
-                    )?;
-                    Ok(SValue::Struct(name.to_string(), stack_slot_address))
-                } else {
-                    let val = self.builder.ins().load(
-                        parent_struct_field
-                            .expr_type
-                            .cranelift_type(self.module.target_config().pointer_type())?,
-                        MemFlags::new(),
-                        base_struct_var_ptr,
-                        Offset32::new(offset as i32),
-                    );
-                    return SValue::from(&parent_struct_field.expr_type, val);
-                }
+                Ok(((*parent_struct_field).clone(), base_struct_var_ptr, offset))
             }
             _ => unreachable!("validator should catch this"),
+        }
+    }
+
+    fn get_struct_field(&mut self, parts: Vec<&str>) -> anyhow::Result<SValue> {
+        let (parent_struct_field_def, base_struct_var_ptr, offset) =
+            self.get_struct_field_location(parts)?;
+
+        if let ExprType::Struct(name) = &parent_struct_field_def.expr_type {
+            //If the struct field is a struct, return copy of struct
+            let stack_slot_address = create_and_copy_to_stack_slot(
+                self.module.target_config(),
+                &mut self.builder,
+                parent_struct_field_def.size,
+                base_struct_var_ptr,
+                offset,
+            )?;
+            Ok(SValue::Struct(name.to_string(), stack_slot_address))
+        } else {
+            //If the struct field is not a struct, return copy of value
+            let val = self.builder.ins().load(
+                parent_struct_field_def
+                    .expr_type
+                    .cranelift_type(self.module.target_config().pointer_type())?,
+                MemFlags::new(),
+                base_struct_var_ptr,
+                Offset32::new(offset as i32),
+            );
+            return SValue::from(&parent_struct_field_def.expr_type, val);
+        }
+    }
+
+    fn set_struct_field(&mut self, parts: Vec<&str>, set_value: SValue) -> anyhow::Result<()> {
+        let (parent_struct_field_def, base_struct_var_ptr, offset) =
+            self.get_struct_field_location(parts)?;
+        if let ExprType::Struct(name) = &parent_struct_field_def.expr_type {
+            let src_ptr = set_value.expect_struct(name, "set_struct_field")?;
+            let offset_v = self
+                .builder
+                .ins()
+                .iconst(self.module.target_config().pointer_type(), offset as i64);
+            let dst_ptr_with_offset = self.builder.ins().iadd(base_struct_var_ptr, offset_v);
+            self.builder.emit_small_memory_copy(
+                self.module.target_config(),
+                dst_ptr_with_offset,
+                src_ptr,
+                parent_struct_field_def.size as u64,
+                1,
+                1,
+                true,
+                MemFlags::new(),
+            );
+            Ok(())
+        } else {
+            //If the struct field is not a struct, return copy of value
+            self.builder.ins().store(
+                MemFlags::new(),
+                set_value.inner("set_struct_field")?,
+                base_struct_var_ptr,
+                Offset32::new(offset as i32),
+            );
+            Ok(())
         }
     }
 }
@@ -1538,30 +1399,7 @@ fn create_and_copy_to_stack_slot(
         builder
             .ins()
             .stack_addr(target_config.pointer_type(), stack_slot, Offset32::new(0));
-    //Copy bytes from src to dst stack_slot
-    //TODO look at using emit_small_memory_copy
-    dbg!("create_and_copy_to_stack_slot");
-    //for i in 0..size {
-    //    println!(
-    //        "from {} {} to {} {}",
-    //        src_ptr,
-    //        (offset + i),
-    //        stack_slot_address,
-    //        i
-    //    );
-    //    let v = builder.ins().load(
-    //        types::I8,
-    //        MemFlags::new(),
-    //        src_ptr,
-    //        Offset32::new((offset + i) as i32),
-    //    ); //Just copy one byte at a time
-    //    builder.ins().store(
-    //        MemFlags::new(),
-    //        v,
-    //        stack_slot_address,
-    //        Offset32::new(i as i32),
-    //    );
-    //}
+
     let offset_v = builder
         .ins()
         .iconst(target_config.pointer_type(), offset as i64);
@@ -1974,6 +1812,9 @@ fn declare_variable_from_type(
     env: &[Declaration],
 ) -> anyhow::Result<()> {
     let name = *names.first().unwrap();
+    if name.contains(".") {
+        return Ok(());
+    }
     match expr_type {
         ExprType::Void => anyhow::bail!("can't assign void type to {}", name),
         ExprType::Bool => {
@@ -2129,14 +1970,14 @@ fn declare_variable(
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StructDef {
     pub size: u32,
     pub name: String,
     pub fields: HashMap<String, StructField>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StructField {
     pub offset: u32,
     pub size: u32,
