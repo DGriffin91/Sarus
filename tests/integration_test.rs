@@ -3,26 +3,6 @@ use std::{collections::HashMap, f64::consts::*, ffi::CStr, mem};
 
 use sarus::*;
 
-fn default_std_jit_from_code(
-    code: &str,
-    symbols: Option<Vec<(&str, *const u8)>>,
-) -> anyhow::Result<jit::JIT> {
-    let ast = parser::program(&code)?;
-    let mut jit_builder = jit::new_jit_builder();
-    sarus_std_lib::append_std_symbols(&mut jit_builder);
-    let ast = sarus_std_lib::append_std_funcs(ast);
-    let ast = sarus_std_lib::append_std_math(ast, &mut jit_builder);
-
-    if let Some(symbols) = symbols {
-        jit_builder.symbols(symbols);
-    }
-    let mut jit = jit::JIT::from(jit_builder);
-    jit.add_math_constants()?;
-
-    jit.translate(ast.clone())?;
-    Ok(jit)
-}
-
 #[test]
 fn parentheses() -> anyhow::Result<()> {
     let code = r#"
@@ -1338,7 +1318,6 @@ fn main(a: f64) -> (c: bool) {
 //    Ok(())
 //}
 
-//TODO make f64 impls for math funcions:
 #[test]
 fn readme_example() -> anyhow::Result<()> {
     let code = r#"
@@ -1386,6 +1365,66 @@ fn main(n: f64) -> (c: f64) {
     p1.y.assert_eq(e * d.z)
 
     c = l1.length()
+}
+"#;
+    let a = 100.0f64;
+    let mut jit = default_std_jit_from_code(&code, None)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
+    dbg!(func(a));
+    //assert_eq!(200.0, func(a));
+    //jit.print_clif(true);
+    Ok(())
+}
+
+#[test]
+fn pass_by_ref() -> anyhow::Result<()> {
+    let code = r#"
+struct Line {
+    a: Point,
+    b: Point,
+}
+
+struct Point {
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+//TODO set_to_0(point: &Point)
+fn set_to_0(point: Point) -> () {
+    point.x = 0.0
+    point.y = 0.0
+    point.z = 0.0
+}
+
+fn main(n: f64) -> (c: f64) {
+    p1 = Point {
+        x: n,
+        y: 200.0,
+        z: 300.0,
+    }
+    p2 = Point {
+        x: n * 4.0,
+        y: 500.0,
+        z: 600.0,
+    }
+    l1 = Line {
+        a: p1,
+        b: p2,
+    }
+    p1a = p1 //by reference
+
+    //TODO set_to_0(&p1)
+    set_to_0(p1) //passed by reference
+
+    p1.x.println()
+    p1.y.println()
+    p1.z.println()
+
+    p1a.x.println()
+    p1a.y.println()
+    p1a.z.println()
 }
 "#;
     let a = 100.0f64;
