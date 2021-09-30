@@ -24,9 +24,9 @@ struct Line {
 }
 
 fn length(self: Line) -> (r: f64) {
-    r = sqrt(pow(self.a.x - self.b.x, 2.0) + 
-             pow(self.a.y - self.b.y, 2.0) + 
-             pow(self.a.z - self.b.z, 2.0))
+    r = ((self.a.x - self.b.x).powf(2.0) + 
+         (self.a.y - self.b.y).powf(2.0) + 
+         (self.a.z - self.b.z).powf(2.0)).sqrt()
 }
 
 struct Point {
@@ -36,7 +36,7 @@ struct Point {
 }
 
 fn length(self: Point) -> (r: f64) {
-    r = sqrt(pow(self.x, 2.0) + pow(self.y, 2.0) + pow(self.z, 2.0))
+    r = (self.x.powf(2.0) + self.y.powf(2.0) + self.z.powf(2.0)).sqrt()
 }
 
 fn main(n: f64) -> (c: f64) {

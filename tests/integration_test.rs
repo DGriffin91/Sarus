@@ -7,15 +7,18 @@ fn default_std_jit_from_code(
     code: &str,
     symbols: Option<Vec<(&str, *const u8)>>,
 ) -> anyhow::Result<jit::JIT> {
+    let ast = parser::program(&code)?;
     let mut jit_builder = jit::new_jit_builder();
     sarus_std_lib::append_std_symbols(&mut jit_builder);
+    let ast = sarus_std_lib::append_std_funcs(ast);
+    let ast = sarus_std_lib::append_std_math(ast, &mut jit_builder);
+
     if let Some(symbols) = symbols {
         jit_builder.symbols(symbols);
     }
     let mut jit = jit::JIT::from(jit_builder);
     jit.add_math_constants()?;
-    let ast = parser::program(&code)?;
-    let ast = sarus_std_lib::append_std_funcs(ast);
+
     jit.translate(ast.clone())?;
     Ok(jit)
 }
@@ -57,6 +60,79 @@ fn main(a, b) -> (c) {
     c = tanh(c * 0.00001)
     c = atan2(c, a)
     c = pow(c, a * 0.001)
+    c *= nums()
+}
+fn nums() -> (r) {
+    r = E + FRAC_1_PI + FRAC_1_SQRT_2 + FRAC_2_SQRT_PI + FRAC_PI_2 + FRAC_PI_3 + FRAC_PI_4 + FRAC_PI_6 + FRAC_PI_8 + LN_2 + LN_10 + LOG2_10 + LOG2_E + LOG10_2 + LOG10_E + PI + SQRT_2 + TAU
+}
+"#;
+
+    let a = 100.0f64;
+    let b = 200.0f64;
+    let mut c = b;
+    c = c.sin();
+    c = c.cos();
+    c = c.tan();
+    c = c.asin();
+    c = c.acos();
+    c = c.atan();
+    c = c.exp();
+    c = c.log(E);
+    c = c.log10();
+    c = (c + 10.0).sqrt();
+    c = c.sinh();
+    c = c.cosh();
+    c = (c * 0.00001).tanh();
+    c = c.atan2(a);
+    c = c.powf(a * 0.001);
+    c *= E
+        + FRAC_1_PI
+        + FRAC_1_SQRT_2
+        + FRAC_2_SQRT_PI
+        + FRAC_PI_2
+        + FRAC_PI_3
+        + FRAC_PI_4
+        + FRAC_PI_6
+        + FRAC_PI_8
+        + LN_2
+        + LN_10
+        + LOG2_10
+        + LOG2_E
+        + LOG10_2
+        + LOG10_E
+        + PI
+        + SQRT_2
+        + TAU;
+
+    let epsilon = 0.00000000000001;
+    let mut jit = default_std_jit_from_code(&code, None)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let result = func(a, b);
+    assert!(result >= c - epsilon && result <= c + epsilon);
+    Ok(())
+}
+
+#[test]
+fn rust_math() -> anyhow::Result<()> {
+    let code = r#"
+fn main(a, b) -> (c) {
+    c = b
+    c = c.sin()
+    c = c.cos()
+    c = c.tan()
+    c = c.asin()
+    c = c.acos()
+    c = c.atan()
+    c = c.exp()
+    c = c.log(E)
+    c = c.log10()
+    c = (c + 10.0).sqrt()
+    c = c.sinh()
+    c = c.cosh()
+    c = (c * 0.00001).tanh()
+    c = c.atan2(a)
+    c = c.powf(a * 0.001)
     c *= nums()
 }
 fn nums() -> (r) {
@@ -1262,6 +1338,7 @@ fn main(a: f64) -> (c: bool) {
 //    Ok(())
 //}
 
+//TODO make f64 impls for math funcions:
 #[test]
 fn readme_example() -> anyhow::Result<()> {
     let code = r#"
@@ -1271,9 +1348,9 @@ struct Line {
 }
 
 fn length(self: Line) -> (r: f64) {
-    r = sqrt(pow(self.a.x - self.b.x, 2.0) + 
-             pow(self.a.y - self.b.y, 2.0) + 
-             pow(self.a.z - self.b.z, 2.0))
+    r = ((self.a.x - self.b.x).powf(2.0) + 
+         (self.a.y - self.b.y).powf(2.0) + 
+         (self.a.z - self.b.z).powf(2.0)).sqrt()
 }
 
 struct Point {
@@ -1283,7 +1360,7 @@ struct Point {
 }
 
 fn length(self: Point) -> (r: f64) {
-    r = sqrt(pow(self.x, 2.0) + pow(self.y, 2.0) + pow(self.z, 2.0))
+    r = (self.x.powf(2.0) + self.y.powf(2.0) + self.z.powf(2.0)).sqrt()
 }
 
 fn main(n: f64) -> (c: f64) {
