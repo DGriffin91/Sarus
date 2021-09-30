@@ -966,11 +966,16 @@ extern "C" fn dbgi(s: *const i8, a: i64) {
         println!("{} {}", CStr::from_ptr(s).to_str().unwrap(), a);
     }
 }
+extern "C" fn dbgf(s: *const i8, a: f64) {
+    unsafe {
+        println!("{} {}", CStr::from_ptr(s).to_str().unwrap(), a);
+    }
+}
 
 #[test]
 fn struct_impl_nested() -> anyhow::Result<()> {
     let code = r#"
-extern fn dbg(a: f64) -> () {}
+extern fn dbgf(s: &, a: f64) -> () {}
 extern fn dbgi(s: &, a: i64) -> () {}
 struct Line {
     a: Point,
@@ -1021,6 +1026,8 @@ fn main(n: f64) -> (c: f64) {
         a: p1,
         b: p2,
     }
+    p1.print()
+    p2.print()
     l1.print()
     //d = l1.c //struct is copied
     l1.b.x.println() //TODO these don't get initialized
@@ -1034,7 +1041,10 @@ fn main(n: f64) -> (c: f64) {
     let a = 100.0f64;
     let mut jit = default_std_jit_from_code(
         &code,
-        Some(vec![("dbg", dbg as *const u8), ("dbgi", dbgi as *const u8)]),
+        Some(vec![
+            ("dbgf", dbgf as *const u8),
+            ("dbgi", dbgi as *const u8),
+        ]),
     )?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
@@ -1044,6 +1054,65 @@ fn main(n: f64) -> (c: f64) {
     Ok(())
 }
 
+#[test]
+fn struct_impl_nested_short() -> anyhow::Result<()> {
+    let code = r#"
+extern fn dbgf(s: &, a: f64) -> () {}
+extern fn dbgi(s: &, a: i64) -> () {}
+struct Foo {
+    a: Bar,
+    b: Bar,
+}
+
+fn print(self: Foo) -> () {
+    "Foo {".println()
+    "a: ".print() self.a.print() ",".println()
+    "b: ".print() self.b.print() ",".println()
+    "}".println()
+}
+
+struct Bar {
+    x: f64,
+}
+
+fn print(self: Bar) -> () {
+    "Bar {".println()
+    "x: ".print() self.x.print() ",".println()
+    "}".println()
+}
+
+fn main(n: f64) -> (c: f64) {
+    pe = Bar {
+        x: n,
+    }
+    pf = Bar {
+        x: n * 4.0,
+    }
+    l1 = Foo {
+        a: pe,
+        b: pf,
+    }
+    pe.print()
+    pf.print()
+    "----------------".println()
+    l1.print()
+}
+"#;
+    let a = 100.0f64;
+    let mut jit = default_std_jit_from_code(
+        &code,
+        Some(vec![
+            ("dbgf", dbgf as *const u8),
+            ("dbgi", dbgi as *const u8),
+        ]),
+    )?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
+    dbg!(func(a));
+    //assert_eq!(200.0, func(a));
+    //jit.print_clif(false);
+    Ok(())
+}
 #[test]
 fn type_impl() -> anyhow::Result<()> {
     let code = r#"

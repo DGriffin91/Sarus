@@ -1296,49 +1296,111 @@ impl<'a> FunctionTranslator<'a> {
         name: &str,
         fields: &[StructAssignField],
     ) -> anyhow::Result<SValue> {
-        dbg!("translate_new_struct");
+        //println!("translate_new_struct {}", name);
         let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
             self.struct_map[name].size,
         ));
-        let stack_slot_address = self.builder.ins().stack_addr(
-            self.module.target_config().pointer_type(),
-            stack_slot,
-            Offset32::new(0),
-        );
-
-        //call_with_values(
-        //    "dbgi",
-        //    &[
-        //        self.translate_string(&"stack_slot_address".to_string())?
-        //            .inner("")?,
-        //        stack_slot_address,
-        //    ],
-        //    &self.funcs,
-        //    &mut self.module,
-        //    &mut self.builder,
-        //)?;
+        //dbg!(self.struct_map);
 
         for field in fields.iter() {
-            let field_def = &self.struct_map[name].fields[&field.field_name];
+            let dst_field_def = &self.struct_map[name].fields[&field.field_name];
             let sval = self.translate_expr(&field.expr)?;
 
-            if let SValue::Struct(src_name, start_ptr) = sval {
-                dbg!(
-                    &name,
-                    self.struct_map[name].size,
-                    stack_slot_address,
-                    &src_name,
-                    field_def.offset,
-                    self.struct_map[&src_name].size,
-                    start_ptr,
+            if let SValue::Struct(src_name, src_start_ptr) = sval {
+                let stack_slot_address = self.builder.ins().stack_addr(
+                    self.module.target_config().pointer_type(),
+                    stack_slot,
+                    Offset32::new(dst_field_def.offset as i32), //TODO this shouldn't need to be *2
                 );
+                //dbg!(
+                //    &name,
+                //    self.struct_map[name].size,
+                //    stack_slot_address,
+                //    &src_name,
+                //    dst_field_def.offset,
+                //    self.struct_map[&src_name].size,
+                //    src_start_ptr,
+                //);
+
+                //call_with_values(
+                //    "dbgi",
+                //    &[
+                //        self.translate_string(&"stack_slot_address".to_string())?
+                //            .inner("")?,
+                //        stack_slot_address,
+                //    ],
+                //    &self.funcs,
+                //    &mut self.module,
+                //    &mut self.builder,
+                //)?;
+
+                //call_with_values(
+                //    "dbgi",
+                //    &[
+                //        self.translate_string(&"src_start_ptr".to_string())?
+                //            .inner("")?,
+                //        src_start_ptr,
+                //    ],
+                //    &self.funcs,
+                //    &mut self.module,
+                //    &mut self.builder,
+                //)?;
+
+                self.builder.emit_small_memory_copy(
+                    self.module.target_config(),
+                    stack_slot_address,
+                    src_start_ptr,
+                    self.struct_map[&src_name].size as u64,
+                    1,
+                    1,
+                    true,
+                    MemFlags::new(),
+                );
+
+                //let size_value = self.builder.ins().iconst(
+                //    self.module.target_config().pointer_type(),
+                //    dst_field_def.size as i64, //self.struct_map[&src_name].size as i64,
+                //);
+
+                //let val = self.builder.ins().load(
+                //    types::F64,
+                //    MemFlags::new(),
+                //    src_start_ptr,
+                //    Offset32::new(0),
+                //);
+
+                //call_with_values(
+                //    "dbgf",
+                //    &[
+                //        self.translate_string(&"src_val".to_string())?.inner("")?,
+                //        val,
+                //    ],
+                //    &self.funcs,
+                //    &mut self.module,
+                //    &mut self.builder,
+                //)?;
+
+                //let offset = self.builder.ins().iconst(
+                //    self.module.target_config().pointer_type(),
+                //    field_def.offset as i64,
+                //);
+                //let stack_slot_address_with_offset =
+                //    self.builder.ins().iadd(stack_slot_address, offset);
+                //self.builder.call_memcpy(
+                //    self.module.target_config(),
+                //    stack_slot_address,
+                //    src_start_ptr,
+                //    size_value,
+                //);
+
                 //Copy bytes from src struct to dst struct
                 //TODO look at using emit_small_memory_copy
+                /*
                 for i in 0..self.struct_map[&src_name].size {
                     println!(
                         "from {} {} to {} {}",
-                        start_ptr,
+                        src_start_ptr,
                         i,
                         stack_slot_address,
                         field_def.offset + i
@@ -1348,11 +1410,11 @@ impl<'a> FunctionTranslator<'a> {
                     //    "dbgi",
                     //    &[
                     //        self.translate_string(&format!(
-                    //            "from start_ptr {} offset {} : ",
-                    //            start_ptr, i
+                    //            "from src_start_ptr {} offset {} : ",
+                    //            src_start_ptr, i
                     //        ))?
                     //        .inner("")?,
-                    //        start_ptr,
+                    //        src_start_ptr,
                     //    ],
                     //    &self.funcs,
                     //    &mut self.module,
@@ -1376,7 +1438,7 @@ impl<'a> FunctionTranslator<'a> {
                     let v = self.builder.ins().load(
                         types::I8,
                         MemFlags::new(),
-                        start_ptr,
+                        src_start_ptr,
                         Offset32::new(i as i32),
                     ); //Just copy one byte at a time
                     self.builder.ins().store(
@@ -1386,40 +1448,60 @@ impl<'a> FunctionTranslator<'a> {
                         Offset32::new((field_def.offset + i) as i32),
                     );
                 }
+                */
             } else {
+                let stack_slot_address = self.builder.ins().stack_addr(
+                    self.module.target_config().pointer_type(),
+                    stack_slot,
+                    Offset32::new(dst_field_def.offset as i32),
+                );
+                dbg!(
+                    &name,
+                    self.struct_map[name].size,
+                    stack_slot_address,
+                    dst_field_def.offset,
+                    &sval,
+                );
+
                 self.builder.ins().store(
                     MemFlags::new(),
                     sval.inner("new_struct")?,
                     stack_slot_address,
-                    Offset32::new(field_def.offset as i32),
+                    Offset32::new(0),
                 );
             }
         }
+        let stack_slot_address = self.builder.ins().stack_addr(
+            self.module.target_config().pointer_type(),
+            stack_slot,
+            Offset32::new(0),
+        );
         Ok(SValue::Struct(name.to_string(), stack_slot_address))
     }
 
     fn translate_struct_field(&mut self, parts: Vec<&str>) -> anyhow::Result<SValue> {
-        println!("translate_struct_field {:?}", parts);
-        //let parts = name.split(".").collect::<Vec<&str>>();
         match &self.variables[parts[0]] {
             SVariable::Struct(_var_name, struct_name, var) => {
                 let mut parent_struct_field = &self.struct_map[struct_name].fields[parts[1]];
                 let base_struct_var_ptr = self.builder.use_var(*var);
-                let mut offset = parent_struct_field.offset;
                 let mut struct_name = struct_name;
-                for i in 1..parts.len() {
-                    if let ExprType::Struct(name) = &parent_struct_field.expr_type {
-                        parent_struct_field = &self.struct_map[struct_name].fields[parts[i]];
-                        offset += parent_struct_field.offset;
-                        struct_name = name;
-                    } else {
-                        break;
+                let mut offset = parent_struct_field.offset;
+                if parts.len() > 2 {
+                    offset = 0;
+                    for i in 1..parts.len() {
+                        if let ExprType::Struct(name) = &parent_struct_field.expr_type {
+                            parent_struct_field = &self.struct_map[struct_name].fields[parts[i]];
+                            offset += parent_struct_field.offset;
+                            struct_name = name;
+                        } else {
+                            break;
+                        }
                     }
                 }
                 if let ExprType::Struct(name) = &parent_struct_field.expr_type {
                     println!("{} offset {}", name, offset);
                     let stack_slot_address = create_and_copy_to_stack_slot(
-                        self.module.target_config().pointer_type(),
+                        self.module.target_config(),
                         &mut self.builder,
                         parent_struct_field.size,
                         base_struct_var_ptr,
@@ -1444,7 +1526,7 @@ impl<'a> FunctionTranslator<'a> {
 }
 
 fn create_and_copy_to_stack_slot(
-    ptr_ty: types::Type,
+    target_config: isa::TargetFrontendConfig,
     builder: &mut FunctionBuilder,
     size: u32,
     src_ptr: Value,
@@ -1452,33 +1534,49 @@ fn create_and_copy_to_stack_slot(
 ) -> anyhow::Result<Value> {
     let stack_slot =
         builder.create_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size));
-    let stack_slot_address = builder
-        .ins()
-        .stack_addr(ptr_ty, stack_slot, Offset32::new(0));
+    let stack_slot_address =
+        builder
+            .ins()
+            .stack_addr(target_config.pointer_type(), stack_slot, Offset32::new(0));
     //Copy bytes from src to dst stack_slot
     //TODO look at using emit_small_memory_copy
     dbg!("create_and_copy_to_stack_slot");
-    for i in 0..size {
-        println!(
-            "from {} {} to {} {}",
-            src_ptr,
-            (offset + i),
-            stack_slot_address,
-            i
-        );
-        let v = builder.ins().load(
-            types::I8,
-            MemFlags::new(),
-            src_ptr,
-            Offset32::new((offset + i) as i32),
-        ); //Just copy one byte at a time
-        builder.ins().store(
-            MemFlags::new(),
-            v,
-            stack_slot_address,
-            Offset32::new(i as i32),
-        );
-    }
+    //for i in 0..size {
+    //    println!(
+    //        "from {} {} to {} {}",
+    //        src_ptr,
+    //        (offset + i),
+    //        stack_slot_address,
+    //        i
+    //    );
+    //    let v = builder.ins().load(
+    //        types::I8,
+    //        MemFlags::new(),
+    //        src_ptr,
+    //        Offset32::new((offset + i) as i32),
+    //    ); //Just copy one byte at a time
+    //    builder.ins().store(
+    //        MemFlags::new(),
+    //        v,
+    //        stack_slot_address,
+    //        Offset32::new(i as i32),
+    //    );
+    //}
+    let offset_v = builder
+        .ins()
+        .iconst(target_config.pointer_type(), offset as i64);
+    let src_ptr_with_offset = builder.ins().iadd(src_ptr, offset_v);
+    builder.emit_small_memory_copy(
+        target_config,
+        stack_slot_address,
+        src_ptr_with_offset,
+        size as u64,
+        1,
+        1,
+        true,
+        MemFlags::new(),
+    );
+
     Ok(stack_slot_address)
 }
 
