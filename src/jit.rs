@@ -4,7 +4,7 @@ use crate::validator::validate_program;
 use crate::validator::ExprType;
 use cranelift::codegen::ir::immediates::Offset32;
 use cranelift::prelude::*;
-use cranelift_jit::{JITBuilder, JITModule};
+pub use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataContext, Linkage, Module};
 use std::collections::HashMap;
 use std::ffi::CString;

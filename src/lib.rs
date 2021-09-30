@@ -32,6 +32,7 @@ pub fn default_std_jit_from_code(code: &str) -> anyhow::Result<jit::JIT> {
     Ok(jit)
 }
 
+//TODO use builder pattern?
 pub fn default_std_jit_from_code_with_importer(
     code: &str,
     importer: &dyn Fn(&mut Vec<Declaration>, &mut JITBuilder),
