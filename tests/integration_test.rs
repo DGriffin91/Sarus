@@ -1665,16 +1665,19 @@ struct Misc3 {
 }
 
 fn main(m3: Misc3) -> () {
-    //m3.m2.b1.assert_eq(true)
+    m3.b1.assert_eq(true)
+    m3.m2.b1.assert_eq(true)
     m3.m2.m.b1.assert_eq(true)
     m3.m2.m.b2.assert_eq(false)
-    m3.m2.m.f1.assert_eq(12345.0) //it can't find this key: panicked at 'no entry found for key', src\jit.rs:1262:52
-    //m3.m2.m.b3.assert_eq(true) //TODO this is returning false
-    //m3.m2.m.i1.assert_eq(6789)
-    //m3.m2.m.b4.assert_eq(false)
-    //m3.m2.m.b5.assert_eq(true)
-    //m3.m2.b2.assert_eq(true)
-    //m3.m2.b3.assert_eq(true)
+    m3.m2.m.f1.assert_eq(12345.0)
+    m3.m2.m.b3.assert_eq(true)
+    m3.m2.m.i1.assert_eq(6789)
+    m3.m2.m.b4.assert_eq(false)
+    m3.m2.m.b5.assert_eq(true)
+    m3.m2.b2.assert_eq(true)
+    m3.m2.b3.assert_eq(true)
+    m3.f1.assert_eq(54321.0)
+    m3.b3.assert_eq(true)
 }
 "#;
     let mut jit = default_std_jit_from_code(&code)?;
@@ -1702,7 +1705,7 @@ fn main(m3: Misc3) -> () {
     let m3 = Misc3 {
         b1: true,
         m2,
-        f1: 12345.0,
+        f1: 54321.0,
         b3: true,
     };
 

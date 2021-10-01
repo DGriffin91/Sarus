@@ -1257,15 +1257,15 @@ impl<'a> FunctionTranslator<'a> {
             SVariable::Struct(_var_name, struct_name, var) => {
                 let mut parent_struct_field = &self.struct_map[struct_name].fields[parts[1]];
                 let base_struct_var_ptr = self.builder.use_var(*var);
-                let mut struct_name = struct_name;
+                let mut struct_name = struct_name.clone();
                 let mut offset = parent_struct_field.offset;
                 if parts.len() > 2 {
                     offset = 0;
                     for i in 1..parts.len() {
-                        if let ExprType::Struct(name) = &parent_struct_field.expr_type {
-                            parent_struct_field = &self.struct_map[struct_name].fields[parts[i]];
+                        if let ExprType::Struct(_name) = &parent_struct_field.expr_type {
+                            parent_struct_field = &self.struct_map[&struct_name].fields[parts[i]];
                             offset += parent_struct_field.offset;
-                            struct_name = name;
+                            struct_name = parent_struct_field.expr_type.to_string().clone();
                         } else {
                             break;
                         }
