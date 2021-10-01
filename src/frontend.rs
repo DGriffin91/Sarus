@@ -221,14 +221,16 @@ impl Display for Declaration {
 #[derive(Debug, Clone)]
 pub struct Arg {
     pub name: String,
-    pub expr_type: Option<ExprType>, //Type is F64 if not specified
+    pub expr_type: ExprType,
+    pub default_to_float: bool,
 }
 
 impl Display for Arg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.expr_type {
-            Some(t) => write!(f, "{}: {}", self.name, t),
-            None => write!(f, "{}", self.name),
+        if self.default_to_float {
+            write!(f, "{}", self.name)
+        } else {
+            write!(f, "{}: {}", self.name, self.expr_type)
         }
     }
 }
@@ -351,7 +353,7 @@ peg::parser!(pub grammar parser() for str {
             let mut name = name;
             if let Some(first_param) = params.first() {
                 if first_param.name == "self" {
-                    name = format!("{}.{}", first_param.expr_type.as_ref().unwrap(), name)
+                    name = format!("{}.{}", first_param.expr_type, name)
                     //change func name to struct_name.func_name if first param is self
                 }
             }
@@ -364,8 +366,8 @@ peg::parser!(pub grammar parser() for str {
         }) }
 
     rule arg() -> Arg
-        = _ i:identifier() _ ":" _ t:type_label() _ { Arg {name: i.into(), expr_type: Some(t.into()) } }
-        / _ i:identifier() _ { Arg {name: i.into(), expr_type: None } }
+        = _ i:identifier() _ ":" _ t:type_label() _ { Arg {name: i.into(), expr_type: t.into(), default_to_float: false } }
+        / _ i:identifier() _ { Arg {name: i.into(), expr_type: ExprType::F64, default_to_float: true } }
 
     rule type_label() -> ExprType
         = _ n:$("f64") _ { ExprType::F64 }

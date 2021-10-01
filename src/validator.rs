@@ -428,8 +428,8 @@ impl ExprType {
                     }
 
                     for (i, (targ, param)) in targs.iter().zip(func.params.iter()).enumerate() {
-                        let param_type = param.expr_type.as_ref().unwrap_or(&ExprType::F64);
-                        if *param_type == *targ {
+                        let param_type = param.expr_type.clone();
+                        if param_type == *targ {
                             continue;
                         } else {
                             return Err(TypeError::TypeMismatchSpecific {
@@ -440,16 +440,11 @@ impl ExprType {
 
                     match &func.returns {
                         v if v.is_empty() => ExprType::Void,
-                        v if v.len() == 1 => v
-                            .first()
-                            .unwrap()
-                            .expr_type
-                            .clone()
-                            .unwrap_or(ExprType::F64),
+                        v if v.len() == 1 => v.first().unwrap().expr_type.clone(),
                         v => {
                             let mut items = Vec::new();
                             for arg in v.iter() {
-                                items.push(arg.expr_type.clone().unwrap_or(ExprType::F64));
+                                items.push(arg.expr_type.clone());
                             }
                             ExprType::Tuple(items)
                         }

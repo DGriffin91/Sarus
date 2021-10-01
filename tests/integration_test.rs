@@ -365,10 +365,10 @@ fn order() -> anyhow::Result<()> {
 fn array_read_write() -> anyhow::Result<()> {
     let code = r#"
 fn main(arr: &[f64], b) -> () {
-    arr[0.0] = arr[0.0] * b
-    arr[1.0] = arr[1.0] * b
-    arr[2.0] = arr[2.0] * b
-    arr[3.0] = arr[3.0] * b
+    arr[0] = arr[0] * b
+    arr[1] = arr[1] * b
+    arr[2] = arr[2] * b
+    arr[3] = arr[3] * b
 }
 "#;
 

@@ -190,26 +190,21 @@ impl JIT {
         for p in &func.params {
             self.ctx.func.signature.params.push({
                 match &p.expr_type {
-                    Some(t) => match t {
-                        ExprType::F64 => AbiParam::new(types::F64),
-                        ExprType::I64 => AbiParam::new(types::I64),
-                        ExprType::UnboundedArrayF64 => {
-                            AbiParam::new(self.module.target_config().pointer_type())
-                        }
-                        ExprType::UnboundedArrayI64 => {
-                            AbiParam::new(self.module.target_config().pointer_type())
-                        }
-                        ExprType::Address => {
-                            AbiParam::new(self.module.target_config().pointer_type())
-                        }
-                        ExprType::Void => continue,
-                        ExprType::Bool => AbiParam::new(types::B1),
-                        ExprType::Struct(_) => {
-                            AbiParam::new(self.module.target_config().pointer_type())
-                        }
-                        ExprType::Tuple(_) => anyhow::bail!("Tuple as parameter not supported"),
-                    },
-                    None => AbiParam::new(float),
+                    ExprType::F64 => AbiParam::new(types::F64),
+                    ExprType::I64 => AbiParam::new(types::I64),
+                    ExprType::UnboundedArrayF64 => {
+                        AbiParam::new(self.module.target_config().pointer_type())
+                    }
+                    ExprType::UnboundedArrayI64 => {
+                        AbiParam::new(self.module.target_config().pointer_type())
+                    }
+                    ExprType::Address => AbiParam::new(self.module.target_config().pointer_type()),
+                    ExprType::Void => continue,
+                    ExprType::Bool => AbiParam::new(types::B1),
+                    ExprType::Struct(_) => {
+                        AbiParam::new(self.module.target_config().pointer_type())
+                    }
+                    ExprType::Tuple(_) => anyhow::bail!("Tuple as parameter not supported"),
                 }
             });
         }
@@ -218,8 +213,6 @@ impl JIT {
             self.ctx.func.signature.returns.push(AbiParam::new(
                 ret_arg
                     .expr_type
-                    .as_ref()
-                    .unwrap_or(&ExprType::F64)
                     .cranelift_type(self.module.target_config().pointer_type(), false)?,
             ));
         }
@@ -299,32 +292,27 @@ impl JIT {
         for ret in func.returns.iter() {
             let return_variable = trans.variables.get(&ret.name).unwrap();
             let v = match &ret.expr_type {
-                Some(t) => match t {
-                    ExprType::F64 => trans
-                        .builder
-                        .use_var(return_variable.expect_f64("return_variable")?),
-                    ExprType::I64 => trans
-                        .builder
-                        .use_var(return_variable.expect_i64("return_variable")?),
-                    ExprType::UnboundedArrayF64 => trans
-                        .builder
-                        .use_var(return_variable.expect_unbounded_array_f64("return_variable")?),
-                    ExprType::UnboundedArrayI64 => trans
-                        .builder
-                        .use_var(return_variable.expect_unbounded_array_f64("return_variable")?),
-                    ExprType::Address => trans
-                        .builder
-                        .use_var(return_variable.expect_address("return_variable")?),
-                    ExprType::Void => continue,
-                    ExprType::Bool => trans
-                        .builder
-                        .use_var(return_variable.expect_bool("return_variable")?),
-                    ExprType::Tuple(_) => anyhow::bail!("tuple not supported in return"),
-                    ExprType::Struct(_) => anyhow::bail!("returning structs not supported yet"), //TODO support this
-                },
-                None => trans
+                ExprType::F64 => trans
                     .builder
                     .use_var(return_variable.expect_f64("return_variable")?),
+                ExprType::I64 => trans
+                    .builder
+                    .use_var(return_variable.expect_i64("return_variable")?),
+                ExprType::UnboundedArrayF64 => trans
+                    .builder
+                    .use_var(return_variable.expect_unbounded_array_f64("return_variable")?),
+                ExprType::UnboundedArrayI64 => trans
+                    .builder
+                    .use_var(return_variable.expect_unbounded_array_f64("return_variable")?),
+                ExprType::Address => trans
+                    .builder
+                    .use_var(return_variable.expect_address("return_variable")?),
+                ExprType::Void => continue,
+                ExprType::Bool => trans
+                    .builder
+                    .use_var(return_variable.expect_bool("return_variable")?),
+                ExprType::Tuple(_) => anyhow::bail!("tuple not supported in return"),
+                ExprType::Struct(_) => anyhow::bail!("returning structs not supported yet"), //TODO support this
             };
             return_values.push(v);
         }
@@ -887,22 +875,33 @@ impl<'a> FunctionTranslator<'a> {
     }
 
     fn translate_array_get(&mut self, name: String, idx_expr: &Expr) -> anyhow::Result<SValue> {
-        //TODO remove float array access
         let ptr_ty = self.module.target_config().pointer_type();
 
         let variable = match self.variables.get(&name) {
             Some(v) => v,
             None => anyhow::bail!("variable {} not found", name),
         };
+
+        let base_type = match variable {
+            SVariable::Unknown(_, _) => ptr_ty,
+            SVariable::UnboundedArrayF64(_, _) => types::F64,
+            SVariable::UnboundedArrayI64(_, _) => types::I64,
+            SVariable::Address(_, _) => ptr_ty,
+            SVariable::Struct(_, _, _)
+            | SVariable::I64(_, _)
+            | SVariable::F64(_, _)
+            | SVariable::Bool(_, _) => anyhow::bail!("can't index type {}", &variable),
+        };
+
         let array_ptr = self.builder.use_var(variable.inner());
 
         let idx_val = self.translate_expr(idx_expr).unwrap();
         let idx_val = match idx_val {
-            SValue::F64(v) => self.builder.ins().fcvt_to_uint(ptr_ty, v),
             SValue::I64(v) => v,
-            _ => anyhow::bail!("only int and float supported for array access"),
+            _ => anyhow::bail!("only int supported for array access"),
         };
-        let mult_n = self.builder.ins().iconst(ptr_ty, types::F64.bytes() as i64);
+
+        let mult_n = self.builder.ins().iconst(ptr_ty, base_type.bytes() as i64);
         let idx_val = self.builder.ins().imul(mult_n, idx_val);
         let idx_ptr = self.builder.ins().iadd(idx_val, array_ptr);
 
@@ -919,26 +918,31 @@ impl<'a> FunctionTranslator<'a> {
         idx_expr: &Expr,
         expr: &Expr,
     ) -> anyhow::Result<SValue> {
-        //TODO remove float array access
         let ptr_ty = self.module.target_config().pointer_type();
 
         let new_val = self.translate_expr(expr)?;
 
-        let variable = self
-            .variables
-            .get(&name)
-            .unwrap()
-            .expect_unbounded_array_f64("array_set")?;
+        let variable = self.variables.get(&name).unwrap();
 
-        let array_ptr = self.builder.use_var(variable);
+        let base_type = match variable {
+            SVariable::Unknown(_, _) => ptr_ty,
+            SVariable::UnboundedArrayF64(_, _) => types::F64,
+            SVariable::UnboundedArrayI64(_, _) => types::I64,
+            SVariable::Address(_, _) => ptr_ty,
+            SVariable::Struct(_, _, _)
+            | SVariable::I64(_, _)
+            | SVariable::F64(_, _)
+            | SVariable::Bool(_, _) => anyhow::bail!("can't index type {}", &variable),
+        };
+
+        let array_ptr = self.builder.use_var(variable.inner());
 
         let idx_val = self.translate_expr(idx_expr)?;
         let idx_val = match idx_val {
-            SValue::F64(v) => self.builder.ins().fcvt_to_uint(ptr_ty, v),
             SValue::I64(v) => v,
-            _ => anyhow::bail!("only int and float supported for array access"),
+            _ => anyhow::bail!("only int supported for array access"),
         };
-        let mult_n = self.builder.ins().iconst(ptr_ty, types::F64.bytes() as i64);
+        let mult_n = self.builder.ins().iconst(ptr_ty, base_type.bytes() as i64);
         let idx_val = self.builder.ins().imul(mult_n, idx_val);
         let idx_ptr = self.builder.ins().iadd(idx_val, array_ptr);
 
@@ -1426,11 +1430,7 @@ fn call_with_values(
 
     for ret_arg in &func.returns {
         sig.returns.push(AbiParam::new(
-            ret_arg
-                .expr_type
-                .as_ref()
-                .unwrap_or(&ExprType::F64)
-                .cranelift_type(ptr_ty, false)?,
+            ret_arg.expr_type.cranelift_type(ptr_ty, false)?,
         ));
     }
     let callee = module
@@ -1443,20 +1443,12 @@ fn call_with_values(
         Ok(SValue::Tuple(
             res.iter()
                 .zip(func.returns.iter())
-                .map(|(v, arg)| {
-                    SValue::from(arg.expr_type.as_ref().unwrap_or(&ExprType::F64), *v).unwrap()
-                })
+                .map(|(v, arg)| SValue::from(&arg.expr_type, *v).unwrap())
                 .collect::<Vec<SValue>>(),
         ))
     } else if res.len() == 1 {
         Ok(SValue::from(
-            &func
-                .returns
-                .first()
-                .unwrap()
-                .expr_type
-                .as_ref()
-                .unwrap_or(&ExprType::F64),
+            &func.returns.first().unwrap().expr_type,
             *res.first().unwrap(),
         )?)
     } else {
@@ -1884,45 +1876,39 @@ fn declare_variable(
     let ptr_ty = module.target_config().pointer_type();
     if !variables.contains_key(&arg.name) {
         let (var, ty) = match &arg.expr_type {
-            Some(t) => match t {
-                ExprType::F64 => (
-                    SVariable::F64(arg.name.clone(), Variable::new(*index)),
-                    types::F64,
-                ),
-                ExprType::I64 => (
-                    SVariable::I64(arg.name.clone(), Variable::new(*index)),
-                    types::I64,
-                ),
-                ExprType::UnboundedArrayF64 => (
-                    SVariable::UnboundedArrayF64(arg.name.clone(), Variable::new(*index)),
-                    ptr_ty,
-                ),
-                ExprType::UnboundedArrayI64 => (
-                    SVariable::UnboundedArrayI64(arg.name.clone(), Variable::new(*index)),
-                    ptr_ty,
-                ),
-                ExprType::Address => (
-                    SVariable::Address(arg.name.clone(), Variable::new(*index)),
-                    ptr_ty,
-                ),
-                ExprType::Void => return None,
-                ExprType::Bool => (
-                    SVariable::Bool(arg.name.clone(), Variable::new(*index)),
-                    types::B1,
-                ),
-                ExprType::Tuple(_) => return None, //anyhow::bail!("single variable tuple not supported"),
-                ExprType::Struct(structname) => (
-                    SVariable::Struct(
-                        arg.name.clone(),
-                        structname.to_string(),
-                        Variable::new(*index),
-                    ),
-                    ptr_ty,
-                ),
-            },
-            None => (
+            ExprType::F64 => (
                 SVariable::F64(arg.name.clone(), Variable::new(*index)),
                 types::F64,
+            ),
+            ExprType::I64 => (
+                SVariable::I64(arg.name.clone(), Variable::new(*index)),
+                types::I64,
+            ),
+            ExprType::UnboundedArrayF64 => (
+                SVariable::UnboundedArrayF64(arg.name.clone(), Variable::new(*index)),
+                ptr_ty,
+            ),
+            ExprType::UnboundedArrayI64 => (
+                SVariable::UnboundedArrayI64(arg.name.clone(), Variable::new(*index)),
+                ptr_ty,
+            ),
+            ExprType::Address => (
+                SVariable::Address(arg.name.clone(), Variable::new(*index)),
+                ptr_ty,
+            ),
+            ExprType::Void => return None,
+            ExprType::Bool => (
+                SVariable::Bool(arg.name.clone(), Variable::new(*index)),
+                types::B1,
+            ),
+            ExprType::Tuple(_) => return None, //anyhow::bail!("single variable tuple not supported"),
+            ExprType::Struct(structname) => (
+                SVariable::Struct(
+                    arg.name.clone(),
+                    structname.to_string(),
+                    Variable::new(*index),
+                ),
+                ptr_ty,
             ),
         };
         variables.insert(arg.name.clone(), var.clone());
@@ -1975,7 +1961,7 @@ fn create_struct_map(
                 offset: struct_size,
                 size: field_size,
                 name: field.name.to_string(),
-                expr_type: field.expr_type.as_ref().unwrap_or(&ExprType::F64).clone(),
+                expr_type: field.expr_type.clone(),
             };
             fields.insert(field.name.to_string(), new_field.clone());
             fields_v.push(new_field);
@@ -2022,23 +2008,23 @@ fn create_struct_map(
 }
 
 fn get_field_size(
-    expr_type: &Option<ExprType>,
+    expr_type: &ExprType,
     structs: &HashMap<String, StructDef>,
     ptr_type: types::Type,
     max_base_field: bool,
 ) -> anyhow::Result<(u32, bool)> {
     Ok(match expr_type {
-        Some(t) => match t {
-            ExprType::Struct(name) => {
-                if max_base_field {
-                    (get_largest_field_size(0, t, structs, ptr_type)?, true)
-                } else {
-                    (structs[&name.to_string()].size, true)
-                }
+        ExprType::Struct(name) => {
+            if max_base_field {
+                (
+                    get_largest_field_size(0, &expr_type, structs, ptr_type)?,
+                    true,
+                )
+            } else {
+                (structs[&name.to_string()].size, true)
             }
-            _ => ((t.cranelift_type(ptr_type, true)?.bytes()), false),
-        },
-        None => ((types::F64.bytes()), false),
+        }
+        _ => ((expr_type.cranelift_type(ptr_type, true)?.bytes()), false),
     })
 }
 
@@ -2079,32 +2065,29 @@ fn order_structs(in_structs: &HashMap<String, &Struct>) -> anyhow::Result<Vec<St
             let mut can_insert = true;
             for field in &struc.fields {
                 match &field.expr_type {
-                    Some(t) => match t {
-                        ExprType::Void
-                        | ExprType::Bool
-                        | ExprType::F64
-                        | ExprType::I64
-                        | ExprType::UnboundedArrayF64
-                        | ExprType::UnboundedArrayI64
-                        | ExprType::Address
-                        | ExprType::Tuple(_) => continue,
-                        ExprType::Struct(field_struct_name) => {
-                            if !in_structs.contains_key(&field_struct_name.to_string()) {
-                                anyhow::bail!(
-                                    "Can't find Struct {} referenced in Struct {} field {}",
-                                    field_struct_name,
-                                    struc.name,
-                                    field.name
-                                )
-                            }
-                            if structs_order.contains(&field_struct_name.to_string()) {
-                                continue;
-                            } else {
-                                can_insert = false;
-                            }
+                    ExprType::Void
+                    | ExprType::Bool
+                    | ExprType::F64
+                    | ExprType::I64
+                    | ExprType::UnboundedArrayF64
+                    | ExprType::UnboundedArrayI64
+                    | ExprType::Address
+                    | ExprType::Tuple(_) => continue,
+                    ExprType::Struct(field_struct_name) => {
+                        if !in_structs.contains_key(&field_struct_name.to_string()) {
+                            anyhow::bail!(
+                                "Can't find Struct {} referenced in Struct {} field {}",
+                                field_struct_name,
+                                struc.name,
+                                field.name
+                            )
                         }
-                    },
-                    None => continue,
+                        if structs_order.contains(&field_struct_name.to_string()) {
+                            continue;
+                        } else {
+                            can_insert = false;
+                        }
+                    }
                 }
             }
             if can_insert && !structs_order.contains(&name.to_string()) {

@@ -22,14 +22,16 @@ fn decl(name: &str, params: Vec<(&str, ExprType)>, returns: Vec<(&str, ExprType)
             .into_iter()
             .map(|(name, expr)| Arg {
                 name: name.to_string(),
-                expr_type: Some(expr),
+                expr_type: expr,
+                default_to_float: false,
             })
             .collect(),
         returns: returns
             .into_iter()
             .map(|(name, expr)| Arg {
                 name: name.to_string(),
-                expr_type: Some(expr),
+                expr_type: expr,
+                default_to_float: false,
             })
             .collect(),
         body: vec![],
@@ -163,7 +165,8 @@ macro_rules! decl {
             $(
                 params.push(Arg {
                     name: format!("in{}", params.len()),
-                    expr_type: Some($param),
+                    expr_type: $param,
+                    default_to_float: false,
                 });
             )*
 
@@ -171,7 +174,8 @@ macro_rules! decl {
             $(
                 returns.push(Arg {
                     name: format!("out{}", returns.len()),
-                    expr_type: Some($ret),
+                    expr_type: $ret,
+                    default_to_float: false,
                 });
             )*
 
