@@ -177,7 +177,7 @@ impl JIT {
         Ok(unsafe { slice::from_raw_parts(buffer.0, buffer.1) })
     }
 
-    // Translate from toy-language AST nodes into Cranelift IR.
+    // Translate from AST nodes into Cranelift IR.
     fn codegen(
         &mut self,
         func: &Function,
@@ -220,7 +220,7 @@ impl JIT {
                     .expr_type
                     .as_ref()
                     .unwrap_or(&ExprType::F64)
-                    .cranelift_type(self.module.target_config().pointer_type())?,
+                    .cranelift_type(self.module.target_config().pointer_type(), false)?,
             ));
         }
 
@@ -887,6 +887,7 @@ impl<'a> FunctionTranslator<'a> {
     }
 
     fn translate_array_get(&mut self, name: String, idx_expr: &Expr) -> anyhow::Result<SValue> {
+        //TODO remove float array access
         let ptr_ty = self.module.target_config().pointer_type();
 
         let variable = match self.variables.get(&name) {
@@ -918,6 +919,7 @@ impl<'a> FunctionTranslator<'a> {
         idx_expr: &Expr,
         expr: &Expr,
     ) -> anyhow::Result<SValue> {
+        //TODO remove float array access
         let ptr_ty = self.module.target_config().pointer_type();
 
         let new_val = self.translate_expr(expr)?;
@@ -1220,9 +1222,16 @@ impl<'a> FunctionTranslator<'a> {
                     Offset32::new(dst_field_def.offset as i32),
                 );
 
+                let val = if let SValue::Bool(val) = sval {
+                    //struct bools are stored as I8
+                    self.builder.ins().bint(types::I8, val)
+                } else {
+                    sval.inner("new_struct")?
+                };
+
                 self.builder.ins().store(
                     MemFlags::new(),
-                    sval.inner("new_struct")?,
+                    val,
                     stack_slot_address,
                     Offset32::new(0),
                 );
@@ -1280,14 +1289,23 @@ impl<'a> FunctionTranslator<'a> {
             Ok(SValue::Struct(name.to_string(), stack_slot_address))
         } else {
             //If the struct field is not a struct, return copy of value
-            let val = self.builder.ins().load(
+            let mut val = self.builder.ins().load(
                 parent_struct_field_def
                     .expr_type
-                    .cranelift_type(self.module.target_config().pointer_type())?,
+                    .cranelift_type(self.module.target_config().pointer_type(), true)?,
                 MemFlags::new(),
                 base_struct_var_ptr,
                 Offset32::new(offset as i32),
             );
+            if let ExprType::Bool = parent_struct_field_def.expr_type {
+                let t = self.builder.ins().iconst(types::I8, 1);
+                val = self.builder.ins().icmp(IntCC::Equal, t, val)
+                //dbg!("get_struct_field");
+
+                //val = self.builder.ins().ireduce(types::B1, val);
+                //val = self.builder.ins().raw_bitcast(types::B8, val);
+            }
+
             return SValue::from(&parent_struct_field_def.expr_type, val);
         }
     }
@@ -1314,10 +1332,16 @@ impl<'a> FunctionTranslator<'a> {
             );
             Ok(())
         } else {
-            //If the struct field is not a struct, return copy of value
+            dbg!("set_struct_field");
+            let val = if let SValue::Bool(val) = set_value {
+                self.builder.ins().bint(types::I8, val)
+            } else {
+                set_value.inner("set_struct_field")?
+            };
+            //If the struct field is not a struct, set copy of value
             self.builder.ins().store(
                 MemFlags::new(),
-                set_value.inner("set_struct_field")?,
+                val,
                 base_struct_var_ptr,
                 Offset32::new(offset as i32),
             );
@@ -1406,7 +1430,7 @@ fn call_with_values(
                 .expr_type
                 .as_ref()
                 .unwrap_or(&ExprType::F64)
-                .cranelift_type(ptr_ty)?,
+                .cranelift_type(ptr_ty, false)?,
         ));
     }
     let callee = module
@@ -1940,33 +1964,48 @@ fn create_struct_map(
     let mut structs: HashMap<String, StructDef> = HashMap::new();
 
     for struct_name in structs_order {
+        let fields_def = &in_structs[&struct_name].fields;
         let mut fields = HashMap::new();
+        let mut fields_v = Vec::new();
         let mut struct_size = 0u32;
-        for field in in_structs[&struct_name].fields.iter() {
-            let size = match &field.expr_type {
-                Some(t) => match t {
-                    ExprType::Void => 0u32,
-                    ExprType::Bool => types::B1.bytes(),
-                    ExprType::F64 => types::F64.bytes(),
-                    ExprType::I64 => types::I64.bytes(),
-                    ExprType::UnboundedArrayF64 => ptr_type.bytes(),
-                    ExprType::UnboundedArrayI64 => ptr_type.bytes(),
-                    ExprType::Address => ptr_type.bytes(),
-                    ExprType::Tuple(_) => anyhow::bail!("Tuple in struct not supported"),
-                    ExprType::Struct(name) => structs[&name.to_string()].size,
-                },
-                None => types::F64.bytes(),
+        for (i, field) in fields_def.iter().enumerate() {
+            let (field_size, is_struct) =
+                get_field_size(&field.expr_type, &structs, ptr_type, false)?;
+            let new_field = StructField {
+                offset: struct_size,
+                size: field_size,
+                name: field.name.to_string(),
+                expr_type: field.expr_type.as_ref().unwrap_or(&ExprType::F64).clone(),
             };
-            fields.insert(
-                field.name.to_string(),
-                StructField {
-                    offset: struct_size,
-                    size,
-                    name: field.name.to_string(),
-                    expr_type: field.expr_type.as_ref().unwrap_or(&ExprType::F64).clone(),
-                },
-            );
-            struct_size += size;
+            fields.insert(field.name.to_string(), new_field.clone());
+            fields_v.push(new_field);
+
+            struct_size += field_size;
+            //print!(
+            //    "struct_size {} \t {} \t field_size {} \t",
+            //    struct_size, field.name, field_size
+            //);
+
+            if i < fields_def.len() - 1 {
+                //repr(C) alignment see memoffset crate
+                let mut field_size: u32;
+                let (next_field_size, _is_struct) =
+                    get_field_size(&fields_def[i + 1].expr_type, &structs, ptr_type, true)?;
+                field_size = next_field_size;
+                if is_struct {
+                    let (this_field_size, _is_struct) =
+                        get_field_size(&fields_def[i].expr_type, &structs, ptr_type, true)?;
+                    field_size = field_size.max(this_field_size)
+                }
+                let m = struct_size % field_size;
+                let padding = if m > 0 { field_size - m } else { m };
+                struct_size += padding;
+                //print!(
+                //    " padding {} \t --- (next_field_size {}) ",
+                //    padding, next_field_size
+                //);
+            }
+            //println!("");
         }
 
         structs.insert(
@@ -1980,6 +2019,56 @@ fn create_struct_map(
     }
 
     Ok(structs)
+}
+
+fn get_field_size(
+    expr_type: &Option<ExprType>,
+    structs: &HashMap<String, StructDef>,
+    ptr_type: types::Type,
+    max_base_field: bool,
+) -> anyhow::Result<(u32, bool)> {
+    Ok(match expr_type {
+        Some(t) => match t {
+            ExprType::Struct(name) => {
+                if max_base_field {
+                    (get_largest_field_size(0, t, structs, ptr_type)?, true)
+                } else {
+                    (structs[&name.to_string()].size, true)
+                }
+            }
+            _ => ((t.cranelift_type(ptr_type, true)?.bytes()), false),
+        },
+        None => ((types::F64.bytes()), false),
+    })
+}
+
+fn get_largest_field_size(
+    largest: u32,
+    expr_type: &ExprType,
+    structs: &HashMap<String, StructDef>,
+    ptr_type: types::Type,
+) -> anyhow::Result<u32> {
+    let mut largest = largest;
+    match expr_type {
+        t => match t {
+            ExprType::Struct(name) => {
+                for (_name, field) in &structs[&name.to_string()].fields {
+                    let size =
+                        get_largest_field_size(largest, &field.expr_type, structs, ptr_type)?;
+                    if size > largest {
+                        largest = size;
+                    }
+                }
+            }
+            _ => {
+                let size = t.cranelift_type(ptr_type, true)?.bytes();
+                if size > largest {
+                    largest = size;
+                }
+            }
+        },
+    }
+    Ok(largest)
 }
 
 fn order_structs(in_structs: &HashMap<String, &Struct>) -> anyhow::Result<Vec<String>> {

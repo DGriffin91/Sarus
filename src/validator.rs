@@ -532,12 +532,17 @@ impl ExprType {
     pub fn cranelift_type(
         &self,
         ptr_type: cranelift::prelude::Type,
+        struct_access: bool,
     ) -> Result<cranelift::prelude::Type, TypeError> {
         match self {
             ExprType::Void => Err(TypeError::TypeMismatchSpecific {
                 s: "Void has no cranelift analog".to_string(),
             }),
-            ExprType::Bool => Ok(cranelift::prelude::types::B1),
+            ExprType::Bool => Ok(if struct_access {
+                cranelift::prelude::types::I8
+            } else {
+                cranelift::prelude::types::B1
+            }),
             ExprType::F64 => Ok(cranelift::prelude::types::F64),
             ExprType::I64 => Ok(cranelift::prelude::types::I64),
             ExprType::UnboundedArrayI64 => Ok(ptr_type),

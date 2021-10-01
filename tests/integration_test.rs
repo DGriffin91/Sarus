@@ -1429,3 +1429,283 @@ fn main(n: f64) -> (c: f64) {
     //jit.print_clif(true);
     Ok(())
 }
+
+#[repr(C, align(8))]
+#[derive(Copy, Clone)]
+struct Line {
+    a: Point,
+    b: Point,
+}
+
+#[repr(C, align(8))]
+#[derive(Copy, Clone)]
+struct Point {
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+impl Line {
+    fn length(self: Line) -> f64 {
+        ((self.a.x - self.b.x).powf(2.0)
+            + (self.a.y - self.b.y).powf(2.0)
+            + (self.a.z - self.b.z).powf(2.0))
+        .sqrt()
+    }
+}
+
+#[test]
+fn rust_struct() -> anyhow::Result<()> {
+    let code = r#"
+struct Line {
+    a: Point,
+    b: Point,
+}
+
+struct Point {
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+fn length(self: Line) -> (r: f64) {
+    r = ((self.a.x - self.b.x).powf(2.0) + 
+         (self.a.y - self.b.y).powf(2.0) + 
+         (self.a.z - self.b.z).powf(2.0)).sqrt()
+}
+
+fn main(l1: Line) -> (c: f64) {
+    c = l1.length()
+}
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(Line) -> f64>(func_ptr) };
+
+    let p1 = Point {
+        x: 100.0,
+        y: 200.0,
+        z: 300.0,
+    };
+    let p2 = Point {
+        x: 100.0 * 4.0,
+        y: 500.0,
+        z: 600.0,
+    };
+
+    let l1 = Line { a: p1, b: p2 };
+
+    assert_eq!(l1.length(), func(l1));
+    Ok(())
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct Misc {
+    b1: bool,
+    b2: bool,
+    f1: f64,
+    b3: bool,
+    i1: i64,
+    b4: bool,
+    b5: bool,
+}
+
+#[test]
+fn repr_alignment() -> anyhow::Result<()> {
+    let code = r#"
+struct Misc {
+    b1: bool,
+    b2: bool,
+    f1: f64,
+    b3: bool,
+    i1: i64,
+    b4: bool,
+    b5: bool,
+}
+
+fn main(m: Misc) -> () {
+    m.b1.println()
+    m.b2.println()
+    m.f1.println()
+    m.b3.println()
+    m.i1.println()
+    m.b4.println()
+    m.b5.println()
+
+    m.b1.assert_eq(true)
+    m.b2.assert_eq(false)
+    m.f1.assert_eq(12345.0)
+    m.b3.assert_eq(true)
+    m.i1.assert_eq(6789)
+    m.b4.assert_eq(false)
+    m.b5.assert_eq(true)
+}
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    jit.print_clif(true);
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(Misc) -> ()>(func_ptr) };
+
+    let m = Misc {
+        b1: true,
+        b2: false,
+        f1: 12345.0,
+        b3: true,
+        i1: 6789,
+        b4: false,
+        b5: true,
+    };
+    func(m);
+    Ok(())
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct Misc2 {
+    b1: bool,
+    m: Misc,
+    b2: bool,
+    b3: bool,
+}
+
+#[test]
+fn repr_alignment_nested() -> anyhow::Result<()> {
+    let code = r#"
+struct Misc {
+    b1: bool,
+    b2: bool,
+    f1: f64,
+    b3: bool,
+    i1: i64,
+    b4: bool,
+    b5: bool,
+}
+
+struct Misc2 {
+    b1: bool,
+    m: Misc,
+    b2: bool,
+    b3: bool,
+}
+
+fn main(m2: Misc2) -> () {
+    m2.b1.assert_eq(true)
+    m2.m.b1.assert_eq(true)
+    m2.m.b2.assert_eq(false)
+    m2.m.f1.assert_eq(12345.0)
+    m2.m.b3.assert_eq(true)
+    m2.m.i1.assert_eq(6789)
+    m2.m.b4.assert_eq(false)
+    m2.m.b5.assert_eq(true)
+    m2.b2.assert_eq(true)
+    m2.b3.assert_eq(true)
+}
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    jit.print_clif(true);
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(Misc2) -> ()>(func_ptr) };
+
+    let m = Misc {
+        b1: true,
+        b2: false,
+        f1: 12345.0,
+        b3: true,
+        i1: 6789,
+        b4: false,
+        b5: true,
+    };
+
+    let m2 = Misc2 {
+        b1: true,
+        m,
+        b2: true,
+        b3: true,
+    };
+
+    func(m2);
+    Ok(())
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+struct Misc3 {
+    b1: bool,
+    m2: Misc2,
+    f1: f64,
+    b3: bool,
+}
+
+#[test]
+fn repr_alignment_nested2() -> anyhow::Result<()> {
+    let code = r#"
+struct Misc {
+    b1: bool,
+    b2: bool,
+    f1: f64,
+    b3: bool,
+    i1: i64,
+    b4: bool,
+    b5: bool,
+}
+
+struct Misc2 {
+    b1: bool,
+    m: Misc,
+    b2: bool,
+    b3: bool,
+}
+
+struct Misc3 {
+    b1: bool,
+    m2: Misc2,
+    f1: f64,
+    b3: bool,
+}
+
+fn main(m3: Misc3) -> () {
+    //m3.m2.b1.assert_eq(true)
+    m3.m2.m.b1.assert_eq(true)
+    m3.m2.m.b2.assert_eq(false)
+    m3.m2.m.f1.assert_eq(12345.0) //it can't find this key: panicked at 'no entry found for key', src\jit.rs:1262:52
+    //m3.m2.m.b3.assert_eq(true) //TODO this is returning false
+    //m3.m2.m.i1.assert_eq(6789)
+    //m3.m2.m.b4.assert_eq(false)
+    //m3.m2.m.b5.assert_eq(true)
+    //m3.m2.b2.assert_eq(true)
+    //m3.m2.b3.assert_eq(true)
+}
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    jit.print_clif(true);
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(Misc3) -> ()>(func_ptr) };
+
+    let m = Misc {
+        b1: true,
+        b2: false,
+        f1: 12345.0,
+        b3: true,
+        i1: 6789,
+        b4: false,
+        b5: true,
+    };
+
+    let m2 = Misc2 {
+        b1: true,
+        m,
+        b2: true,
+        b3: true,
+    };
+
+    let m3 = Misc3 {
+        b1: true,
+        m2,
+        f1: 12345.0,
+        b3: true,
+    };
+
+    func(m3);
+    Ok(())
+}
