@@ -926,11 +926,11 @@ impl<'a> FunctionTranslator<'a> {
         let ptr_ty = self.module.target_config().pointer_type();
 
         let variable = match self.variables.get(&name) {
-            Some(v) => v,
+            Some(v) => v.clone(),
             None => anyhow::bail!("variable {} not found", name),
         };
 
-        let base_type = match variable {
+        let base_type = match &variable {
             SVariable::Unknown(_, _) => ptr_ty,
             SVariable::UnboundedArrayF64(_, _) => types::F64,
             SVariable::UnboundedArrayI64(_, _) => types::I64,
@@ -956,8 +956,19 @@ impl<'a> FunctionTranslator<'a> {
         let val = self
             .builder
             .ins()
-            .load(types::F64, MemFlags::new(), idx_ptr, Offset32::new(0));
-        Ok(SValue::F64(val)) //todo, don't assume this is a float
+            .load(base_type, MemFlags::new(), idx_ptr, Offset32::new(0));
+
+        let sval = match &variable {
+            SVariable::Unknown(_, _) => SValue::Unknown(val),
+            SVariable::UnboundedArrayF64(_, _) => SValue::F64(val),
+            SVariable::UnboundedArrayI64(_, _) => SValue::I64(val),
+            SVariable::Address(_, _) => SValue::Address(val),
+            SVariable::Struct(_, n, _, _) => SValue::Struct(n.to_string(), val),
+            SVariable::I64(_, _) | SVariable::F64(_, _) | SVariable::Bool(_, _) => {
+                anyhow::bail!("can't index type {}", &variable)
+            }
+        };
+        Ok(sval)
     }
 
     fn translate_array_set(
@@ -1126,27 +1137,40 @@ impl<'a> FunctionTranslator<'a> {
         let phi = self.builder.block_params(merge_block);
 
         if phi.len() > 1 {
-            // TODO don't assume these are floats
-            Ok(SValue::Tuple(
-                phi.iter().map(|v| SValue::F64(*v)).collect::<Vec<SValue>>(),
-            ))
-        } else if phi.len() == 1 {
-            match then_value {
-                SValue::Void => Ok(SValue::Void),
-                SValue::Unknown(_) => Ok(SValue::Unknown(*phi.first().unwrap())),
-                SValue::Bool(_) => Ok(SValue::Bool(*phi.first().unwrap())),
-                SValue::F64(_) => Ok(SValue::F64(*phi.first().unwrap())),
-                SValue::I64(_) => Ok(SValue::I64(*phi.first().unwrap())),
-                SValue::Tuple(_) => anyhow::bail!("not supported"),
-                SValue::UnboundedArrayF64(_) => {
-                    Ok(SValue::UnboundedArrayF64(*phi.first().unwrap()))
+            //TODO the frontend doesn't have the syntax support for this yet
+            if let SValue::Tuple(then_tuple) = then_value {
+                let mut ret_tuple = Vec::new();
+                for (phi_val, sval) in phi.iter().zip(then_tuple.iter()) {
+                    ret_tuple.push(match sval {
+                        SValue::Void => SValue::Void,
+                        SValue::Unknown(_) => SValue::Unknown(*phi_val),
+                        SValue::Bool(_) => SValue::Bool(*phi_val),
+                        SValue::F64(_) => SValue::F64(*phi_val),
+                        SValue::I64(_) => SValue::I64(*phi_val),
+                        SValue::Tuple(_) => anyhow::bail!("not supported"),
+                        SValue::UnboundedArrayF64(_) => SValue::UnboundedArrayF64(*phi_val),
+                        SValue::UnboundedArrayI64(_) => SValue::UnboundedArrayI64(*phi_val),
+                        SValue::Address(_) => SValue::Address(*phi_val),
+                        SValue::Struct(name, _) => SValue::Struct(name.to_string(), *phi_val),
+                    });
                 }
-                SValue::UnboundedArrayI64(_) => {
-                    Ok(SValue::UnboundedArrayI64(*phi.first().unwrap()))
-                }
-                SValue::Address(_) => Ok(SValue::Address(*phi.first().unwrap())),
-                SValue::Struct(name, _) => Ok(SValue::Struct(name, *phi.first().unwrap())),
+                Ok(SValue::Tuple(ret_tuple))
+            } else {
+                anyhow::bail!("expected tuple")
             }
+        } else if phi.len() == 1 {
+            Ok(match then_value {
+                SValue::Void => SValue::Void,
+                SValue::Unknown(_) => SValue::Unknown(*phi.first().unwrap()),
+                SValue::Bool(_) => SValue::Bool(*phi.first().unwrap()),
+                SValue::F64(_) => SValue::F64(*phi.first().unwrap()),
+                SValue::I64(_) => SValue::I64(*phi.first().unwrap()),
+                SValue::Tuple(_) => anyhow::bail!("not supported"),
+                SValue::UnboundedArrayF64(_) => SValue::UnboundedArrayF64(*phi.first().unwrap()),
+                SValue::UnboundedArrayI64(_) => SValue::UnboundedArrayI64(*phi.first().unwrap()),
+                SValue::Address(_) => SValue::Address(*phi.first().unwrap()),
+                SValue::Struct(name, _) => SValue::Struct(name, *phi.first().unwrap()),
+            })
         } else {
             Ok(SValue::Void)
         }

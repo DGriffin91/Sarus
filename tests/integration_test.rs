@@ -405,6 +405,29 @@ fn negative() -> anyhow::Result<()> {
     Ok(())
 }
 
+//TODO the frontend doesn't have the syntax support for this yet
+//#[test]
+//fn if_return_types() -> anyhow::Result<()> {
+//    let code = r#"
+//    fn main(a) -> (c) {
+//        f, g, h = if a < 0.0 {
+//            1.0, 1, true
+//        } else {
+//            0.0, 0, false
+//        }
+//        f.assert_eq(1.0)
+//        g.assert_eq(1)
+//        h.assert_eq(true)
+//    }
+//"#;
+//    let a = -100.0f64;
+//    let mut jit = default_std_jit_from_code(&code)?;
+//    let func_ptr = jit.get_func("main")?;
+//    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
+//    assert_eq!(-101.0, func(a));
+//    Ok(())
+//}
+
 #[test]
 fn compiled_graph() -> anyhow::Result<()> {
     let code = r#"
@@ -1830,11 +1853,6 @@ fn main5(a: f64) -> (c: Stuff) {
     );
 
     Ok(())
-}
-
-struct MiscB {
-    f: i16,
-    b: bool,
 }
 
 #[test]
