@@ -1,3 +1,5 @@
+#![feature(core_intrinsics)]
+
 use serde::Deserialize;
 use std::{collections::HashMap, f64::consts::*, ffi::CStr, mem};
 
@@ -1544,7 +1546,7 @@ fn main(m: Misc) -> () {
 }
 "#;
     let mut jit = default_std_jit_from_code(&code)?;
-    jit.print_clif(true);
+    //jit.print_clif(true);
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(Misc) -> ()>(func_ptr) };
 
@@ -1604,7 +1606,7 @@ fn main(m2: Misc2) -> () {
 }
 "#;
     let mut jit = default_std_jit_from_code(&code)?;
-    jit.print_clif(true);
+    //jit.print_clif(true);
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(Misc2) -> ()>(func_ptr) };
 
@@ -1682,7 +1684,7 @@ fn main(m3: Misc3) -> () {
 }
 "#;
     let mut jit = default_std_jit_from_code(&code)?;
-    jit.print_clif(true);
+    //jit.print_clif(true);
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(Misc3) -> ()>(func_ptr) };
 
@@ -1820,5 +1822,73 @@ fn main5(a: f64) -> (c: Stuff) {
         },
         func(a)
     );
+
+    Ok(())
+}
+
+struct MiscB {
+    f: i16,
+    b: bool,
+}
+
+#[test]
+fn struct_size() -> anyhow::Result<()> {
+    let code = r#"
+struct Misc {
+    b1: bool,
+    b2: bool,
+    f1: f64,
+    b3: bool,
+    i1: i64,
+    b4: bool,
+    b5: bool,
+}
+
+struct Misc2 {
+    b1: bool,
+    m: Misc,
+    b2: bool,
+    b3: bool,
+}
+
+struct Misc3 {
+    b1: bool,
+    m2: Misc2,
+    f1: f64,
+    b3: bool,
+}
+
+fn misc_size() -> (size: i64) {
+    size = Misc::size()
+}
+
+fn misc2_size() -> (size: i64) {
+    size = Misc2::size()
+}
+
+fn misc3_size() -> (size: i64) {
+    size = Misc3::size()
+}
+
+fn f64_size() -> (size: i64) {
+    size = f64::size()
+}
+
+
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    //jit.print_clif(true);
+    let func_ptr = jit.get_func("misc_size")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn() -> i64>(func_ptr) };
+    assert_eq!(mem::size_of::<Misc>(), func() as usize);
+    let func_ptr = jit.get_func("misc2_size")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn() -> i64>(func_ptr) };
+    assert_eq!(mem::size_of::<Misc2>(), func() as usize);
+    let func_ptr = jit.get_func("misc3_size")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn() -> i64>(func_ptr) };
+    assert_eq!(mem::size_of::<Misc3>(), func() as usize);
+    let func_ptr = jit.get_func("f64_size")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn() -> i64>(func_ptr) };
+    assert_eq!(mem::size_of::<f64>(), func() as usize);
     Ok(())
 }

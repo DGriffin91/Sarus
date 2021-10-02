@@ -6,11 +6,10 @@ use cranelift::prelude::{types, InstBuilder, Value};
 use cranelift_jit::JITBuilder;
 
 use crate::frontend::Arg;
-use crate::jit::SValue;
+use crate::jit::{SValue, StructDef};
 use crate::{
     decl,
     frontend::{Declaration, Function},
-    validator::ExprType,
 };
 use crate::{hashmap, make_decl};
 
@@ -264,6 +263,44 @@ pub fn append_std_funcs(prog: &mut Vec<Declaration>) {
     //    vec![("size", ExprType::I64)],
     //    vec![("mem", ExprType::Address)],
     //));
+}
+
+pub fn is_struct_size_call(name: &str, struct_map: &HashMap<String, StructDef>) -> Option<String> {
+    if name.contains("::") {
+        let parts = name.split("::").collect::<Vec<&str>>();
+        if parts.len() == 2 {
+            let s = parts[0];
+            if parts[1] == "size"
+                && (struct_map.contains_key(s)
+                    || s == "f64"
+                    || s == "i64"
+                    || s == "bool"
+                    || s == "u8")
+            {
+                return Some(parts[0].to_string());
+            }
+        }
+    }
+    None
+}
+
+pub fn translate_size_call(
+    builder: &mut FunctionBuilder,
+    struct_name: String,
+    struct_map: &HashMap<String, StructDef>,
+) -> SValue {
+    let len = if struct_name == "f64" {
+        types::F64.bytes() as i64
+    } else if struct_name == "i64" {
+        types::I64.bytes() as i64
+    } else if struct_name == "bool" {
+        types::I8.bytes() as i64 //for extern and structs we use I8 for bool
+    } else if struct_name == "u8" {
+        types::I8.bytes() as i64
+    } else {
+        struct_map[&struct_name].size as i64
+    };
+    return SValue::I64(builder.ins().iconst(types::I64, len));
 }
 
 pub(crate) fn translate_std(

@@ -639,7 +639,7 @@ impl<'a> FunctionTranslator<'a> {
                             last_expr = Some(self.translate_call(name, &args, last_expr)?);
                         }
                         a => {
-                            panic!("non identifier/call found")
+                            panic!("non identifier/call found {}", a)
                         }
                     }
                 }
@@ -1183,21 +1183,28 @@ impl<'a> FunctionTranslator<'a> {
             arg_values.push(self.translate_expr(expr)?.inner("translate_call")?)
         }
 
-        let returns = &self.funcs[&fn_name].returns;
-        let stack_slot_return = if returns.len() > 0 {
-            if let ExprType::Struct(name) = &returns[0].expr_type {
-                Some((name.to_string(), self.struct_map[&name.to_string()].size))
-            } else {
+        //TODO refactor, we call is_struct_size_call too many times redundantly
+        let stack_slot_return =
+            if let Some(_) = sarus_std_lib::is_struct_size_call(&fn_name, self.struct_map) {
                 None
-            }
-        } else {
-            None
-        };
+            } else {
+                let returns = &self.funcs[&fn_name].returns;
+                if returns.len() > 0 {
+                    if let ExprType::Struct(name) = &returns[0].expr_type {
+                        Some((name.to_string(), self.struct_map[&name.to_string()].size))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
 
         call_with_values(
             &fn_name,
             &arg_values,
             &mut self.funcs,
+            &self.struct_map,
             &mut self.module,
             &mut self.builder,
             stack_slot_return,
@@ -1447,11 +1454,20 @@ fn call_with_values(
     name: &str,
     arg_values: &[Value],
     funcs: &HashMap<String, Function>,
+    struct_map: &HashMap<String, StructDef>,
     module: &mut JITModule,
     builder: &mut FunctionBuilder,
     stack_slot_return: Option<(String, u32)>,
 ) -> anyhow::Result<SValue> {
     let name = &name.to_string();
+
+    if let Some(struct_name) = sarus_std_lib::is_struct_size_call(name, struct_map) {
+        return Ok(sarus_std_lib::translate_size_call(
+            builder,
+            struct_name,
+            struct_map,
+        ));
+    }
 
     if !funcs.contains_key(name) {
         anyhow::bail!("function {} not found", name)
@@ -2067,6 +2083,7 @@ fn create_struct_map(
     let mut structs: HashMap<String, StructDef> = HashMap::new();
 
     for struct_name in structs_order {
+        let mut largest_field_in_struct = 0;
         let fields_def = &in_structs[&struct_name].fields;
         let mut fields = HashMap::new();
         let mut fields_v = Vec::new();
@@ -2100,6 +2117,7 @@ fn create_struct_map(
                         get_field_size(&fields_def[i].expr_type, &structs, ptr_type, true)?;
                     field_size = field_size.max(this_field_size)
                 }
+                largest_field_in_struct = largest_field_in_struct.max(field_size);
                 let m = struct_size % field_size;
                 let padding = if m > 0 { field_size - m } else { m };
                 struct_size += padding;
@@ -2109,6 +2127,17 @@ fn create_struct_map(
                 //);
             }
             //println!("");
+        }
+
+        //Padding at end of struct
+        if largest_field_in_struct > 0 {
+            let m = struct_size % largest_field_in_struct;
+            let padding = if m > 0 {
+                largest_field_in_struct - m
+            } else {
+                m
+            };
+            struct_size += padding;
         }
 
         structs.insert(

@@ -3,6 +3,7 @@ use std::{collections::HashMap, fmt::Display};
 use crate::{
     frontend::{Declaration, Expr, Function},
     jit::{SVariable, StructDef},
+    sarus_std_lib,
 };
 use thiserror::Error;
 
@@ -400,7 +401,9 @@ impl ExprType {
                 } else {
                     fn_name.clone()
                 };
-                if let Some(func) = funcs.get(&fn_name) {
+                if let Some(_) = sarus_std_lib::is_struct_size_call(&fn_name, struct_map) {
+                    return Ok(ExprType::I64);
+                } else if let Some(func) = funcs.get(&fn_name) {
                     let mut targs = Vec::new();
 
                     if let Some(lval) = &lval {

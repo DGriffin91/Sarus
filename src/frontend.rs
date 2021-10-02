@@ -344,7 +344,7 @@ peg::parser!(pub grammar parser() for str {
         / expected!("identifier")
 
     rule function() -> Declaration
-        = _ ext:("extern")? _  "fn" name:identifier() _
+        = _ ext:("extern")? _  "fn" name:func_identifier() _
         "(" params:(i:arg() ** comma()) ")" _
         "->" _
         "(" returns:(i:arg() ** comma()) _ ")"
@@ -416,8 +416,6 @@ peg::parser!(pub grammar parser() for str {
     rule arrayset() -> Expr
         = i:identifier() _ "[" idx:expression() "]" _ "=" _ e:expression() {Expr::ArraySet(i, Box::new(idx), Box::new(e))}
 
-
-
     rule binary_op() -> Expr = precedence!{
         a:@ _ "&&" _ b:(@) { Expr::Binop(Binop::LogicalAnd, Box::new(a), Box::new(b)) }
         a:@ _ "||" _ b:(@) { Expr::Binop(Binop::LogicalOr, Box::new(a), Box::new(b)) }
@@ -447,7 +445,7 @@ peg::parser!(pub grammar parser() for str {
     }
 
     rule unary_op() -> Expr = precedence!{
-        i:identifier() _ "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
+        i:func_identifier() _ "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
             Expr::Call(i, args)
         }
         i:identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" { Expr::NewStruct(i, args) }
@@ -462,6 +460,11 @@ peg::parser!(pub grammar parser() for str {
     rule identifier() -> String
         = quiet!{ _ n:$((!"true"!"false")['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.into() } }
         / expected!("identifier")
+
+
+    rule func_identifier() -> String
+        = quiet!{ _ n:$((!"true"!"false")['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']* "::" ['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.into() } }
+        / identifier()
 
     rule literal() -> Expr
         = _ n:$(['-']*['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat(n.into()) }
