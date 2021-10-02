@@ -1,12 +1,15 @@
 #![feature(core_intrinsics)]
 
-use libc::c_void;
 use serde::Deserialize;
-use std::{collections::HashMap, f64::consts::*, ffi::CStr, mem};
+use std::{
+    alloc::{alloc, dealloc, Layout},
+    collections::HashMap,
+    f64::consts::*,
+    ffi::CStr,
+    mem,
+};
 
 use sarus::*;
-
-extern crate libc;
 
 #[test]
 fn parentheses() -> anyhow::Result<()> {
@@ -1896,6 +1899,26 @@ fn f64_size() -> (size: i64) {
     Ok(())
 }
 
+struct Heap {
+    ptr: *mut u8,
+    layout: Layout,
+}
+impl Drop for Heap {
+    fn drop(&mut self) {
+        unsafe { dealloc(self.ptr, self.layout) }
+    }
+}
+impl Heap {
+    pub fn new(size: usize) -> anyhow::Result<Self> {
+        let layout = Layout::from_size_align(size, 8)?;
+        let ptr = unsafe { alloc(layout) };
+        Ok(Heap { ptr, layout })
+    }
+    pub fn get_ptr(&self) -> *mut u8 {
+        self.ptr
+    }
+}
+
 #[test]
 fn anonymous_struct_on_a_heap() -> anyhow::Result<()> {
     let code = r#"
@@ -1932,80 +1955,15 @@ fn size_of_stuff() -> (size: i64) {
     let func_ptr = jit.get_func("size_of_stuff")?;
     let size_of_stuff = unsafe { mem::transmute::<_, extern "C" fn() -> i64>(func_ptr) };
 
-    let data: *mut u8 = unsafe {
-        libc::malloc(mem::size_of::<u8>() as libc::size_t * (size_of_stuff()) as usize) as *mut u8
-    };
-
-    //let data = Box::into_raw(Box::new(Vec::<u8>::with_capacity(size_of_stuff() as usize)));
+    let data = Heap::new(size_of_stuff() as usize)?;
 
     let func_ptr = jit.get_func("puts_a_stuff_there")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(*mut u8) -> ()>(func_ptr) };
-    func(data);
+    func(data.get_ptr());
 
     let func_ptr = jit.get_func("takes_a_stuff")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(*mut u8) -> ()>(func_ptr) };
-    func(data);
-
-    unsafe {
-        libc::free(data as *mut libc::c_void);
-    }
+    func(data.get_ptr());
 
     Ok(())
 }
-/*
-#[test]
-fn anonymous_struct_on_a_stack() -> anyhow::Result<()> {
-    let code = r#"
-struct Stuff {
-    w: bool,
-    x: f64,
-    y: f64,
-    z: f64,
-    i: i64,
-}
-fn puts_a_stuff_there(there: Stuff) -> () {
-    there = Stuff {
-        w: true,
-        x: 100.0,
-        y: 200.0,
-        z: 300.0,
-        i: 123,
-    }
-}
-fn takes_a_stuff(s: Stuff) -> () {
-    s.w.assert_eq(true)
-    s.x.assert_eq(100.0)
-    s.y.assert_eq(200.0)
-    s.z.assert_eq(300.0)
-    s.i.assert_eq(123)
-}
-fn size_of_stuff() -> (size: i64) {
-    size = Stuff::size()
-}
-"#;
-
-    let mut jit = default_std_jit_from_code(&code)?;
-
-    let func_ptr = jit.get_func("size_of_stuff")?;
-    let size_of_stuff = unsafe { mem::transmute::<_, extern "C" fn() -> i64>(func_ptr) };
-
-    dbg!(size_of_stuff());
-
-    //let data = Box::into_raw(Box::new(Vec::<u8>::with_capacity(size_of_stuff() as usize)));
-
-    alloca::with_alloca(
-        (size_of_stuff()) as usize, /* how much bytes we want to allocate */
-        |memory: &mut [MaybeUninit<u8>] /* dynamically stack allocated slice itself */| {
-            let func_ptr = jit.get_func("puts_a_stuff_there")?;
-            let func = unsafe { mem::transmute::<_, extern "C" fn(*mut u8) -> ()>(func_ptr) };
-            func(data);
-
-            let func_ptr = jit.get_func("takes_a_stuff")?;
-            let func = unsafe { mem::transmute::<_, extern "C" fn(*mut u8) -> ()>(func_ptr) };
-            func(data);
-        },
-    );
-
-    Ok(())
-}
-*/
