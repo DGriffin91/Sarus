@@ -491,7 +491,7 @@ fn parts_to_binop(mut parts: Vec<String>) -> Expr {
     let mut dot_expr = Expr::Binop(
         Binop::DotAccess,
         Box::new(Expr::Identifier(parts.remove(0))),
-        Box::new(Expr::Identifier(parts.remove(1))),
+        Box::new(Expr::Identifier(parts.remove(0))),
     );
     for part in &parts {
         if let Expr::Binop(op, e1, e2) = dot_expr.clone() {
@@ -500,8 +500,8 @@ fn parts_to_binop(mut parts: Vec<String>) -> Expr {
                 e1,
                 Box::new(Expr::Binop(
                     Binop::DotAccess,
-                    Box::new(Expr::Identifier(part.clone())),
                     e2,
+                    Box::new(Expr::Identifier(part.clone())),
                 )),
             )
         }

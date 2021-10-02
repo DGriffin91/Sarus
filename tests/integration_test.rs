@@ -929,6 +929,7 @@ fn main(a: f64, b: f64) -> (c: f64) {
     let mut jit = default_std_jit_from_code_with_importer(&code, |_ast, jit_builder| {
         jit_builder.symbols([("mult", mult as *const u8), ("dbg", dbg as *const u8)]);
     })?;
+
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
     assert_eq!(mult(a, b), func(a, b));
@@ -1710,5 +1711,114 @@ fn main(m3: Misc3) -> () {
     };
 
     func(m3);
+    Ok(())
+}
+
+#[repr(C)]
+#[derive(Debug, PartialEq)]
+struct Stuff {
+    w: bool,
+    x: f64,
+    y: f64,
+    z: f64,
+    i: i64,
+}
+
+extern "C" fn returns_a_stuff(a: f64) -> Stuff {
+    Stuff {
+        w: true,
+        x: a,
+        y: 200.0,
+        z: 300.0,
+        i: 123,
+    }
+}
+
+#[test]
+fn return_struct() -> anyhow::Result<()> {
+    let code = r#"
+extern fn returns_a_stuff(a: f64) -> (c: Stuff) {}
+
+struct Stuff {
+    w: bool,
+    x: f64,
+    y: f64,
+    z: f64,
+    i: i64,
+}
+fn main(a: f64) -> (c: Stuff) {
+    c = Stuff {
+        w: true,
+        x: a,
+        y: 200.0,
+        z: 300.0,
+        i: 123,
+    }
+}
+fn main2(a: f64) -> (c: Stuff) {
+    s = Stuff {
+        w: true,
+        x: a,
+        y: 200.0,
+        z: 300.0,
+        i: 123,
+    }
+    c = s
+}
+fn main3(a: f64) -> (c: Stuff) {
+    s = main2(a)
+    c = s
+}
+fn main4(a: f64) -> (c: Stuff) {
+    s = returns_a_stuff(a)
+    c = s
+}
+fn main5(a: f64) -> (c: Stuff) {
+    s = returns_a_stuff(a)
+    s.w = !s.w
+    s.x *= s.x
+    s.y *= s.y
+    s.z *= s.z
+    s.i *= s.i
+    c = s
+}
+"#;
+    let a = 100.0f64;
+    let correct_stuff = Stuff {
+        w: true,
+        x: a,
+        y: 200.0,
+        z: 300.0,
+        i: 123,
+    };
+
+    let mut jit = default_std_jit_from_code_with_importer(&code, |_ast, jit_builder| {
+        jit_builder.symbols([("returns_a_stuff", returns_a_stuff as *const u8)]);
+    })?;
+
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> Stuff>(func_ptr) };
+    assert_eq!(correct_stuff, func(a));
+    let func_ptr = jit.get_func("main2")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> Stuff>(func_ptr) };
+    assert_eq!(correct_stuff, func(a));
+    let func_ptr = jit.get_func("main3")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> Stuff>(func_ptr) };
+    assert_eq!(correct_stuff, func(a));
+    let func_ptr = jit.get_func("main4")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> Stuff>(func_ptr) };
+    assert_eq!(correct_stuff, func(a));
+    let func_ptr = jit.get_func("main5")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> Stuff>(func_ptr) };
+    assert_eq!(
+        Stuff {
+            w: false,
+            x: 10000.0,
+            y: 40000.0,
+            z: 90000.0,
+            i: 15129,
+        },
+        func(a)
+    );
     Ok(())
 }

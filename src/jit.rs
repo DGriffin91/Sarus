@@ -3,6 +3,7 @@ use crate::sarus_std_lib;
 use crate::validator::validate_program;
 use crate::validator::ExprType;
 use cranelift::codegen::ir::immediates::Offset32;
+use cranelift::codegen::ir::ArgumentPurpose;
 use cranelift::prelude::*;
 pub use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataContext, Linkage, Module};
@@ -186,35 +187,45 @@ impl JIT {
         struct_map: &HashMap<String, StructDef>,
     ) -> anyhow::Result<()> {
         let float = types::F64; //self.module.target_config().pointer_type();
+        let ptr_ty = self.module.target_config().pointer_type();
+
+        if func.returns.len() > 0 {
+            if let ExprType::Struct(_struct_name) = &func.returns[0].expr_type {
+                if func.returns.len() > 1 {
+                    anyhow::bail!(
+                        "If returning a struct, only 1 return value is currently supported"
+                    )
+                }
+                self.ctx
+                    .func
+                    .signature
+                    .params
+                    .push(AbiParam::special(ptr_ty, ArgumentPurpose::StructReturn));
+            } else {
+                for ret_arg in &func.returns {
+                    self.ctx.func.signature.returns.push(AbiParam::new(
+                        ret_arg
+                            .expr_type
+                            .cranelift_type(self.module.target_config().pointer_type(), false)?,
+                    ));
+                }
+            }
+        }
 
         for p in &func.params {
             self.ctx.func.signature.params.push({
                 match &p.expr_type {
                     ExprType::F64 => AbiParam::new(types::F64),
                     ExprType::I64 => AbiParam::new(types::I64),
-                    ExprType::UnboundedArrayF64 => {
-                        AbiParam::new(self.module.target_config().pointer_type())
-                    }
-                    ExprType::UnboundedArrayI64 => {
-                        AbiParam::new(self.module.target_config().pointer_type())
-                    }
-                    ExprType::Address => AbiParam::new(self.module.target_config().pointer_type()),
+                    ExprType::UnboundedArrayF64 => AbiParam::new(ptr_ty),
+                    ExprType::UnboundedArrayI64 => AbiParam::new(ptr_ty),
+                    ExprType::Address => AbiParam::new(ptr_ty),
                     ExprType::Void => continue,
                     ExprType::Bool => AbiParam::new(types::B1),
-                    ExprType::Struct(_) => {
-                        AbiParam::new(self.module.target_config().pointer_type())
-                    }
+                    ExprType::Struct(_) => AbiParam::new(ptr_ty),
                     ExprType::Tuple(_) => anyhow::bail!("Tuple as parameter not supported"),
                 }
             });
-        }
-
-        for ret_arg in &func.returns {
-            self.ctx.func.signature.returns.push(AbiParam::new(
-                ret_arg
-                    .expr_type
-                    .cranelift_type(self.module.target_config().pointer_type(), false)?,
-            ));
         }
 
         // Create the builder to build a function.
@@ -312,7 +323,8 @@ impl JIT {
                     .builder
                     .use_var(return_variable.expect_bool("return_variable")?),
                 ExprType::Tuple(_) => anyhow::bail!("tuple not supported in return"),
-                ExprType::Struct(_) => anyhow::bail!("returning structs not supported yet"), //TODO support this
+                //We don't actually return structs, they are passed in as StackSlotKind::StructReturnSlot and written to from there
+                ExprType::Struct(_) => continue, //trans.builder.use_var(return_variable.expect_struct(n, "codegen return variables")?)
             };
             return_values.push(v);
         }
@@ -510,7 +522,7 @@ impl<'a> FunctionTranslator<'a> {
                         SVariable::UnboundedArrayI64(_, v) => {
                             SValue::UnboundedArrayF64(self.builder.use_var(*v))
                         }
-                        SVariable::Struct(_varname, structname, v) => {
+                        SVariable::Struct(_varname, structname, v, _return_struct) => {
                             SValue::Struct(structname.to_string(), self.builder.use_var(*v))
                         }
                     }),
@@ -627,7 +639,6 @@ impl<'a> FunctionTranslator<'a> {
                             last_expr = Some(self.translate_call(name, &args, last_expr)?);
                         }
                         a => {
-                            dbg!(a);
                             panic!("non identifier/call found")
                         }
                     }
@@ -837,6 +848,22 @@ impl<'a> FunctionTranslator<'a> {
                         Some(v) => v,
                         None => anyhow::bail!("variable {} not found", name),
                     };
+
+                    if let SVariable::Struct(_var_name, struct_name, _var, return_struct) = var {
+                        if *return_struct {
+                            //copy to struct, we don't want to return a reference
+                            let return_address = self.builder.use_var(var.inner());
+                            copy_to_stack_slot(
+                                self.module.target_config(),
+                                &mut self.builder,
+                                self.struct_map[struct_name].size,
+                                val.expect_struct(struct_name, "translate_assign")?,
+                                return_address,
+                                0,
+                            )?;
+                            continue;
+                        }
+                    }
                     self.builder
                         .def_var(var.inner(), val.inner("translate_assign")?);
                 }
@@ -887,7 +914,7 @@ impl<'a> FunctionTranslator<'a> {
             SVariable::UnboundedArrayF64(_, _) => types::F64,
             SVariable::UnboundedArrayI64(_, _) => types::I64,
             SVariable::Address(_, _) => ptr_ty,
-            SVariable::Struct(_, _, _)
+            SVariable::Struct(_, _, _, _)
             | SVariable::I64(_, _)
             | SVariable::F64(_, _)
             | SVariable::Bool(_, _) => anyhow::bail!("can't index type {}", &variable),
@@ -929,7 +956,7 @@ impl<'a> FunctionTranslator<'a> {
             SVariable::UnboundedArrayF64(_, _) => types::F64,
             SVariable::UnboundedArrayI64(_, _) => types::I64,
             SVariable::Address(_, _) => ptr_ty,
-            SVariable::Struct(_, _, _)
+            SVariable::Struct(_, _, _, _)
             | SVariable::I64(_, _)
             | SVariable::F64(_, _)
             | SVariable::Bool(_, _) => anyhow::bail!("can't index type {}", &variable),
@@ -1156,12 +1183,24 @@ impl<'a> FunctionTranslator<'a> {
             arg_values.push(self.translate_expr(expr)?.inner("translate_call")?)
         }
 
+        let returns = &self.funcs[&fn_name].returns;
+        let stack_slot_return = if returns.len() > 0 {
+            if let ExprType::Struct(name) = &returns[0].expr_type {
+                Some((name.to_string(), self.struct_map[&name.to_string()].size))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         call_with_values(
             &fn_name,
             &arg_values,
             &mut self.funcs,
             &mut self.module,
             &mut self.builder,
+            stack_slot_return,
         )
     }
 
@@ -1230,6 +1269,7 @@ impl<'a> FunctionTranslator<'a> {
                     //struct bools are stored as I8
                     self.builder.ins().bint(types::I8, val)
                 } else {
+                    //TODO make sure type of incoming val matches what struct has
                     sval.inner("new_struct")?
                 };
 
@@ -1254,7 +1294,7 @@ impl<'a> FunctionTranslator<'a> {
         parts: Vec<&str>,
     ) -> anyhow::Result<(StructField, Value, u32)> {
         match &self.variables[parts[0]] {
-            SVariable::Struct(_var_name, struct_name, var) => {
+            SVariable::Struct(_var_name, struct_name, var, _return_struct) => {
                 let mut parent_struct_field = &self.struct_map[struct_name].fields[parts[1]];
                 let base_struct_var_ptr = self.builder.use_var(*var);
                 let mut struct_name = struct_name.clone();
@@ -1336,7 +1376,6 @@ impl<'a> FunctionTranslator<'a> {
             );
             Ok(())
         } else {
-            dbg!("set_struct_field");
             let val = if let SValue::Bool(val) = set_value {
                 self.builder.ins().bint(types::I8, val)
             } else {
@@ -1368,6 +1407,24 @@ fn create_and_copy_to_stack_slot(
             .ins()
             .stack_addr(target_config.pointer_type(), stack_slot, Offset32::new(0));
 
+    copy_to_stack_slot(
+        target_config,
+        builder,
+        size,
+        src_ptr,
+        stack_slot_address,
+        offset,
+    )
+}
+
+fn copy_to_stack_slot(
+    target_config: isa::TargetFrontendConfig,
+    builder: &mut FunctionBuilder,
+    size: u32,
+    src_ptr: Value,
+    stack_slot_address: Value,
+    offset: u32,
+) -> anyhow::Result<Value> {
     let offset_v = builder
         .ins()
         .iconst(target_config.pointer_type(), offset as i64);
@@ -1392,6 +1449,7 @@ fn call_with_values(
     funcs: &HashMap<String, Function>,
     module: &mut JITModule,
     builder: &mut FunctionBuilder,
+    stack_slot_return: Option<(String, u32)>,
 ) -> anyhow::Result<SValue> {
     let name = &name.to_string();
 
@@ -1423,15 +1481,35 @@ fn call_with_values(
 
     let ptr_ty = module.target_config().pointer_type();
 
+    let mut arg_values = Vec::from(arg_values); //in case we need to insert a val for the StructReturnSlot
+
     for val in arg_values.iter() {
         sig.params
             .push(AbiParam::new(builder.func.dfg.value_type(*val)));
     }
 
-    for ret_arg in &func.returns {
-        sig.returns.push(AbiParam::new(
-            ret_arg.expr_type.cranelift_type(ptr_ty, false)?,
-        ));
+    let stack_slot_address = if let Some((name, size)) = &stack_slot_return {
+        //setup StackSlotData to be used as a StructReturnSlot
+        let stack_slot =
+            builder.create_stack_slot(StackSlotData::new(StackSlotKind::StructReturnSlot, *size));
+        //get stack address of StackSlotData
+        let stack_slot_address = builder
+            .ins()
+            .stack_addr(ptr_ty, stack_slot, Offset32::new(0));
+        arg_values.insert(0, stack_slot_address);
+        sig.params
+            .insert(0, AbiParam::special(ptr_ty, ArgumentPurpose::StructReturn));
+        Some((name.clone(), stack_slot_address))
+    } else {
+        None
+    };
+
+    if stack_slot_return.is_none() {
+        for ret_arg in &func.returns {
+            sig.returns.push(AbiParam::new(
+                ret_arg.expr_type.cranelift_type(ptr_ty, false)?,
+            ));
+        }
     }
     let callee = module
         .declare_function(&name, Linkage::Import, &sig)
@@ -1439,7 +1517,9 @@ fn call_with_values(
     let local_callee = module.declare_func_in_func(callee, &mut builder.func);
     let call = builder.ins().call(local_callee, &arg_values);
     let res = builder.inst_results(call);
-    if res.len() > 1 {
+    if let Some((name, stack_slot_address)) = stack_slot_address {
+        Ok(SValue::Struct(name, stack_slot_address))
+    } else if res.len() > 1 {
         Ok(SValue::Tuple(
             res.iter()
                 .zip(func.returns.iter())
@@ -1465,7 +1545,7 @@ pub enum SVariable {
     UnboundedArrayF64(String, Variable),
     UnboundedArrayI64(String, Variable),
     Address(String, Variable),
-    Struct(String, String, Variable),
+    Struct(String, String, Variable, bool),
 }
 
 impl Display for SVariable {
@@ -1478,7 +1558,9 @@ impl Display for SVariable {
             SVariable::UnboundedArrayF64(name, _) => write!(f, "UnboundedArrayF64 {}", name),
             SVariable::UnboundedArrayI64(name, _) => write!(f, "UnboundedArrayI64 {}", name),
             SVariable::Address(name, _) => write!(f, "Address {}", name),
-            SVariable::Struct(name, structname, _) => write!(f, "Struct {} {}", name, structname),
+            SVariable::Struct(name, structname, _, _return_struct) => {
+                write!(f, "Struct {} {}", name, structname)
+            }
         }
     }
 }
@@ -1493,7 +1575,7 @@ impl SVariable {
             SVariable::UnboundedArrayF64(_, v) => *v,
             SVariable::UnboundedArrayI64(_, v) => *v,
             SVariable::Address(_, v) => *v,
-            SVariable::Struct(_, _, v) => *v,
+            SVariable::Struct(_, _, v, _) => *v,
         }
     }
     pub fn type_name(&self) -> anyhow::Result<String> {
@@ -1505,7 +1587,7 @@ impl SVariable {
             SVariable::UnboundedArrayF64(_, _) => "&[f64]".to_string(),
             SVariable::UnboundedArrayI64(_, _) => "&[i64]".to_string(),
             SVariable::Address(_, _) => "&".to_string(),
-            SVariable::Struct(_, name, _) => name.to_string(),
+            SVariable::Struct(_, name, _, _) => name.to_string(),
         })
     }
     fn expect_f64(&self, ctx: &str) -> anyhow::Result<Variable> {
@@ -1546,7 +1628,7 @@ impl SVariable {
     }
     fn expect_struct(&self, name: &str, ctx: &str) -> anyhow::Result<Variable> {
         match self {
-            SVariable::Struct(varname, sname, v) => {
+            SVariable::Struct(varname, sname, v, _return_struct) => {
                 if sname == name {
                     return Ok(*v);
                 } else {
@@ -1580,16 +1662,49 @@ fn declare_variables(
     let mut variables: HashMap<String, SVariable> = HashMap::new();
     let mut index = 0;
 
+    let entry_block_is_offset = if returns.len() > 0 {
+        if let ExprType::Struct(_struct_name) = &returns[0].expr_type {
+            // When calling a function that will return a struct, Rust (or possibly anything using the C ABI),
+            // will allocate the stack space needed for the struct that will be returned. This is allocated in
+            // the callers frame, then the stack address is passed as a special argument to the first parameter
+            // of the callee.
+            // https://docs.wasmtime.dev/api/cranelift/prelude/enum.StackSlotKind.html#variant.StructReturnSlot
+            // https://docs.wasmtime.dev/api/cranelift_codegen/ir/enum.ArgumentPurpose.html#variant.StructReturn
+
+            let return_struct_arg = &returns[0];
+            let return_struct_param_val = builder.block_params(entry_block)[0];
+            let var = declare_variable(
+                module,
+                builder,
+                &mut variables,
+                &mut index,
+                return_struct_arg,
+                true,
+            );
+            if let Some(var) = var {
+                builder.def_var(var.inner(), return_struct_param_val);
+            }
+            true
+        } else {
+            for arg in returns {
+                declare_variable(module, builder, &mut variables, &mut index, arg, false);
+            }
+            false
+        }
+    } else {
+        false
+    };
+
     for (i, arg) in params.iter().enumerate() {
-        let val = builder.block_params(entry_block)[i];
-        let var = declare_variable(module, builder, &mut variables, &mut index, arg);
+        let val = if entry_block_is_offset {
+            builder.block_params(entry_block)[i + 1]
+        } else {
+            builder.block_params(entry_block)[i]
+        };
+        let var = declare_variable(module, builder, &mut variables, &mut index, arg, false);
         if let Some(var) = var {
             builder.def_var(var.inner(), val);
         }
-    }
-
-    for arg in returns {
-        declare_variable(module, builder, &mut variables, &mut index, arg);
     }
 
     for expr in stmts {
@@ -1856,7 +1971,7 @@ fn declare_variable_from_type(
                 let var = Variable::new(*index);
                 variables.insert(
                     name.into(),
-                    SVariable::Struct(name.into(), structname.to_string(), var),
+                    SVariable::Struct(name.into(), structname.to_string(), var, false),
                 );
                 builder.declare_var(var, ptr_type);
                 *index += 1;
@@ -1872,6 +1987,7 @@ fn declare_variable(
     variables: &mut HashMap<String, SVariable>,
     index: &mut usize,
     arg: &Arg,
+    return_struct: bool,
 ) -> Option<SVariable> {
     let ptr_ty = module.target_config().pointer_type();
     if !variables.contains_key(&arg.name) {
@@ -1907,6 +2023,7 @@ fn declare_variable(
                     arg.name.clone(),
                     structname.to_string(),
                     Variable::new(*index),
+                    return_struct,
                 ),
                 ptr_ty,
             ),

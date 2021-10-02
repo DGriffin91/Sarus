@@ -6,38 +6,15 @@ use cranelift::prelude::{types, InstBuilder, Value};
 use cranelift_jit::JITBuilder;
 
 use crate::frontend::Arg;
-use crate::hashmap;
 use crate::jit::SValue;
 use crate::{
+    decl,
     frontend::{Declaration, Function},
     validator::ExprType,
 };
+use crate::{hashmap, make_decl};
 
 use crate::validator::ExprType as E;
-
-fn decl(name: &str, params: Vec<(&str, ExprType)>, returns: Vec<(&str, ExprType)>) -> Declaration {
-    Declaration::Function(Function {
-        name: name.to_string(),
-        params: params
-            .into_iter()
-            .map(|(name, expr)| Arg {
-                name: name.to_string(),
-                expr_type: expr,
-                default_to_float: false,
-            })
-            .collect(),
-        returns: returns
-            .into_iter()
-            .map(|(name, expr)| Arg {
-                name: name.to_string(),
-                expr_type: expr,
-                default_to_float: false,
-            })
-            .collect(),
-        body: vec![],
-        extern_func: true,
-    })
-}
 
 //Reference: https://www.gnu.org/software/libc/manual/html_node/Mathematics.html
 //https://docs.rs/libc/0.2.101/libc/
@@ -157,42 +134,6 @@ pub fn append_std_symbols(jit_builder: &mut JITBuilder) {
     ]);
 }
 
-#[macro_export]
-macro_rules! decl {
-    ( $prog:expr, $jit_builder:expr, $name:expr, $func:expr,  ($( $param:expr ),*), ($( $ret:expr ),*) ) => {
-        {
-            let mut params = Vec::new();
-            $(
-                params.push(Arg {
-                    name: format!("in{}", params.len()),
-                    expr_type: $param,
-                    default_to_float: false,
-                });
-            )*
-
-            let mut returns = Vec::new();
-            $(
-                returns.push(Arg {
-                    name: format!("out{}", returns.len()),
-                    expr_type: $ret,
-                    default_to_float: false,
-                });
-            )*
-
-            $jit_builder.symbol($name, $func as *const u8);
-
-            $prog.push(Declaration::Function(Function {
-                name: $name.to_string(),
-                params,
-                returns,
-                body: vec![],
-                extern_func: true,
-            }))
-
-        }
-    };
-}
-
 #[rustfmt::skip]
 pub fn append_std_math(
     prog: &mut Vec<Declaration>,
@@ -267,58 +208,58 @@ pub fn append_std_math(
 
 pub fn append_std_funcs(prog: &mut Vec<Declaration>) {
     for n in STD_1ARG_FF {
-        prog.push(decl(n, vec![("x", E::F64)], vec![("y", E::F64)]));
+        prog.push(make_decl(n, vec![("x", E::F64)], vec![("y", E::F64)]));
     }
     for n in STD_1ARG_FI {
-        prog.push(decl(n, vec![("x", E::F64)], vec![("y", E::I64)]));
+        prog.push(make_decl(n, vec![("x", E::F64)], vec![("y", E::I64)]));
     }
     for n in STD_1ARG_IF {
-        prog.push(decl(n, vec![("x", E::I64)], vec![("y", E::F64)]));
+        prog.push(make_decl(n, vec![("x", E::I64)], vec![("y", E::F64)]));
     }
     for n in STD_2ARG_FF {
-        prog.push(decl(
+        prog.push(make_decl(
             n,
             vec![("x", E::F64), ("y", E::F64)],
             vec![("z", E::F64)],
         ));
     }
     for n in STD_2ARG_II {
-        prog.push(decl(
+        prog.push(make_decl(
             n,
             vec![("x", E::I64), ("y", E::I64)],
             vec![("z", E::I64)],
         ));
     }
-    prog.push(decl("f64.print", vec![("x", E::F64)], vec![]));
-    prog.push(decl("i64.print", vec![("x", E::I64)], vec![]));
-    prog.push(decl("bool.print", vec![("x", E::Bool)], vec![]));
-    prog.push(decl("&.print", vec![("x", E::Address)], vec![]));
-    prog.push(decl("f64.println", vec![("x", E::F64)], vec![]));
-    prog.push(decl("i64.println", vec![("x", E::I64)], vec![]));
-    prog.push(decl("bool.println", vec![("x", E::Bool)], vec![]));
-    prog.push(decl("&.println", vec![("x", E::Address)], vec![]));
-    prog.push(decl(
+    prog.push(make_decl("f64.print", vec![("x", E::F64)], vec![]));
+    prog.push(make_decl("i64.print", vec![("x", E::I64)], vec![]));
+    prog.push(make_decl("bool.print", vec![("x", E::Bool)], vec![]));
+    prog.push(make_decl("&.print", vec![("x", E::Address)], vec![]));
+    prog.push(make_decl("f64.println", vec![("x", E::F64)], vec![]));
+    prog.push(make_decl("i64.println", vec![("x", E::I64)], vec![]));
+    prog.push(make_decl("bool.println", vec![("x", E::Bool)], vec![]));
+    prog.push(make_decl("&.println", vec![("x", E::Address)], vec![]));
+    prog.push(make_decl(
         "f64.assert_eq",
         vec![("x", E::F64), ("y", E::F64)],
         vec![],
     ));
-    prog.push(decl(
+    prog.push(make_decl(
         "i64.assert_eq",
         vec![("x", E::I64), ("y", E::I64)],
         vec![],
     ));
-    prog.push(decl(
+    prog.push(make_decl(
         "bool.assert_eq",
         vec![("x", E::Bool), ("y", E::Bool)],
         vec![],
     ));
-    prog.push(decl(
+    prog.push(make_decl(
         "&.assert_eq",
         vec![("x", E::Address), ("y", E::Address)],
         vec![],
     ));
 
-    //prog.push(decl(
+    //prog.push(make_decl(
     //    "bytes",
     //    vec![("size", ExprType::I64)],
     //    vec![("mem", ExprType::Address)],

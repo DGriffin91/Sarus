@@ -121,7 +121,7 @@ impl ExprType {
                     //TODO Refactor?
                     if variables.contains_key(parts[0]) {
                         match &variables[parts[0]] {
-                            SVariable::Struct(_var_name, struct_name, _var) => {
+                            SVariable::Struct(_var_name, struct_name, _var, _return_struct) => {
                                 let mut struct_name = struct_name.to_string();
                                 for i in 1..parts.len() {
                                     let next_expr =
@@ -154,7 +154,7 @@ impl ExprType {
                         SVariable::UnboundedArrayF64(_, _) => ExprType::UnboundedArrayF64,
                         SVariable::UnboundedArrayI64(_, _) => ExprType::UnboundedArrayI64,
                         SVariable::Address(_, _) => ExprType::Address,
-                        SVariable::Struct(_, structname, _) => {
+                        SVariable::Struct(_, structname, _, _) => {
                             ExprType::Struct(Box::new(structname.to_string()))
                         }
                     }
