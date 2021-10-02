@@ -1270,10 +1270,20 @@ impl<'a> FunctionTranslator<'a> {
             let sval = self.translate_expr(&field.expr)?;
 
             if let SValue::Struct(src_name, src_start_ptr) = sval {
+                if src_name != dst_field_def.expr_type.to_string() {
+                    anyhow::bail!(
+                        "struct {} expected struct {} for field {} but got {} instead",
+                        name,
+                        dst_field_def.expr_type.to_string(),
+                        dst_field_def.name,
+                        src_name
+                    )
+                }
+
                 let stack_slot_address = self.builder.ins().stack_addr(
                     self.module.target_config().pointer_type(),
                     stack_slot,
-                    Offset32::new(dst_field_def.offset as i32), //TODO this shouldn't need to be *2
+                    Offset32::new(dst_field_def.offset as i32),
                 );
 
                 self.builder.emit_small_memory_copy(
@@ -1297,7 +1307,16 @@ impl<'a> FunctionTranslator<'a> {
                     //struct bools are stored as I8
                     self.builder.ins().bint(types::I8, val)
                 } else {
-                    //TODO make sure type of incoming val matches what struct has
+                    if sval.to_string() != dst_field_def.expr_type.to_string() {
+                        anyhow::bail!(
+                            "struct {} expected type {} for field {} but got {} instead",
+                            name,
+                            dst_field_def.expr_type.to_string(),
+                            dst_field_def.name,
+                            sval.to_string()
+                        )
+                    }
+
                     sval.inner("new_struct")?
                 };
 
@@ -1695,7 +1714,6 @@ fn declare_variables(
     constant_vars: &HashMap<String, f64>,
     struct_map: &HashMap<String, StructDef>,
 ) -> anyhow::Result<HashMap<String, SVariable>> {
-    //TODO we should create a list of the variables here with their expected type, so it can be referenced later
     let mut variables: HashMap<String, SVariable> = HashMap::new();
     let mut index = 0;
 
