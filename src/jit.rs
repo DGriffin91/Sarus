@@ -290,6 +290,7 @@ impl JIT {
             env,
             funcs,
             struct_map,
+            func,
             module: &mut self.module,
         };
         for expr in &func.body {
@@ -485,6 +486,7 @@ struct FunctionTranslator<'a> {
     module: &'a mut JITModule,
     constant_vars: HashMap<String, f64>,
     env: &'a [Declaration],
+    func: &'a Function,
 }
 
 impl<'a> FunctionTranslator<'a> {
@@ -837,7 +839,7 @@ impl<'a> FunctionTranslator<'a> {
         //But if there is not, use the output of the first expression:
         //eg: `a, b = func_that_outputs_2_floats(1.0)`
         if names.len() == expr.len() {
-            for (i, name) in names.iter().enumerate() {
+            'expression: for (i, name) in names.iter().enumerate() {
                 let val = self.translate_expr(expr.get(i).unwrap())?;
                 if name.contains(".") {
                     let parts = name.split(".").collect::<Vec<&str>>();
@@ -848,6 +850,25 @@ impl<'a> FunctionTranslator<'a> {
                         Some(v) => v,
                         None => anyhow::bail!("variable {} not found", name),
                     };
+
+                    for arg in &self.func.params {
+                        if *name == arg.name {
+                            if let ExprType::Struct(stuct_name) = &arg.expr_type {
+                                //copy to struct that was passed in as parameter
+                                //TODO should there be specifc syntax for this?
+                                let return_address = self.builder.use_var(var.inner());
+                                copy_to_stack_slot(
+                                    self.module.target_config(),
+                                    &mut self.builder,
+                                    self.struct_map[&stuct_name.to_string()].size,
+                                    val.expect_struct(&stuct_name.to_string(), "translate_assign")?,
+                                    return_address,
+                                    0,
+                                )?;
+                                continue 'expression;
+                            }
+                        }
+                    }
 
                     if let SVariable::Struct(_var_name, struct_name, _var, return_struct) = var {
                         if *return_struct {
@@ -861,7 +882,7 @@ impl<'a> FunctionTranslator<'a> {
                                 return_address,
                                 0,
                             )?;
-                            continue;
+                            continue 'expression;
                         }
                     }
                     self.builder
