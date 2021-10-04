@@ -2007,11 +2007,18 @@ fn process(audio: AudioData) -> () {
     i = 0
     while i < audio.len {
         left = audio.left
-        right = audio.right
-        left[i] = (left[i] * 10.0).tanh() * 0.1
-        right[i] = (right[i] * 10.0).tanh() * 0.1
+        //left[i] = (audio.left[i] * 10.0).tanh() * 0.1
+        //right[i] = (audio.right[i] * 10.0).tanh() * 0.1
+        left[i] = i.f64() //TODO does not check type
+        audio.right[i] = i.f64()  
         i += 1
     }
+    audio.left[1].assert_eq(1.0)
+    audio.left[2].assert_eq(2.0)
+    (audio.left[3]).assert_eq(3.0)
+    (audio.left[4]).assert_eq(4.0)
+    (left[5]).assert_eq(5.0)
+    left[6].assert_eq(6.0)
 }
 "#;
 
@@ -2124,10 +2131,10 @@ fn process(audio: AudioData) -> () {
     state.filter_l.set_val()
     state.filter_r.set_val()
 
-    state.filter_l.ic1eq.println()
-    state.filter_l.ic2eq.println()
-    state.filter_r.ic1eq.println()
-    state.filter_r.ic2eq.println()
+    state.filter_l.ic1eq.assert_eq(1.0)
+    state.filter_l.ic2eq.assert_eq(2.0)
+    state.filter_r.ic1eq.assert_eq(1.0)
+    state.filter_r.ic2eq.assert_eq(2.0)
 }
 
 fn set_val(self: Filter) -> () {

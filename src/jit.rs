@@ -411,7 +411,20 @@ impl SValue {
             ExprType::Struct(name) => SValue::Struct(name.to_string(), value),
         })
     }
-
+    pub fn expr_type(&self) -> anyhow::Result<ExprType> {
+        Ok(match self {
+            SValue::Unknown(_) => anyhow::bail!("expression type is unknown"),
+            SValue::Bool(_) => ExprType::Bool,
+            SValue::F64(_) => ExprType::F64,
+            SValue::I64(_) => ExprType::I64,
+            SValue::UnboundedArrayF64(_) => ExprType::UnboundedArrayF64,
+            SValue::UnboundedArrayI64(_) => ExprType::UnboundedArrayI64,
+            SValue::Address(_) => ExprType::Address,
+            SValue::Struct(name, _) => ExprType::Struct(Box::new(name.to_string())),
+            SValue::Void => ExprType::Void,
+            SValue::Tuple(e) => todo!(),
+        })
+    }
     fn inner(&self, ctx: &str) -> anyhow::Result<Value> {
         match self {
             SValue::Unknown(v) => Ok(*v),
@@ -612,40 +625,63 @@ impl<'a> FunctionTranslator<'a> {
 
             if let Some(lval) = lval {
                 let mut parts = Vec::new();
-                let mut last_expr = None;
+                let mut last_expr_val = None;
                 let len = lval.expr.len();
                 for (i, expr) in lval.expr.iter().enumerate() {
                     match expr {
                         Expr::Parentheses(e) => {
-                            last_expr = Some(self.translate_expr(e)?);
+                            last_expr_val = Some(self.translate_expr(e)?);
                         }
                         Expr::Identifier(s) | Expr::LiteralString(s) => {
                             parts.push(s.as_str());
                             if i == len - 1 {
                                 //if this is the last one
-                                last_expr = Some(self.get_struct_field(parts.clone())?);
+                                last_expr_val = Some(self.get_struct_field(parts.clone())?);
                             } else if i < len - 1 {
                                 //if this is not the last one
-                                if let Expr::Call(..) = lval.expr[i + 1] {
-                                    //and the next is a call
-                                    last_expr = if parts.len() == 1 {
-                                        Some(self.translate_expr(&lval.expr[i])?)
-                                    } else {
-                                        Some(self.get_struct_field(parts.clone())?)
+                                match lval.expr[i + 1] {
+                                    Expr::Call(_, _) | Expr::ArrayGet(_, _) => {
+                                        //and the next is a call
+                                        last_expr_val = if parts.len() == 1 {
+                                            Some(self.translate_expr(&lval.expr[i])?)
+                                        } else {
+                                            Some(self.get_struct_field(parts.clone())?)
+                                        }
                                     }
+                                    Expr::ArraySet(_, _, _) => todo!(),
+                                    _ => (),
                                 }
                             }
                             //TODO this can't be used after other Expr types
                         }
                         Expr::Call(name, args) => {
-                            last_expr = Some(self.translate_call(name, &args, last_expr)?);
+                            last_expr_val =
+                                Some(self.translate_call(name, &args, last_expr_val)?);
+                        }
+                        Expr::ArrayGet(name, idx_expr) => {
+                            if parts.len() == 0 {
+                                last_expr_val = Some(self.translate_expr(expr)?);
+                            } else {
+                                parts.push(name.as_str());
+                                let array_start_address = self.get_struct_field(parts.clone())?;
+                                let idx_val = self.translate_expr(idx_expr).unwrap();
+                                let idx_val = match idx_val {
+                                    SValue::I64(v) => v,
+                                    _ => anyhow::bail!("only int supported for array access"),
+                                };
+                                last_expr_val = Some(self.get_array_from_ptr(
+                                    array_start_address.inner("ArrayGet")?,
+                                    idx_val,
+                                    &array_start_address.expr_type()?,
+                                )?)
+                            }
                         }
                         a => {
                             panic!("non identifier/call found {}", a)
                         }
                     }
                 }
-                if let Some(last_expr) = last_expr {
+                if let Some(last_expr) = last_expr_val {
                     return Ok(last_expr);
                 } else {
                     panic!("no last_expr found")
@@ -930,17 +966,6 @@ impl<'a> FunctionTranslator<'a> {
             None => anyhow::bail!("variable {} not found", name),
         };
 
-        let base_type = match &variable {
-            SVariable::Unknown(_, _) => ptr_ty,
-            SVariable::UnboundedArrayF64(_, _) => types::F64,
-            SVariable::UnboundedArrayI64(_, _) => types::I64,
-            SVariable::Address(_, _) => ptr_ty,
-            SVariable::Struct(_, _, _, _)
-            | SVariable::I64(_, _)
-            | SVariable::F64(_, _)
-            | SVariable::Bool(_, _) => anyhow::bail!("can't index type {}", &variable),
-        };
-
         let array_ptr = self.builder.use_var(variable.inner());
 
         let idx_val = self.translate_expr(idx_expr).unwrap();
@@ -949,7 +974,32 @@ impl<'a> FunctionTranslator<'a> {
             _ => anyhow::bail!("only int supported for array access"),
         };
 
-        let mult_n = self.builder.ins().iconst(ptr_ty, base_type.bytes() as i64);
+        self.get_array_from_ptr(array_ptr, idx_val, &variable.expr_type()?)
+    }
+
+    fn get_array_from_ptr(
+        &mut self,
+        array_ptr: Value,
+        idx_val: Value,
+        expr_type: &ExprType,
+    ) -> anyhow::Result<SValue> {
+        let ptr_ty = self.module.target_config().pointer_type();
+
+        let base_type = match expr_type {
+            ExprType::UnboundedArrayF64 => types::F64,
+            ExprType::UnboundedArrayI64 => types::I64,
+            ExprType::Void
+            | ExprType::Bool
+            | ExprType::F64
+            | ExprType::I64
+            | ExprType::Address
+            | ExprType::Tuple(_)
+            | ExprType::Struct(_) => anyhow::bail!("can't index type {}", &expr_type),
+        };
+
+        let step_bytes = base_type.bytes();
+        let ptr_ty = self.module.target_config().pointer_type();
+        let mult_n = self.builder.ins().iconst(ptr_ty, step_bytes as i64);
         let idx_val = self.builder.ins().imul(mult_n, idx_val);
         let idx_ptr = self.builder.ins().iadd(idx_val, array_ptr);
 
@@ -958,15 +1008,16 @@ impl<'a> FunctionTranslator<'a> {
             .ins()
             .load(base_type, MemFlags::new(), idx_ptr, Offset32::new(0));
 
-        let sval = match &variable {
-            SVariable::Unknown(_, _) => SValue::Unknown(val),
-            SVariable::UnboundedArrayF64(_, _) => SValue::F64(val),
-            SVariable::UnboundedArrayI64(_, _) => SValue::I64(val),
-            SVariable::Address(_, _) => SValue::Address(val),
-            SVariable::Struct(_, n, _, _) => SValue::Struct(n.to_string(), val),
-            SVariable::I64(_, _) | SVariable::F64(_, _) | SVariable::Bool(_, _) => {
-                anyhow::bail!("can't index type {}", &variable)
-            }
+        let sval = match expr_type {
+            ExprType::UnboundedArrayF64 => SValue::F64(val),
+            ExprType::UnboundedArrayI64 => SValue::I64(val),
+            ExprType::Void
+            | ExprType::Bool
+            | ExprType::F64
+            | ExprType::I64
+            | ExprType::Address
+            | ExprType::Tuple(_)
+            | ExprType::Struct(_) => anyhow::bail!("can't index type {}", &expr_type),
         };
         Ok(sval)
     }
@@ -1663,6 +1714,18 @@ impl SVariable {
             SVariable::Address(_, v) => *v,
             SVariable::Struct(_, _, v, _) => *v,
         }
+    }
+    pub fn expr_type(&self) -> anyhow::Result<ExprType> {
+        Ok(match self {
+            SVariable::Unknown(_, _) => anyhow::bail!("expression type is unknown"),
+            SVariable::Bool(_, _) => ExprType::Bool,
+            SVariable::F64(_, _) => ExprType::F64,
+            SVariable::I64(_, _) => ExprType::I64,
+            SVariable::UnboundedArrayF64(_, _) => ExprType::UnboundedArrayF64,
+            SVariable::UnboundedArrayI64(_, _) => ExprType::UnboundedArrayI64,
+            SVariable::Address(_, _) => ExprType::Address,
+            SVariable::Struct(_, name, _, _) => ExprType::Struct(Box::new(name.to_string())),
+        })
     }
     pub fn type_name(&self) -> anyhow::Result<String> {
         Ok(match self {
