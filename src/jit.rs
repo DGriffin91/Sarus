@@ -1389,25 +1389,31 @@ impl<'a> FunctionTranslator<'a> {
     }
 
     fn get_struct_field(&mut self, parts: Vec<&str>) -> anyhow::Result<SValue> {
+        let ptr_ty = self.module.target_config().pointer_type();
         let (parent_struct_field_def, base_struct_var_ptr, offset) =
             self.get_struct_field_location(parts)?;
 
         if let ExprType::Struct(name) = &parent_struct_field_def.expr_type {
-            //If the struct field is a struct, return copy of struct
-            let stack_slot_address = create_and_copy_to_stack_slot(
-                self.module.target_config(),
-                &mut self.builder,
-                parent_struct_field_def.size,
-                base_struct_var_ptr,
-                offset,
-            )?;
-            Ok(SValue::Struct(name.to_string(), stack_slot_address))
+            ////If the struct field is a struct, return copy of struct
+            ////let stack_slot_address = create_and_copy_to_stack_slot(
+            ////    self.module.target_config(),
+            ////    &mut self.builder,
+            ////    parent_struct_field_def.size,
+            ////    base_struct_var_ptr,
+            ////    offset,
+            ////)?;
+            ////Ok(SValue::Struct(name.to_string(), stack_slot_address))
+
+            //If the struct field is a struct, return address of sub struct
+            let offset_v = self.builder.ins().iconst(ptr_ty, offset as i64);
+            let address = self.builder.ins().iadd(base_struct_var_ptr, offset_v);
+            Ok(SValue::Struct(name.to_string(), address))
         } else {
             //If the struct field is not a struct, return copy of value
             let mut val = self.builder.ins().load(
                 parent_struct_field_def
                     .expr_type
-                    .cranelift_type(self.module.target_config().pointer_type(), true)?,
+                    .cranelift_type(ptr_ty, true)?,
                 MemFlags::new(),
                 base_struct_var_ptr,
                 Offset32::new(offset as i32),

@@ -1985,3 +1985,162 @@ fn size_of_stuff() -> (size: i64) {
 
     Ok(())
 }
+
+#[repr(C)]
+struct AudioData {
+    left: *const f64,
+    right: *const f64,
+    len: i64,
+}
+
+//TODO get dot accessing working with arrays
+#[test]
+fn struct_of_slices_of_numbers() -> anyhow::Result<()> {
+    let code = r#"
+struct AudioData {
+    left: &[f64],
+    right: &[f64],
+    len: i64,
+}
+
+fn process(audio: AudioData) -> () {
+    i = 0
+    while i < audio.len {
+        left = audio.left
+        right = audio.right
+        left[i] = (left[i] * 10.0).tanh() * 0.1
+        right[i] = (right[i] * 10.0).tanh() * 0.1
+        i += 1
+    }
+}
+"#;
+
+    let mut jit = default_std_jit_from_code(&code)?;
+
+    let func_ptr = jit.get_func("process")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut AudioData) -> ()>(func_ptr) };
+
+    let left = vec![0.0f64; 4096];
+    let right = vec![0.0f64; 4096];
+
+    let mut audio_data = AudioData {
+        left: left.as_ptr(),
+        right: right.as_ptr(),
+        len: 64,
+    };
+
+    func(&mut audio_data);
+
+    Ok(())
+}
+
+//
+// TODO
+// This should return an error that a1 does not exist
+// maybe the validator is not looking at struct assigns
+/*
+
+#[test]
+fn lowshelf() -> anyhow::Result<()> {
+    let code = r#"
+struct AudioData {
+    left: &[f64],
+    right: &[f64],
+    len: i64,
+}
+
+fn FilterParams::lowshelf(cutoff_hz, gain_db, q_value) -> (params: FilterParams) {
+    cutoff_hz = cutoff_hz.min(48000.0 * 0.5)
+    a = (10.0).powf(gain_db / 40.0)
+    g = (PI * cutoff_hz / 48000.0).tan() / a.sqrt()
+    k = 1.0 / q_value
+    params = FilterParams {
+        a1: 1.0 / (1.0 + g * (g + k)),
+        a2: g * a1,
+        a3: g * a2,
+        m0: 1.0,
+        m1: k * (a - 1.0),
+        m2: a * a - 1.0,
+    }
+}
+
+fn process(audio: AudioData) -> () {
+    lowshelf = FilterParams::lowshelf(1000.0, -10.0, 2.0)
+    i = 0
+    while i < audio.len {
+        left = audio.left
+        right = audio.right
+        left[i] = (left[i] * 10.0).tanh() * 0.1
+        right[i] = (right[i] * 10.0).tanh() * 0.1
+        i += 1
+    }
+}
+
+
+struct FilterParams { a1, a2, a3, m0, m1, m2, }
+"#;
+
+    let mut jit = default_std_jit_from_code(&code)?;
+
+    let func_ptr = jit.get_func("process")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut AudioData) -> ()>(func_ptr) };
+
+    let left = vec![0.0f64; 4096];
+    let right = vec![0.0f64; 4096];
+
+    let mut audio_data = AudioData {
+        left: left.as_ptr(),
+        right: right.as_ptr(),
+        len: 64,
+    };
+
+    func(&mut audio_data);
+
+    Ok(())
+}
+*/
+
+#[test]
+fn inner_struct_manipulate() -> anyhow::Result<()> {
+    let code = r#"
+struct Filter {
+    ic1eq,
+    ic2eq,
+}
+
+struct ProcessState {
+    filter_l: Filter,
+    filter_r: Filter,
+}
+
+
+fn process(audio: AudioData) -> () {
+    filter_l = Filter { ic1eq: 0.0, ic2eq: 0.0, }
+    filter_r = Filter { ic1eq: 0.0, ic2eq: 0.0, }
+    state = ProcessState {
+        filter_l: filter_l,
+        filter_r: filter_r,
+    }
+    state.filter_l.set_val()
+    state.filter_r.set_val()
+
+    state.filter_l.ic1eq.println()
+    state.filter_l.ic2eq.println()
+    state.filter_r.ic1eq.println()
+    state.filter_r.ic2eq.println()
+}
+
+fn set_val(self: Filter) -> () {
+    self.ic1eq = 1.0
+    self.ic2eq = 2.0
+}
+"#;
+
+    let mut jit = default_std_jit_from_code(&code)?;
+
+    let func_ptr = jit.get_func("process")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn() -> ()>(func_ptr) };
+    func();
+
+    Ok(())
+}
