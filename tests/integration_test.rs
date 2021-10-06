@@ -31,6 +31,9 @@ fn main(a, b) -> (c) {
 #[test]
 fn libc_math() -> anyhow::Result<()> {
     let code = r#"
+fn nums() -> (r) {
+    r = E + FRAC_1_PI + FRAC_1_SQRT_2 + FRAC_2_SQRT_PI + FRAC_PI_2 + FRAC_PI_3 + FRAC_PI_4 + FRAC_PI_6 + FRAC_PI_8 + LN_2 + LN_10 + LOG2_10 + LOG2_E + LOG10_2 + LOG10_E + PI + SQRT_2 + TAU
+}
 fn main(a, b) -> (c) {
     c = b
     c = sin(c)
@@ -49,9 +52,6 @@ fn main(a, b) -> (c) {
     c = atan2(c, a)
     c = pow(c, a * 0.001)
     c *= nums()
-}
-fn nums() -> (r) {
-    r = E + FRAC_1_PI + FRAC_1_SQRT_2 + FRAC_2_SQRT_PI + FRAC_PI_2 + FRAC_PI_3 + FRAC_PI_4 + FRAC_PI_6 + FRAC_PI_8 + LN_2 + LN_10 + LOG2_10 + LOG2_E + LOG10_2 + LOG10_E + PI + SQRT_2 + TAU
 }
 "#;
 
@@ -104,6 +104,9 @@ fn nums() -> (r) {
 #[test]
 fn rust_math() -> anyhow::Result<()> {
     let code = r#"
+fn nums() -> (r) {
+    r = E + FRAC_1_PI + FRAC_1_SQRT_2 + FRAC_2_SQRT_PI + FRAC_PI_2 + FRAC_PI_3 + FRAC_PI_4 + FRAC_PI_6 + FRAC_PI_8 + LN_2 + LN_10 + LOG2_10 + LOG2_E + LOG10_2 + LOG10_E + PI + SQRT_2 + TAU
+}
 fn main(a, b) -> (c) {
     c = b
     c = c.sin()
@@ -122,9 +125,6 @@ fn main(a, b) -> (c) {
     c = c.atan2(a)
     c = c.powf(a * 0.001)
     c *= nums()
-}
-fn nums() -> (r) {
-    r = E + FRAC_1_PI + FRAC_1_SQRT_2 + FRAC_2_SQRT_PI + FRAC_PI_2 + FRAC_PI_3 + FRAC_PI_4 + FRAC_PI_6 + FRAC_PI_8 + LN_2 + LN_10 + LOG2_10 + LOG2_E + LOG10_2 + LOG10_E + PI + SQRT_2 + TAU
 }
 "#;
 
@@ -228,6 +228,24 @@ fn minmax() -> anyhow::Result<()> {
 fn comments() -> anyhow::Result<()> {
     let code = r#"
 //test
+//test
+
+
+//test
+fn foodd(a, b) -> (c) {
+    c = a + b//test
+}//test
+
+//fn foodd(a, b) -> (c) {
+//    c = a + b//test
+//}//test
+
+fn maina(a, b) -> (c) {//test
+    c = foodd(a, b) + 2.12312 + 1.1//test
+    c = c + 10.0//test
+}//test
+    
+//test
 fn main(a, b) -> (c) {//test
 //test
     //test
@@ -239,23 +257,6 @@ fn main(a, b) -> (c) {//test
     c = d + 1.0 //test
 //test//test
 }//test
-
-//test
-//test
-
-fn maina(a, b) -> (c) {//test
-    c = foodd(a, b) + 2.12312 + 1.1//test
-    c = c + 10.0//test
-}//test
-//test
-fn foodd(a, b) -> (c) {
-    c = a + b//test
-}//test
-
-//fn foodd(a, b) -> (c) {
-//    c = a + b//test
-//}//test
-    
 "#;
 
     let a = 100.0f64;
@@ -269,7 +270,16 @@ fn foodd(a, b) -> (c) {
 
 #[test]
 fn multiple_returns() -> anyhow::Result<()> {
-    let code = r#"
+    let code = r#"    
+    fn stuff(a, b) -> (c, d) {
+        c = a + 1.0
+        d = c + b + 10.0
+    }
+    
+    fn stuff2(a) -> (c) {
+        c = a + 1.0
+    }
+
     fn main(a, b) -> (e) {
         c, d = stuff(a, b)
         c, d = d, c
@@ -289,15 +299,6 @@ fn multiple_returns() -> anyhow::Result<()> {
             e = e * 2.0
             i += 1.0
         }
-    }
-    
-    fn stuff(a, b) -> (c, d) {
-        c = a + 1.0
-        d = c + b + 10.0
-    }
-    
-    fn stuff2(a) -> (c) {
-        c = a + 1.0
     }
 "#;
 
@@ -730,11 +731,11 @@ fn main(a: f64, b: i64) -> (c: i64) {
 fn i64_params_multifunc() -> anyhow::Result<()> {
     //Not currently working, see BLOCKERs in jit.rs
     let code = r#"
-fn main(a: f64, b: i64) -> (c: i64) {
-    c = foo(a, b, 2)
-}
 fn foo(a: f64, b: i64, c: i64) -> (d: i64) {
     d = a.i64() + b + c
+}
+fn main(a: f64, b: i64) -> (c: i64) {
+    c = foo(a, b, 2)
 }
 "#;
     let a = 100.0f64;
@@ -1066,6 +1067,28 @@ fn struct_impl_nested() -> anyhow::Result<()> {
     let code = r#"
 extern fn dbgf(s: &, a: f64) -> () {}
 extern fn dbgi(s: &, a: i64) -> () {}
+
+
+struct Point {
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+fn print(self: Point) -> () {
+    "Point {".println()
+    "x: ".print() self.x.print() ",".println()
+    "y: ".print() self.y.print() ",".println()
+    "z: ".print() self.z.print() ",".println()
+    "}".println()
+}
+
+
+
+fn length(self: Point) -> (r: f64) {
+    r = sqrt(pow(self.x, 2.0) + pow(self.y, 2.0) + pow(self.z, 2.0))
+}
+
 struct Line {
     a: Point,
     b: Point,
@@ -1082,24 +1105,6 @@ fn length(self: Line) -> (r: f64) {
     r = sqrt(pow(self.a.x - self.b.x, 2.0) + 
              pow(self.a.y - self.b.y, 2.0) + 
              pow(self.a.z - self.b.z, 2.0))
-}
-
-struct Point {
-    x: f64,
-    y: f64,
-    z: f64,
-}
-
-fn print(self: Point) -> () {
-    "Point {".println()
-    "x: ".print() self.x.print() ",".println()
-    "y: ".print() self.y.print() ",".println()
-    "z: ".print() self.z.print() ",".println()
-    "}".println()
-}
-
-fn length(self: Point) -> (r: f64) {
-    r = sqrt(pow(self.x, 2.0) + pow(self.y, 2.0) + pow(self.z, 2.0))
 }
 
 fn main(n: f64) -> (c: f64) {
@@ -1230,6 +1235,17 @@ fn struct_impl_nested_short() -> anyhow::Result<()> {
     let code = r#"
 extern fn dbgf(s: &, a: f64) -> () {}
 extern fn dbgi(s: &, a: i64) -> () {}
+
+struct Bar {
+    x: f64,
+}
+
+fn print(self: Bar) -> () {
+    "Bar {".println()
+    "x: ".print() self.x.print() ",".println()
+    "}".println()
+}
+
 struct Foo {
     a: Bar,
     b: Bar,
@@ -1242,15 +1258,6 @@ fn print(self: Foo) -> () {
     "}".println()
 }
 
-struct Bar {
-    x: f64,
-}
-
-fn print(self: Bar) -> () {
-    "Bar {".println()
-    "x: ".print() self.x.print() ",".println()
-    "}".println()
-}
 
 fn main(n: f64) -> (c: f64) {
     pe = Bar {
@@ -2120,6 +2127,11 @@ struct ProcessState {
     filter_r: Filter,
 }
 
+fn set_val(self: Filter) -> () {
+    self.ic1eq = 1.0
+    self.ic2eq = 2.0
+}
+
 
 fn process(audio: AudioData) -> () {
     filter_l = Filter { ic1eq: 0.0, ic2eq: 0.0, }
@@ -2137,10 +2149,6 @@ fn process(audio: AudioData) -> () {
     state.filter_r.ic2eq.assert_eq(2.0)
 }
 
-fn set_val(self: Filter) -> () {
-    self.ic1eq = 1.0
-    self.ic2eq = 2.0
-}
 "#;
 
     let mut jit = default_std_jit_from_code(&code)?;
