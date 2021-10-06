@@ -39,7 +39,7 @@ pub struct JIT {
 
 impl Default for JIT {
     fn default() -> Self {
-        let builder = JITBuilder::new(cranelift_module::default_libcall_names());
+        let builder = new_jit_builder(); //JITBuilder::new(cranelift_module::default_libcall_names());
         let module = JITModule::new(builder);
         Self {
             builder_context: FunctionBuilderContext::new(),
