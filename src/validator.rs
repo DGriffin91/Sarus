@@ -5,6 +5,7 @@ use crate::{
     jit::{SVariable, StructDef},
     sarus_std_lib,
 };
+use cranelift::prelude::types;
 use thiserror::Error;
 
 //TODO Make errors more information rich, also: show line in this file, and line in source
@@ -91,6 +92,26 @@ pub struct Lval {
 }
 
 impl ExprType {
+    pub fn width(&self, ptr_ty: types::Type, struct_map: &HashMap<String, StructDef>) -> u32 {
+        match self {
+            ExprType::UnboundedArrayF64 => ptr_ty.bytes(),
+            ExprType::UnboundedArrayI64 => ptr_ty.bytes(),
+            ExprType::Void => 0,
+            ExprType::Bool => types::I8.bytes(),
+            ExprType::F64 => types::F64.bytes(),
+            ExprType::I64 => types::I64.bytes(),
+            ExprType::Address => ptr_ty.bytes(),
+            ExprType::Tuple(expr_types) => {
+                let mut width = 0;
+                for expr_ty in expr_types.iter() {
+                    width += expr_ty.width(ptr_ty, struct_map);
+                }
+                width
+            }
+            ExprType::Struct(name) => struct_map[&name.to_string()].size,
+        }
+    }
+
     pub fn of(
         expr: &Expr,
         lval: &mut Option<Lval>,
@@ -171,6 +192,7 @@ impl ExprType {
             Expr::LiteralBool(_) => ExprType::Bool,
             Expr::LiteralString(_) => ExprType::Address, //TODO change to char
             Expr::Binop(binop, l, r) => match binop {
+                //TODO restructure to be more like translate_binop() in the jit codegen
                 crate::frontend::Binop::DotAccess => {
                     //keep on looking at rt until you hit the end or a func
                     //find the result type of fields with struct_map and funcs with Type.func_name() in funcs
@@ -333,10 +355,10 @@ impl ExprType {
                     });
                 }
             }
-            Expr::Assign(vars, e) => {
-                let tlen = match e.len().into() {
+            Expr::Assign(lhs_exprs, rhs_exprs) => {
+                let tlen = match rhs_exprs.len().into() {
                     1 => ExprType::of(
-                        &e[0],
+                        &rhs_exprs[0],
                         &mut None,
                         env,
                         funcs,
@@ -347,17 +369,56 @@ impl ExprType {
                     .tuple_size(),
                     n => n,
                 };
-                if usize::from(vars.len()) != tlen {
+                if usize::from(lhs_exprs.len()) != tlen {
                     return Err(TypeError::TupleLengthMismatch {
-                        actual: usize::from(vars.len()),
+                        actual: usize::from(rhs_exprs.len()),
                         expected: tlen,
                     });
                 }
+                for (lhs_expr, rhs_expr) in lhs_exprs.iter().zip(rhs_exprs.iter()) {
+                    //println!(
+                    //    "{}:{} lhs_expr {} = rhs_expr {}",
+                    //    file!(),
+                    //    line!(),
+                    //    lhs_expr,
+                    //    rhs_expr
+                    //);
+                    if let Expr::Identifier(_) = lhs_expr {
+                        //The lhs_expr is just a new var
+                        continue;
+                    }
+                    let lhs_type = ExprType::of(
+                        lhs_expr,
+                        &mut None,
+                        env,
+                        funcs,
+                        variables,
+                        constant_vars,
+                        struct_map,
+                    )?;
+                    let rhs_type = ExprType::of(
+                        rhs_expr,
+                        &mut None,
+                        env,
+                        funcs,
+                        variables,
+                        constant_vars,
+                        struct_map,
+                    )?;
+
+                    if lhs_type != rhs_type {
+                        return Err(TypeError::TypeMismatch {
+                            expected: lhs_type,
+                            actual: rhs_type,
+                        });
+                    }
+                }
                 ExprType::Tuple(
-                    e.iter()
-                        .map(|e| {
+                    rhs_exprs
+                        .iter()
+                        .map(|rhs_expr| {
                             ExprType::of(
-                                e,
+                                rhs_expr,
                                 &mut None,
                                 env,
                                 funcs,
@@ -378,7 +439,36 @@ impl ExprType {
                 constant_vars,
                 struct_map,
             )?,
-            Expr::WhileLoop(_, _) => ExprType::Void,
+            Expr::WhileLoop(idx_expr, stmts) => {
+                let idx_type = ExprType::of(
+                    idx_expr,
+                    &mut None,
+                    env,
+                    funcs,
+                    variables,
+                    constant_vars,
+                    struct_map,
+                )?;
+                if idx_type != ExprType::Bool {
+                    return Err(TypeError::TypeMismatch {
+                        expected: ExprType::Bool,
+                        actual: idx_type,
+                    });
+                }
+                for expr in stmts {
+                    ExprType::of(
+                        expr,
+                        &mut None,
+                        env,
+                        funcs,
+                        variables,
+                        constant_vars,
+                        struct_map,
+                    )?;
+                }
+                ExprType::Void
+            }
+
             Expr::Block(b) => b
                 .iter()
                 .map(|e| {
@@ -479,17 +569,25 @@ impl ExprType {
                 constant_vars,
                 struct_map,
             )?,
-            Expr::ArraySet(_, _, e) => ExprType::of(
-                e,
-                &mut None,
-                env,
-                funcs,
-                variables,
-                constant_vars,
-                struct_map,
-            )?,
-            Expr::ArrayGet(id_name, _) => {
-                if variables.contains_key(id_name) {
+            Expr::ArrayAccess(id_name, _) => {
+                if let Some(_) = lval {
+                    let array_type = ExprType::of(
+                        &Expr::Identifier(id_name.to_string()),
+                        lval,
+                        env,
+                        funcs,
+                        variables,
+                        constant_vars,
+                        struct_map,
+                    )?;
+                    match array_type {
+                        ExprType::UnboundedArrayF64 => Ok(ExprType::F64),
+                        ExprType::UnboundedArrayI64 => Ok(ExprType::I64),
+                        _ => Err(TypeError::TypeMismatchSpecific {
+                            s: format!("{} is not an array", id_name),
+                        }),
+                    }
+                } else if variables.contains_key(id_name) {
                     match &variables[id_name] {
                         SVariable::UnboundedArrayF64(_, _) => Ok(ExprType::F64),
                         SVariable::UnboundedArrayI64(_, _) => Ok(ExprType::I64),
@@ -498,6 +596,7 @@ impl ExprType {
                         }),
                     }
                 } else {
+                    dbg!(&id_name);
                     return Err(TypeError::UnknownVariable(id_name.to_string()));
                 }?
             }

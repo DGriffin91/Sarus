@@ -81,7 +81,7 @@ pub enum Expr {
     Compare(Cmp, Box<Expr>, Box<Expr>),
     IfThen(Box<Expr>, Vec<Expr>),
     IfElse(Box<Expr>, Vec<Expr>, Vec<Expr>),
-    Assign(NV<String>, NV<Expr>),
+    Assign(NV<Expr>, NV<Expr>),
     AssignOp(Binop, Box<String>, Box<Expr>),
     NewStruct(String, Vec<StructAssignField>),
     WhileLoop(Box<Expr>, Vec<Expr>), //Should this take a block instead of Vec<Expr>?
@@ -89,8 +89,7 @@ pub enum Expr {
     Call(String, Vec<Expr>),
     GlobalDataAddr(String),
     Parentheses(Box<Expr>),
-    ArrayGet(String, Box<Expr>),
-    ArraySet(String, Box<Expr>, Box<Expr>),
+    ArrayAccess(String, Box<Expr>),
 }
 
 //TODO indentation, tests
@@ -180,8 +179,7 @@ impl Display for Expr {
             Expr::GlobalDataAddr(e) => write!(f, "{}", e),
             Expr::LiteralBool(b) => write!(f, "{}", b),
             Expr::Parentheses(e) => write!(f, "({})", e),
-            Expr::ArrayGet(var, e) => write!(f, "{}[{}]", var, e),
-            Expr::ArraySet(var, idx_e, e) => write!(f, "{}[{}] = {}", var, idx_e, e),
+            Expr::ArrayAccess(var, e) => write!(f, "{}[{}]", var, e),
         }
     }
 }
@@ -389,8 +387,8 @@ peg::parser!(pub grammar parser() for str {
         = if_then()
         / if_else()
         / while_loop()
-        / arrayset()
         / assignment()
+        / op_assignment()
         / binary_op()
 
     rule if_then() -> Expr
@@ -406,15 +404,19 @@ peg::parser!(pub grammar parser() for str {
         { Expr::WhileLoop(Box::new(e), body) }
 
     rule assignment() -> Expr
-        = assignments:((i:(identifier() ++ ".") {i.join(".")}) ** comma()) _ "=" args:((_ e:expression() _ {e}) ** comma()) {?
+        = assignments:((binary_op()) ** comma()) _ "=" args:((_ e:expression() _ {e}) ** comma()) {?
             make_nonempty(assignments)
                 .and_then(|assignments| make_nonempty(args)
                 .map(|args| Expr::Assign(assignments, args)))
                 .ok_or("Cannot assign to/from empty tuple")
         }
 
-    rule arrayset() -> Expr
-        = i:identifier() _ "[" idx:expression() "]" _ "=" _ e:expression() {Expr::ArraySet(i, Box::new(idx), Box::new(e))}
+
+    rule op_assignment() -> Expr
+    = a:(binary_op()) _ "+=" _ b:expression() {assign_op_to_assign(Binop::Add, a, b)}
+    / a:(binary_op()) _ "-=" _ b:expression() {assign_op_to_assign(Binop::Sub, a, b)}
+    / a:(binary_op()) _ "*=" _ b:expression() {assign_op_to_assign(Binop::Mul, a, b)}
+    / a:(binary_op()) _ "/=" _ b:expression() {assign_op_to_assign(Binop::Div, a, b)}
 
     rule binary_op() -> Expr = precedence!{
         a:@ _ "&&" _ b:(@) { Expr::Binop(Binop::LogicalAnd, Box::new(a), Box::new(b)) }
@@ -428,16 +430,12 @@ peg::parser!(pub grammar parser() for str {
         a:@ _ ">=" b:(@) { Expr::Compare(Cmp::Ge, Box::new(a), Box::new(b)) }
         --
         a:@ _ "+" _ b:(@) { Expr::Binop(Binop::Add, Box::new(a), Box::new(b)) }
-        a:(i:(identifier() ++ ".") {i}) _ "+=" _ b:(@) {assign_op_to_assign(Binop::Add, a, b)}
         --
         a:@ _ "-" _ b:(@) { Expr::Binop(Binop::Sub, Box::new(a), Box::new(b)) }
-        a:(i:(identifier() ++ ".") {i}) _ "-=" _ b:(@) {assign_op_to_assign(Binop::Sub, a, b)}
         --
         a:@ _ "*" _ b:(@) { Expr::Binop(Binop::Mul, Box::new(a), Box::new(b)) }
-        a:(i:(identifier() ++ ".") {i}) _ "*=" _ b:(@) {assign_op_to_assign(Binop::Mul, a, b)}
         --
         a:@ _ "/" _ b:(@) { Expr::Binop(Binop::Div, Box::new(a), Box::new(b)) }
-        a:(i:(identifier() ++ ".") {i}) _ "/=" _ b:(@) {assign_op_to_assign(Binop::Div, a, b)}
         --
         a:@ "." b:(@) { Expr::Binop(Binop::DotAccess, Box::new(a), Box::new(b)) }
         --
@@ -445,11 +443,14 @@ peg::parser!(pub grammar parser() for str {
     }
 
     rule unary_op() -> Expr = precedence!{
-        i:func_identifier() _ "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
+        //Having a _ before the () breaks in this case:
+        //c = p.x + p.y + p.z
+        //(p.x).print()
+        i:func_identifier() "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
             Expr::Call(i, args)
         }
         i:identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" { Expr::NewStruct(i, args) }
-        i:identifier() _ "[" idx:expression() "]" { Expr::ArrayGet(i, Box::new(idx)) }
+        i:identifier() _ "[" idx:expression() "]" { Expr::ArrayAccess(i, Box::new(idx)) }
         i:identifier() { Expr::Identifier(i) }
         l:literal() { l }
         "!" e:expression() { Expr::Unaryop(Unaryop::Not, Box::new(e)) }
@@ -490,36 +491,31 @@ peg::parser!(pub grammar parser() for str {
 });
 
 //turn ["l1", "b", "x"] into Binop(DotAccess,Identifier("l1"),Binop(DotAccess,Identifier("b"),Identifier("x")))
-fn parts_to_binop(mut parts: Vec<String>) -> Expr {
-    let mut dot_expr = Expr::Binop(
-        Binop::DotAccess,
-        Box::new(Expr::Identifier(parts.remove(0))),
-        Box::new(Expr::Identifier(parts.remove(0))),
-    );
-    for part in &parts {
-        if let Expr::Binop(op, e1, e2) = dot_expr.clone() {
-            dot_expr = Expr::Binop(
-                op,
-                e1,
-                Box::new(Expr::Binop(
-                    Binop::DotAccess,
-                    e2,
-                    Box::new(Expr::Identifier(part.clone())),
-                )),
-            )
-        }
-    }
-    dot_expr
-}
+//fn parts_to_binop(mut parts: Vec<String>) -> Expr {
+//    let mut dot_expr = Expr::Binop(
+//        Binop::DotAccess,
+//        Box::new(Expr::Identifier(parts.remove(0))),
+//        Box::new(Expr::Identifier(parts.remove(0))),
+//    );
+//    for part in &parts {
+//        if let Expr::Binop(op, e1, e2) = dot_expr.clone() {
+//            dot_expr = Expr::Binop(
+//                op,
+//                e1,
+//                Box::new(Expr::Binop(
+//                    Binop::DotAccess,
+//                    e2,
+//                    Box::new(Expr::Identifier(part.clone())),
+//                )),
+//            )
+//        }
+//    }
+//    dot_expr
+//}
 
-pub fn assign_op_to_assign(op: Binop, a: Vec<String>, b: Expr) -> Expr {
-    let ident_expr = if a.len() > 1 {
-        parts_to_binop(a.clone())
-    } else {
-        Expr::Identifier(a[0].clone())
-    };
+pub fn assign_op_to_assign(op: Binop, a: Expr, b: Expr) -> Expr {
     Expr::Assign(
-        make_nonempty(vec![a.join(".")]).unwrap(),
-        make_nonempty(vec![Expr::Binop(op, Box::new(ident_expr), Box::new(b))]).unwrap(),
+        make_nonempty(vec![a.clone()]).unwrap(),
+        make_nonempty(vec![Expr::Binop(op, Box::new(a), Box::new(b))]).unwrap(),
     )
 }

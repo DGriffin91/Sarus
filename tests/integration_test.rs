@@ -1012,13 +1012,20 @@ fn main(a: f64) -> (c: f64) {
         z: 300.0,
     }
     c = p.x + p.y + p.z
+    (p.x).println()
+    (p.y).println()
+    (p.z).println()
+    p.x.println()
+    p.y.println()
+    p.z.println()
 }
 "#;
     let a = 100.0f64;
     let mut jit = default_std_jit_from_code(&code)?;
+    //jit.print_clif(true);
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
-    assert_eq!(600.0, func(a));
+    dbg!(600.0, func(a));
     Ok(())
 }
 
@@ -1117,6 +1124,8 @@ fn main(n: f64) -> (c: f64) {
         a: p1,
         b: p2,
     }
+    p1.x.print()
+
     p1.print()
     p2.print()
     l1.print()
@@ -2041,6 +2050,43 @@ fn process(audio: AudioData) -> () {
     Ok(())
 }
 
+#[test]
+fn struct_of_slices_of_numbers2() -> anyhow::Result<()> {
+    let code = r#"
+struct AudioData {
+    left: &[f64],
+    right: &[f64],
+    len: i64,
+}
+
+fn process(audio: AudioData) -> () {
+    i = 0
+    while i < audio.len {
+        audio.right[i] = i.f64()  
+        i += 1
+    }
+}
+"#;
+
+    let mut jit = default_std_jit_from_code(&code)?;
+
+    let func_ptr = jit.get_func("process")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut AudioData) -> ()>(func_ptr) };
+
+    let left = vec![0.0f64; 4096];
+    let right = vec![0.0f64; 4096];
+
+    let mut audio_data = AudioData {
+        left: left.as_ptr(),
+        right: right.as_ptr(),
+        len: 64,
+    };
+
+    func(&mut audio_data);
+
+    Ok(())
+}
+
 //
 // TODO
 // This should return an error that a1 does not exist
@@ -2150,4 +2196,24 @@ fn set_val(self: Filter) -> () {
     func();
 
     Ok(())
+}
+
+fn test_func2(x: f32) -> f32 {
+    let y = x / 62.0;
+    dbg!(y);
+    y
+}
+
+fn test_func(x: f32) -> f32 {
+    let y = x * test_func2(x);
+    dbg!(y);
+    y
+}
+
+#[test]
+fn example() {
+    let a = 1.0 + 2.0;
+    let mut b = test_func(a);
+    b = test_func2(b);
+    println!("{}", b);
 }

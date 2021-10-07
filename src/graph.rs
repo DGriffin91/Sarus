@@ -122,14 +122,14 @@ fn build_graph_func(
 
     main_body.push(Expr::Assign(
         //i = 0
-        make_nonempty(vec!["i".to_string()]).unwrap(),
+        make_nonempty(vec![Expr::Identifier("i".to_string())]).unwrap(),
         make_nonempty(vec![Expr::LiteralInt("0".to_string())]).unwrap(),
     ));
 
     body.push(Expr::Assign(
         //vINPUT_0 = audio[i]
-        make_nonempty(vec!["vINPUT_src".to_string()]).unwrap(),
-        make_nonempty(vec![Expr::ArrayGet(
+        make_nonempty(vec![Expr::Identifier("vINPUT_src".to_string())]).unwrap(),
+        make_nonempty(vec![Expr::ArrayAccess(
             "audio".to_string(),
             Box::new(Expr::Identifier("i".to_string())),
         )])
@@ -146,7 +146,7 @@ fn build_graph_func(
 
         let mut return_var_names = Vec::new();
         for ret in node_src_ast.returns.iter() {
-            return_var_names.push(format!("v{}_{}", node_id, ret))
+            return_var_names.push(Expr::Identifier(format!("v{}_{}", node_id, ret)))
         }
 
         let mut param_names = Vec::new();
@@ -193,7 +193,7 @@ fn build_graph_func(
 
     body.push(Expr::Assign(
         //assign last node to output
-        make_nonempty(vec![format!("v{}_dst", last_node_id)]).unwrap(),
+        make_nonempty(vec![Expr::Identifier(format!("v{}_dst", last_node_id))]).unwrap(),
         make_nonempty(vec![Expr::Identifier(format!(
             "v{}_{}",
             &last_connection.src_node, last_connection.src_port
@@ -201,15 +201,18 @@ fn build_graph_func(
         .unwrap(),
     ));
 
-    body.push(Expr::ArraySet(
-        "audio".to_string(),
-        Box::new(Expr::Identifier("i".to_string())),
-        Box::new(Expr::Identifier("vOUTPUT_dst".to_string())),
+    body.push(Expr::Assign(
+        make_nonempty(vec![Expr::ArrayAccess(
+            "audio".to_string(),
+            Box::new(Expr::Identifier("i".to_string())),
+        )])
+        .unwrap(),
+        make_nonempty(vec![Expr::Identifier("vOUTPUT_dst".to_string())]).unwrap(),
     ));
 
     body.push(assign_op_to_assign(
         Binop::Add,
-        vec!["i".to_string()],
+        Expr::Identifier("i".to_string()),
         Expr::LiteralInt("1".to_string()),
     ));
 
