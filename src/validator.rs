@@ -136,8 +136,10 @@ impl ExprType {
                     for expr in &lval.expr {
                         if let Expr::Identifier(s) = expr {
                             parts.push(s.as_str());
+                        } else if let Expr::ArrayAccess(s, _) = expr {
+                            parts.push(s.as_str());
                         } else {
-                            panic!("non identifier found")
+                            panic!("non identifier/ArrayAccess found")
                         }
                     }
                     parts.push(id_name);
@@ -198,7 +200,6 @@ impl ExprType {
                     //find the result type of fields with struct_map and funcs with Type.func_name() in funcs
                     let lt = ExprType::of(l, lval, env)?;
 
-                    //<<< this is the same as below
                     if let Some(lval) = lval {
                         lval.expr.push((**l).clone());
                         lval.ty = lt;
@@ -210,28 +211,6 @@ impl ExprType {
                     }
 
                     let rt = ExprType::of(r, lval, env)?;
-
-                    let is_binop_dot = if let Expr::Binop(bt, _, _) = **r {
-                        if let crate::frontend::Binop::DotAccess = bt {
-                            true
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    };
-                    if !is_binop_dot {
-                        //<<< this is the same as above
-                        if let Some(lval) = lval {
-                            lval.expr.push((**r).clone());
-                            lval.ty = rt.clone();
-                        } else {
-                            *lval = Some(Lval {
-                                expr: vec![(**r).clone()],
-                                ty: rt.clone(),
-                            })
-                        }
-                    }
 
                     rt
                 }
@@ -304,6 +283,7 @@ impl ExprType {
                         expected: tlen,
                     });
                 }
+                let mut rhs_types = Vec::new();
                 for (lhs_expr, rhs_expr) in lhs_exprs.iter().zip(rhs_exprs.iter()) {
                     //println!(
                     //    "{}:{} lhs_expr {} = rhs_expr {}",
@@ -312,26 +292,24 @@ impl ExprType {
                     //    lhs_expr,
                     //    rhs_expr
                     //);
-                    if let Expr::Identifier(_) = lhs_expr {
+                    if let Expr::Identifier(_name) = lhs_expr {
                         //The lhs_expr is just a new var
-                        continue;
-                    }
-                    let lhs_type = ExprType::of(lhs_expr, &mut None, env)?;
-                    let rhs_type = ExprType::of(rhs_expr, &mut None, env)?;
+                        let rhs_type = ExprType::of(rhs_expr, &mut None, env)?;
+                        rhs_types.push(rhs_type);
+                    } else {
+                        let lhs_type = ExprType::of(lhs_expr, &mut None, env)?;
+                        let rhs_type = ExprType::of(rhs_expr, &mut None, env)?;
 
-                    if lhs_type != rhs_type {
-                        return Err(TypeError::TypeMismatch {
-                            expected: lhs_type,
-                            actual: rhs_type,
-                        });
+                        if lhs_type != rhs_type {
+                            return Err(TypeError::TypeMismatch {
+                                expected: lhs_type,
+                                actual: rhs_type,
+                            });
+                        }
+                        rhs_types.push(rhs_type);
                     }
                 }
-                ExprType::Tuple(
-                    rhs_exprs
-                        .iter()
-                        .map(|rhs_expr| ExprType::of(rhs_expr, &mut None, env))
-                        .collect::<Result<Vec<_>, _>>()?,
-                )
+                ExprType::Tuple(rhs_types)
             }
             Expr::AssignOp(_, _, e) => ExprType::of(e, &mut None, env)?,
             Expr::WhileLoop(idx_expr, stmts) => {
@@ -407,19 +385,6 @@ impl ExprType {
                     return Err(TypeError::UnknownFunction(fn_name.to_string()));
                 }
             }
-            //Expr::ExpressionCall(expr, fn_name, args) => {
-            //    let mut args = args.to_vec();
-            //    args.insert(0, *expr.to_owned());
-            //    ExprType::of(
-            //        &Expr::Call(fn_name.to_string(), args, true),
-            //        &mut None,
-            //        env,
-            //        funcs,
-            //        variables,
-            //        constant_vars,
-            //        struct_map,
-            //    )?
-            //}
             Expr::GlobalDataAddr(_) => ExprType::F64,
             Expr::Parentheses(expr) => ExprType::of(expr, &mut None, env)?,
             Expr::ArrayAccess(id_name, _) => {
@@ -427,7 +392,10 @@ impl ExprType {
                     let array_type =
                         ExprType::of(&Expr::Identifier(id_name.to_string()), lval, env)?;
                     match array_type {
-                        ExprType::Array(ty, _len) => Ok(*ty.clone()),
+                        ExprType::Array(ty, _len) => {
+                            //*lval = None;
+                            Ok(*ty.clone())
+                        }
                         _ => Err(TypeError::TypeMismatchSpecific {
                             s: format!("{} is not an array", id_name),
                         }),
