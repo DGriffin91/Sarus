@@ -39,7 +39,7 @@ pub struct JIT {
 
 impl Default for JIT {
     fn default() -> Self {
-        let builder = new_jit_builder(); //JITBuilder::new(cranelift_module::default_libcall_names());
+        let builder = JITBuilder::new(cranelift_module::default_libcall_names());
         let module = JITModule::new(builder);
         Self {
             builder_context: FunctionBuilderContext::new(),
@@ -53,21 +53,7 @@ impl Default for JIT {
 }
 
 pub fn new_jit_builder() -> JITBuilder {
-    //https://github.com/bytecodealliance/wasmtime/issues/2735
-    //https://github.com/bytecodealliance/wasmtime-go/issues/53
-
-    //JITBuilder::new(cranelift_module::default_libcall_names())
-    let mut flag_builder = settings::builder();
-    // On at least AArch64, "colocated" calls use shorter-range relocations,
-    // which might not reach all definitions; we can't handle that here, so
-    // we require long-range relocation types.
-    flag_builder.set("use_colocated_libcalls", "false").unwrap();
-    flag_builder.set("is_pic", "false").unwrap();
-    let isa_builder = cranelift_native::builder().unwrap_or_else(|msg| {
-        panic!("host machine is not supported: {}", msg);
-    });
-    let isa = isa_builder.finish(settings::Flags::new(flag_builder));
-    JITBuilder::with_isa(isa, cranelift_module::default_libcall_names())
+    JITBuilder::new(cranelift_module::default_libcall_names())
 }
 
 impl JIT {
