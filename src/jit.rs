@@ -745,9 +745,18 @@ impl<'a> FunctionTranslator<'a> {
                                         self.get_struct_field(sval_address, &struct_def)?
                                     };
 
+                                let mut base_struct = None;
+                                let mut width;
                                 let base_type = match &struct_def.expr_type {
                                     ExprType::Array(ty, _len) => {
-                                        ty.cranelift_type(self.ptr_ty, true)?
+                                        let c_ty = ty.cranelift_type(self.ptr_ty, true)?;
+                                        width = c_ty.bytes() as usize;
+                                        if let ExprType::Struct(name) = *ty.to_owned() {
+                                            let s = self.env.struct_map[&name.to_string()].clone();
+                                            width = s.size;
+                                            base_struct = Some(s);
+                                        }
+                                        c_ty
                                     }
                                     _ => {
                                         anyhow::bail!("can't index type {}", &struct_def.expr_type)
@@ -756,7 +765,7 @@ impl<'a> FunctionTranslator<'a> {
 
                                 //dbg!(&struct_def.expr_type);
 
-                                //TODO support other array types
+                                //TODO support other array types (this might be for fixed arrays actually stored in the struct)
                                 //struct_def.expr_type.width(ptr_ty, &self.env.struct_map)
 
                                 let idx_val = self.translate_expr(idx_expr).unwrap();
@@ -766,12 +775,18 @@ impl<'a> FunctionTranslator<'a> {
                                 };
 
                                 let field_address_at_ids = self.get_array_address_from_ptr(
-                                    base_type.bytes(),
+                                    width,
                                     array_ptr.inner("Expr::ArrayAccess")?,
                                     idx_val,
                                 );
 
-                                if get_address {
+                                if let Some(base_struct) = base_struct {
+                                    //if the items of the array are structs return struct with same start address
+                                    lhs_val = Some(SValue::Struct(
+                                        base_struct.name,
+                                        field_address_at_ids,
+                                    ));
+                                } else if get_address {
                                     lhs_val = Some(SValue::Address(field_address_at_ids));
                                 } else {
                                     let val = self.builder.ins().load(
@@ -1159,7 +1174,8 @@ impl<'a> FunctionTranslator<'a> {
             | ExprType::Struct(_) => anyhow::bail!("can't index type {}", &expr_type), //TODO get struct width
         };
 
-        let idx_ptr = self.get_array_address_from_ptr(base_type.bytes(), array_ptr, idx_val);
+        let idx_ptr =
+            self.get_array_address_from_ptr(base_type.bytes() as usize, array_ptr, idx_val);
 
         let val = self
             .builder
@@ -1185,7 +1201,7 @@ impl<'a> FunctionTranslator<'a> {
 
     fn get_array_address_from_ptr(
         &mut self,
-        step_bytes: u32,
+        step_bytes: usize,
         array_ptr: Value,
         idx_val: Value,
     ) -> Value {

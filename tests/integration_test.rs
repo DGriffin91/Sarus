@@ -2098,13 +2098,13 @@ struct BoolData {
 #[test]
 fn struct_of_slices_of_bools() -> anyhow::Result<()> {
     let code = r#"
-struct AudioData {
+struct BoolData {
     left: &[bool],
     right: &[bool],
     len: i64,
 }
 
-fn process(audio: AudioData) -> () {
+fn process(audio: BoolData) -> () {
     i = 0
     while i < audio.len {
         audio.right[i] = (i.f64()).rem_euclid(2.0) == 1.0
@@ -2134,6 +2134,83 @@ fn process(audio: AudioData) -> () {
     };
 
     func(&mut audio_data);
+
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct AudioPair {
+    left: f64,
+    right: f64,
+}
+
+#[repr(C)]
+struct AudioSamples {
+    samples: *const AudioPair,
+    len: i64,
+}
+
+#[test]
+fn struct_of_slices_of_structs() -> anyhow::Result<()> {
+    let code = r#"
+struct AudioPair {
+    left: f64,
+    right: f64,
+}
+
+struct AudioSamples {
+    samples: &[AudioPair],
+    len: i64,
+}
+
+fn process(audio: AudioSamples) -> () {
+    i = 0
+    while i < audio.len {
+        sample = audio.samples[i]
+        sample.left = i.f64()
+        sample.right = i.f64()  
+        
+        //audio.samples[i].left = i.f64()  //TODO validator can't figure out
+        //audio.samples[i].right = i.f64() 
+        
+        //(audio.samples[i]).left = i.f64()  //TODO validator can't figure out
+        //(audio.samples[i]).right = i.f64() 
+        
+        i += 1
+    }
+    
+    sample = audio.samples[1]
+    sample.left.assert_eq(1.0)
+    sample.right.assert_eq(1.0)
+    sample = audio.samples[2]
+    sample.left.assert_eq(2.0)
+    sample.right.assert_eq(2.0)
+    sample = audio.samples[3]
+    sample.left.assert_eq(3.0)
+    sample.right.assert_eq(3.0)
+}
+"#;
+
+    let mut jit = default_std_jit_from_code(&code)?;
+
+    let func_ptr = jit.get_func("process")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut AudioSamples) -> ()>(func_ptr) };
+
+    let samples = vec![
+        AudioPair {
+            left: 0.0,
+            right: 0.0,
+        };
+        4096
+    ];
+
+    let mut audio_samples = AudioSamples {
+        samples: samples.as_ptr(),
+        len: samples.len() as i64,
+    };
+
+    func(&mut audio_samples);
 
     Ok(())
 }

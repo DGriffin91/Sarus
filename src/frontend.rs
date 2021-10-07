@@ -368,17 +368,15 @@ peg::parser!(pub grammar parser() for str {
         / _ i:identifier() _ { Arg {name: i.into(), expr_type: ExprType::F64, default_to_float: true } }
 
     rule type_label() -> ExprType
-        = _ n:$("f64") _ { ExprType::F64 }
-        / _ n:$("i64") _ { ExprType::I64 }
-        / _ n:$("&[f64]") _ { ExprType::Array(Box::new(ExprType::F64), None) }
-        / _ n:$("&[i64]") _ { ExprType::Array(Box::new(ExprType::I64), None) }
-        / _ n:$("&[bool]") _ { ExprType::Array(Box::new(ExprType::Bool), None) }
-        / _ n:$("&") _ { ExprType::Address }
-        / _ n:$("bool") _ { ExprType::Bool }
+        = _ "f64" _ { ExprType::F64 }
+        / _ "i64" _ { ExprType::I64 }
+        / _ "&[" ty:type_label() "]" _ { ExprType::Array(Box::new(ty), None) }
+        / _ "&" _ { ExprType::Address }
+        / _ "bool" _ { ExprType::Bool }
         / _ n:identifier() _ { ExprType::Struct(Box::new(n)) }
 
     rule block() -> Vec<Expr>
-        = _ "{" b:(statement() ** _) _ "}" { b }
+        = _ "{" _ b:(statement() ** _) _ "}" { b }
 
     rule statement() -> Expr
         //TODO allow for multiple expressions like: a, b, c returned from if/then/else, etc...
