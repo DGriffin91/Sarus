@@ -2088,6 +2088,56 @@ fn process(audio: AudioData) -> () {
     Ok(())
 }
 
+#[repr(C)]
+struct BoolData {
+    left: *const bool,
+    right: *const bool,
+    len: i64,
+}
+
+#[test]
+fn struct_of_slices_of_bools() -> anyhow::Result<()> {
+    let code = r#"
+struct AudioData {
+    left: &[bool],
+    right: &[bool],
+    len: i64,
+}
+
+fn process(audio: AudioData) -> () {
+    i = 0
+    while i < audio.len {
+        audio.right[i] = (i.f64()).rem_euclid(2.0) == 1.0
+        i += 1
+    }
+    (audio.right[0]).assert_eq(false)
+    audio.right[1].assert_eq(true)
+    audio.right[2].assert_eq(false)
+    audio.right[3].assert_eq(true)
+    audio.right[4].assert_eq(false)
+    audio.right[5].assert_eq(true)
+}
+"#;
+
+    let mut jit = default_std_jit_from_code(&code)?;
+
+    let func_ptr = jit.get_func("process")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut BoolData) -> ()>(func_ptr) };
+
+    let left = vec![false; 4096];
+    let right = vec![false; 4096];
+
+    let mut audio_data = BoolData {
+        left: left.as_ptr(),
+        right: right.as_ptr(),
+        len: 64,
+    };
+
+    func(&mut audio_data);
+
+    Ok(())
+}
+
 //
 // TODO
 // This should return an error that a1 does not exist

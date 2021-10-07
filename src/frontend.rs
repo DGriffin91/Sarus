@@ -372,6 +372,7 @@ peg::parser!(pub grammar parser() for str {
         / _ n:$("i64") _ { ExprType::I64 }
         / _ n:$("&[f64]") _ { ExprType::Array(Box::new(ExprType::F64), None) }
         / _ n:$("&[i64]") _ { ExprType::Array(Box::new(ExprType::I64), None) }
+        / _ n:$("&[bool]") _ { ExprType::Array(Box::new(ExprType::Bool), None) }
         / _ n:$("&") _ { ExprType::Address }
         / _ n:$("bool") _ { ExprType::Bool }
         / _ n:identifier() _ { ExprType::Struct(Box::new(n)) }
