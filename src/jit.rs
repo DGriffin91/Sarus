@@ -183,7 +183,7 @@ impl JIT {
         &mut self,
         func: &Function,
         funcs: HashMap<String, Function>,
-        env: &[Declaration],
+        prog: &[Declaration],
         struct_map: &HashMap<String, StructDef>,
     ) -> anyhow::Result<()> {
         let ptr_ty = self.module.target_config().pointer_type();
@@ -248,49 +248,45 @@ impl JIT {
         // The toy language allows variables to be declared implicitly.
         // Walk the AST and declare all implicitly-declared variables.
 
+        let mut env = Env {
+            prog,
+            constant_vars,
+            struct_map: struct_map.clone(),
+            variables: HashMap::new(),
+            ptr_ty,
+            funcs,
+        };
+
         println!("declare_variables {}", func.name);
-        let variables = declare_variables(
+        declare_variables(
             &mut builder,
             &mut self.module,
             &func.params,
             &func.returns,
             &func.body,
             entry_block,
-            env,
-            &funcs,
-            &constant_vars,
-            &struct_map,
+            &mut env,
         )?;
 
         //Keep function vars around for later debug/print
         self.variables
-            .insert(func.name.to_string(), variables.clone());
+            .insert(func.name.to_string(), env.variables.clone());
 
         println!("validate_program {}", func.name);
 
         //Check every statement, this can catch funcs with no assignment, etc...
-        validate_program(
-            &func.body,
-            env,
-            &funcs,
-            &variables,
-            &constant_vars,
-            &struct_map,
-        )?;
+        validate_program(&func.body, &env)?;
 
         println!("FunctionTranslator {}", func.name);
         let ptr_ty = self.module.target_config().pointer_type();
+
         // Now translate the statements of the function body.
         let mut trans = FunctionTranslator {
             builder,
-            variables,
-            constant_vars,
-            env,
-            funcs,
-            struct_map,
             func,
             module: &mut self.module,
             ptr_ty,
+            env: &env,
         };
         for expr in &func.body {
             trans.translate_expr(expr)?;
@@ -301,7 +297,7 @@ impl JIT {
         // variable.
         let mut return_values = Vec::new();
         for ret in func.returns.iter() {
-            let return_variable = trans.variables.get(&ret.name).unwrap();
+            let return_variable = trans.env.variables.get(&ret.name).unwrap();
             let v = match &ret.expr_type {
                 ExprType::F64 => trans
                     .builder
@@ -488,16 +484,21 @@ impl SValue {
     }
 }
 
+pub struct Env<'a> {
+    pub prog: &'a [Declaration],
+    pub constant_vars: HashMap<String, f64>,
+    pub struct_map: HashMap<String, StructDef>,
+    pub variables: HashMap<String, SVariable>,
+    pub ptr_ty: types::Type,
+    pub funcs: HashMap<String, Function>,
+}
+
 /// A collection of state used for translating from toy-language AST nodes
 /// into Cranelift IR.
 struct FunctionTranslator<'a> {
     builder: FunctionBuilder<'a>,
-    variables: HashMap<String, SVariable>,
-    funcs: HashMap<String, Function>,
-    struct_map: &'a HashMap<String, StructDef>,
     module: &'a mut JITModule,
-    constant_vars: HashMap<String, f64>,
-    env: &'a [Declaration],
+    env: &'a Env<'a>,
     func: &'a Function,
     ptr_ty: types::Type,
 }
@@ -525,7 +526,7 @@ impl<'a> FunctionTranslator<'a> {
                 self.translate_global_data_addr(self.ptr_ty, name),
             )),
             Expr::Identifier(name) => {
-                match self.variables.get(name) {
+                match self.env.variables.get(name) {
                     Some(var) => Ok(match var {
                         SVariable::Unknown(_, v) => SValue::Unknown(self.builder.use_var(*v)),
                         SVariable::Bool(_, v) => SValue::Bool(self.builder.use_var(*v)),
@@ -713,7 +714,7 @@ impl<'a> FunctionTranslator<'a> {
                                 //dbg!(&struct_def.expr_type);
 
                                 //TODO support other array types
-                                //struct_def.expr_type.width(ptr_ty, &self.struct_map)
+                                //struct_def.expr_type.width(ptr_ty, &self.env.struct_map)
 
                                 let idx_val = self.translate_expr(idx_expr).unwrap();
                                 let idx_val = match idx_val {
@@ -999,7 +1000,7 @@ impl<'a> FunctionTranslator<'a> {
                         }
                     }
                     Expr::Identifier(name) => {
-                        let var = match self.variables.get(name) {
+                        let var = match self.env.variables.get(name) {
                             Some(v) => v,
                             None => anyhow::bail!("variable {} not found", name),
                         };
@@ -1013,7 +1014,7 @@ impl<'a> FunctionTranslator<'a> {
                                     copy_to_stack_slot(
                                         self.module.target_config(),
                                         &mut self.builder,
-                                        self.struct_map[&stuct_name.to_string()].size,
+                                        self.env.struct_map[&stuct_name.to_string()].size,
                                         val.expect_struct(
                                             &stuct_name.to_string(),
                                             "translate_assign",
@@ -1034,7 +1035,7 @@ impl<'a> FunctionTranslator<'a> {
                                 copy_to_stack_slot(
                                     self.module.target_config(),
                                     &mut self.builder,
-                                    self.struct_map[struct_name].size,
+                                    self.env.struct_map[struct_name].size,
                                     val.expect_struct(struct_name, "translate_assign")?,
                                     return_address,
                                     0,
@@ -1063,7 +1064,7 @@ impl<'a> FunctionTranslator<'a> {
                             todo!()
                             //self.set_struct_field(to_expr, values[i].clone())?
                         } else if let Expr::Identifier(name) = to_expr {
-                            let var = match self.variables.get(name) {
+                            let var = match self.env.variables.get(name) {
                                 Some(v) => v,
                                 None => anyhow::bail!("variable {} not found", name),
                             };
@@ -1095,7 +1096,7 @@ impl<'a> FunctionTranslator<'a> {
         idx_expr: &Expr,
         get_address: bool,
     ) -> anyhow::Result<SValue> {
-        let variable = match self.variables.get(&name) {
+        let variable = match self.env.variables.get(&name) {
             Some(v) => v.clone(),
             None => anyhow::bail!("variable {} not found", name),
         };
@@ -1166,7 +1167,7 @@ impl<'a> FunctionTranslator<'a> {
         idx_expr: &Expr,
         val: &SValue,
     ) -> anyhow::Result<SValue> {
-        let variable = self.variables.get(&name).unwrap();
+        let variable = self.env.variables.get(&name).unwrap();
 
         let base_type = match variable {
             SVariable::Unknown(_, _) => self.ptr_ty,
@@ -1426,13 +1427,16 @@ impl<'a> FunctionTranslator<'a> {
 
         //TODO refactor, we call is_struct_size_call too many times redundantly
         let stack_slot_return =
-            if let Some(_) = sarus_std_lib::is_struct_size_call(&fn_name, self.struct_map) {
+            if let Some(_) = sarus_std_lib::is_struct_size_call(&fn_name, &self.env.struct_map) {
                 None
             } else {
-                let returns = &self.funcs[&fn_name].returns;
+                let returns = &self.env.funcs[&fn_name].returns;
                 if returns.len() > 0 {
                     if let ExprType::Struct(name) = &returns[0].expr_type {
-                        Some((name.to_string(), self.struct_map[&name.to_string()].size))
+                        Some((
+                            name.to_string(),
+                            self.env.struct_map[&name.to_string()].size,
+                        ))
                     } else {
                         None
                     }
@@ -1444,8 +1448,8 @@ impl<'a> FunctionTranslator<'a> {
         call_with_values(
             &fn_name,
             &arg_values,
-            &mut self.funcs,
-            &self.struct_map,
+            &self.env.funcs,
+            &self.env.struct_map,
             &mut self.module,
             &mut self.builder,
             stack_slot_return,
@@ -1482,11 +1486,11 @@ impl<'a> FunctionTranslator<'a> {
     ) -> anyhow::Result<SValue> {
         let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
-            self.struct_map[name].size,
+            self.env.struct_map[name].size,
         ));
 
         for field in fields.iter() {
-            let dst_field_def = &self.struct_map[name].fields[&field.field_name];
+            let dst_field_def = &self.env.struct_map[name].fields[&field.field_name];
             let sval = self.translate_expr(&field.expr)?;
 
             if let SValue::Struct(src_name, src_start_ptr) = sval {
@@ -1510,7 +1514,7 @@ impl<'a> FunctionTranslator<'a> {
                     self.module.target_config(),
                     stack_slot_address,
                     src_start_ptr,
-                    self.struct_map[&src_name].size as u64,
+                    self.env.struct_map[&src_name].size as u64,
                     1,
                     1,
                     true,
@@ -1560,9 +1564,9 @@ impl<'a> FunctionTranslator<'a> {
         parts: Vec<String>,
     ) -> anyhow::Result<(StructField, Value, u32)> {
         //println!("get_struct_field_location {:?}", &parts);
-        match &self.variables[&parts[0]] {
+        match &self.env.variables[&parts[0]] {
             SVariable::Struct(_var_name, struct_name, var, _return_struct) => {
-                let mut parent_struct_field = &self.struct_map[struct_name].fields[&parts[1]];
+                let mut parent_struct_field = &self.env.struct_map[struct_name].fields[&parts[1]];
                 let base_struct_var_ptr = self.builder.use_var(*var);
                 let mut struct_name = struct_name.clone();
                 let mut offset = parent_struct_field.offset;
@@ -1570,7 +1574,8 @@ impl<'a> FunctionTranslator<'a> {
                     offset = 0;
                     for i in 1..parts.len() {
                         if let ExprType::Struct(_name) = &parent_struct_field.expr_type {
-                            parent_struct_field = &self.struct_map[&struct_name].fields[&parts[i]];
+                            parent_struct_field =
+                                &self.env.struct_map[&struct_name].fields[&parts[i]];
                             offset += parent_struct_field.offset;
                             struct_name = parent_struct_field.expr_type.to_string().clone();
                         } else {
@@ -1962,12 +1967,8 @@ fn declare_variables(
     returns: &[Arg],
     stmts: &[Expr],
     entry_block: Block,
-    env: &[Declaration],
-    funcs: &HashMap<String, Function>,
-    constant_vars: &HashMap<String, f64>,
-    struct_map: &HashMap<String, StructDef>,
-) -> anyhow::Result<HashMap<String, SVariable>> {
-    let mut variables: HashMap<String, SVariable> = HashMap::new();
+    env: &mut Env,
+) -> anyhow::Result<()> {
     let mut index = 0;
 
     let entry_block_is_offset = if returns.len() > 0 {
@@ -1984,7 +1985,7 @@ fn declare_variables(
             let var = declare_variable(
                 module,
                 builder,
-                &mut variables,
+                &mut env.variables,
                 &mut index,
                 return_struct_arg,
                 true,
@@ -1995,7 +1996,7 @@ fn declare_variables(
             true
         } else {
             for arg in returns {
-                declare_variable(module, builder, &mut variables, &mut index, arg, false);
+                declare_variable(module, builder, &mut env.variables, &mut index, arg, false);
             }
             false
         }
@@ -2009,7 +2010,7 @@ fn declare_variables(
         } else {
             builder.block_params(entry_block)[i]
         };
-        let var = declare_variable(module, builder, &mut variables, &mut index, arg, false);
+        let var = declare_variable(module, builder, &mut env.variables, &mut index, arg, false);
         if let Some(var) = var {
             builder.def_var(var.inner(), val);
         }
@@ -2019,17 +2020,13 @@ fn declare_variables(
         declare_variables_in_stmt(
             module.target_config().pointer_type(),
             builder,
-            &mut variables,
             &mut index,
             expr,
             env,
-            funcs,
-            &constant_vars,
-            &struct_map,
         )?;
     }
 
-    Ok(variables)
+    Ok(())
 }
 
 /// Recursively descend through the AST, translating all implicit
@@ -2037,31 +2034,16 @@ fn declare_variables(
 fn declare_variables_in_stmt(
     ptr_type: types::Type,
     builder: &mut FunctionBuilder,
-    variables: &mut HashMap<String, SVariable>,
     index: &mut usize,
     expr: &Expr,
-    env: &[Declaration],
-    funcs: &HashMap<String, Function>,
-    constant_vars: &HashMap<String, f64>,
-    struct_map: &HashMap<String, StructDef>,
+    env: &mut Env,
 ) -> anyhow::Result<()> {
     match *expr {
         Expr::Assign(ref to_exprs, ref from_exprs) => {
             if to_exprs.len() == from_exprs.len() {
                 for (to_expr, _from_expr) in to_exprs.iter().zip(from_exprs.iter()) {
                     if let Expr::Identifier(name) = to_expr {
-                        declare_variable_from_expr(
-                            ptr_type,
-                            expr,
-                            builder,
-                            variables,
-                            index,
-                            &[name],
-                            env,
-                            funcs,
-                            constant_vars,
-                            struct_map,
-                        )?;
+                        declare_variable_from_expr(ptr_type, expr, builder, index, &[name], env)?;
                     }
                 }
             } else {
@@ -2071,61 +2053,20 @@ fn declare_variables_in_stmt(
                         sto_exprs.push(name.as_str());
                     }
                 }
-                declare_variable_from_expr(
-                    ptr_type,
-                    expr,
-                    builder,
-                    variables,
-                    index,
-                    &sto_exprs,
-                    env,
-                    funcs,
-                    constant_vars,
-                    struct_map,
-                )?;
+                declare_variable_from_expr(ptr_type, expr, builder, index, &sto_exprs, env)?;
             }
         }
         Expr::IfElse(ref _condition, ref then_body, ref else_body) => {
             for stmt in then_body {
-                declare_variables_in_stmt(
-                    ptr_type,
-                    builder,
-                    variables,
-                    index,
-                    &stmt,
-                    env,
-                    funcs,
-                    constant_vars,
-                    struct_map,
-                )?;
+                declare_variables_in_stmt(ptr_type, builder, index, &stmt, env)?;
             }
             for stmt in else_body {
-                declare_variables_in_stmt(
-                    ptr_type,
-                    builder,
-                    variables,
-                    index,
-                    &stmt,
-                    env,
-                    funcs,
-                    constant_vars,
-                    struct_map,
-                )?;
+                declare_variables_in_stmt(ptr_type, builder, index, &stmt, env)?;
             }
         }
         Expr::WhileLoop(ref _condition, ref loop_body) => {
             for stmt in loop_body {
-                declare_variables_in_stmt(
-                    ptr_type,
-                    builder,
-                    variables,
-                    index,
-                    &stmt,
-                    env,
-                    funcs,
-                    constant_vars,
-                    struct_map,
-                )?;
+                declare_variables_in_stmt(ptr_type, builder, index, &stmt, env)?;
             }
         }
         _ => (),
@@ -2138,13 +2079,9 @@ fn declare_variable_from_expr(
     ptr_type: Type,
     expr: &Expr,
     builder: &mut FunctionBuilder,
-    variables: &mut HashMap<String, SVariable>,
     index: &mut usize,
     names: &[&str],
-    env: &[Declaration],
-    funcs: &HashMap<String, Function>,
-    constant_vars: &HashMap<String, f64>,
-    struct_map: &HashMap<String, StructDef>,
+    env: &mut Env,
 ) -> anyhow::Result<()> {
     match expr {
         Expr::IfElse(_condition, then_body, _else_body) => {
@@ -2153,28 +2090,14 @@ fn declare_variable_from_expr(
                 ptr_type,
                 then_body.last().unwrap(),
                 builder,
-                variables,
                 index,
                 names,
                 env,
-                funcs,
-                constant_vars,
-                struct_map,
             )?;
         }
         expr => {
-            let expr_type = ExprType::of(
-                expr,
-                &mut None,
-                &env,
-                funcs,
-                variables,
-                constant_vars,
-                struct_map,
-            )?;
-            declare_variable_from_type(
-                ptr_type, &expr_type, builder, variables, index, names, env,
-            )?;
+            let expr_type = ExprType::of(expr, &mut None, &env)?;
+            declare_variable_from_type(ptr_type, &expr_type, builder, index, names, env)?;
         }
     };
     Ok(())
@@ -2184,10 +2107,9 @@ fn declare_variable_from_type(
     ptr_type: Type,
     expr_type: &ExprType,
     builder: &mut FunctionBuilder,
-    variables: &mut HashMap<String, SVariable>,
     index: &mut usize,
     names: &[&str],
-    env: &[Declaration],
+    env: &mut Env,
 ) -> anyhow::Result<()> {
     let name = *names.first().unwrap();
     if name.contains(".") {
@@ -2196,49 +2118,55 @@ fn declare_variable_from_type(
     match expr_type {
         ExprType::Void => anyhow::bail!("can't assign void type to {}", name),
         ExprType::Bool => {
-            if !variables.contains_key(name) {
+            if !env.variables.contains_key(name) {
                 let var = Variable::new(*index);
-                variables.insert(name.into(), SVariable::Bool(name.into(), var));
+                env.variables
+                    .insert(name.into(), SVariable::Bool(name.into(), var));
                 builder.declare_var(var, types::B1);
                 *index += 1;
             }
         }
         ExprType::F64 => {
-            if !variables.contains_key(name) {
+            if !env.variables.contains_key(name) {
                 let var = Variable::new(*index);
-                variables.insert(name.into(), SVariable::F64(name.into(), var));
+                env.variables
+                    .insert(name.into(), SVariable::F64(name.into(), var));
                 builder.declare_var(var, types::F64);
                 *index += 1;
             }
         }
         ExprType::I64 => {
-            if !variables.contains_key(name) {
+            if !env.variables.contains_key(name) {
                 let var = Variable::new(*index);
-                variables.insert(name.into(), SVariable::I64(name.into(), var));
+                env.variables
+                    .insert(name.into(), SVariable::I64(name.into(), var));
                 builder.declare_var(var, types::I64);
                 *index += 1;
             }
         }
         ExprType::UnboundedArrayF64 => {
-            if !variables.contains_key(name) {
+            if !env.variables.contains_key(name) {
                 let var = Variable::new(*index);
-                variables.insert(name.into(), SVariable::UnboundedArrayF64(name.into(), var));
+                env.variables
+                    .insert(name.into(), SVariable::UnboundedArrayF64(name.into(), var));
                 builder.declare_var(var, ptr_type);
                 *index += 1;
             }
         }
         ExprType::UnboundedArrayI64 => {
-            if !variables.contains_key(name) {
+            if !env.variables.contains_key(name) {
                 let var = Variable::new(*index);
-                variables.insert(name.into(), SVariable::UnboundedArrayI64(name.into(), var));
+                env.variables
+                    .insert(name.into(), SVariable::UnboundedArrayI64(name.into(), var));
                 builder.declare_var(var, ptr_type);
                 *index += 1;
             }
         }
         ExprType::Address => {
-            if !variables.contains_key(name) {
+            if !env.variables.contains_key(name) {
                 let var = Variable::new(*index);
-                variables.insert(name.into(), SVariable::Address(name.into(), var));
+                env.variables
+                    .insert(name.into(), SVariable::Address(name.into(), var));
                 builder.declare_var(var, ptr_type);
                 *index += 1;
             }
@@ -2252,7 +2180,6 @@ fn declare_variable_from_type(
                             ptr_type,
                             expr_type,
                             builder,
-                            variables,
                             index,
                             &[sname],
                             env,
@@ -2262,21 +2189,13 @@ fn declare_variable_from_type(
                 }
             }
             for (expr_type, sname) in expr_types.iter().zip(names.iter()) {
-                declare_variable_from_type(
-                    ptr_type,
-                    expr_type,
-                    builder,
-                    variables,
-                    index,
-                    &[sname],
-                    env,
-                )?
+                declare_variable_from_type(ptr_type, expr_type, builder, index, &[sname], env)?
             }
         }
         ExprType::Struct(structname) => {
-            if !variables.contains_key(name) {
+            if !env.variables.contains_key(name) {
                 let var = Variable::new(*index);
-                variables.insert(
+                env.variables.insert(
                     name.into(),
                     SVariable::Struct(name.into(), structname.to_string(), var, false),
                 );
