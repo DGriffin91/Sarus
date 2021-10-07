@@ -36,8 +36,7 @@ pub enum ExprType {
     Bool,
     F64,
     I64,
-    UnboundedArrayF64,
-    UnboundedArrayI64,
+    Array(Box<ExprType>, Option<usize>),
     Address,
     Tuple(Vec<ExprType>),
     Struct(Box<String>),
@@ -55,8 +54,13 @@ impl Display for ExprType {
             ExprType::Bool => write!(f, "bool"),
             ExprType::F64 => write!(f, "f64"),
             ExprType::I64 => write!(f, "i64"),
-            ExprType::UnboundedArrayF64 => write!(f, "&[f64]"),
-            ExprType::UnboundedArrayI64 => write!(f, "&[i64]"),
+            ExprType::Array(ty, len) => {
+                if let Some(len) = len {
+                    write!(f, "&[{}; {}]", ty, len)
+                } else {
+                    write!(f, "&[{}]", ty)
+                }
+            }
             ExprType::Address => write!(f, "&"),
             ExprType::Tuple(inner) => {
                 write!(f, "(")?;
@@ -97,23 +101,30 @@ pub struct Lval {
 }
 
 impl ExprType {
-    pub fn width(&self, ptr_ty: types::Type, struct_map: &HashMap<String, StructDef>) -> u32 {
+    pub fn width(
+        &self,
+        ptr_ty: types::Type,
+        struct_map: &HashMap<String, StructDef>,
+    ) -> Option<usize> {
         match self {
-            ExprType::UnboundedArrayF64 => ptr_ty.bytes(),
-            ExprType::UnboundedArrayI64 => ptr_ty.bytes(),
-            ExprType::Void => 0,
-            ExprType::Bool => types::I8.bytes(),
-            ExprType::F64 => types::F64.bytes(),
-            ExprType::I64 => types::I64.bytes(),
-            ExprType::Address => ptr_ty.bytes(),
-            ExprType::Tuple(expr_types) => {
-                let mut width = 0;
-                for expr_ty in expr_types.iter() {
-                    width += expr_ty.width(ptr_ty, struct_map);
+            ExprType::Array(ty, len) => {
+                if let Some(len) = len {
+                    if let Some(width) = ty.width(ptr_ty, struct_map) {
+                        Some(width * len)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
                 }
-                width
             }
-            ExprType::Struct(name) => struct_map[&name.to_string()].size,
+            ExprType::Void => Some(0),
+            ExprType::Bool => Some(types::I8.bytes() as usize),
+            ExprType::F64 => Some(types::F64.bytes() as usize),
+            ExprType::I64 => Some(types::I64.bytes() as usize),
+            ExprType::Address => Some(ptr_ty.bytes() as usize),
+            ExprType::Tuple(_expr_types) => None,
+            ExprType::Struct(name) => Some(struct_map[&name.to_string()].size),
         }
     }
 
@@ -168,18 +179,7 @@ impl ExprType {
                         return Err(TypeError::UnknownVariable(id_name.to_string()));
                     }
                 } else if env.variables.contains_key(id_name) {
-                    match &env.variables[id_name] {
-                        SVariable::Unknown(_, _) => ExprType::F64, //TODO
-                        SVariable::Bool(_, _) => ExprType::Bool,
-                        SVariable::F64(_, _) => ExprType::F64,
-                        SVariable::I64(_, _) => ExprType::I64,
-                        SVariable::UnboundedArrayF64(_, _) => ExprType::UnboundedArrayF64,
-                        SVariable::UnboundedArrayI64(_, _) => ExprType::UnboundedArrayI64,
-                        SVariable::Address(_, _) => ExprType::Address,
-                        SVariable::Struct(_, structname, _, _) => {
-                            ExprType::Struct(Box::new(structname.to_string()))
-                        }
-                    }
+                    env.variables[id_name].expr_type().unwrap()
                 } else if env.constant_vars.contains_key(id_name) {
                     ExprType::F64 //All constants are currently math like PI, TAU...
                 } else {
@@ -427,16 +427,14 @@ impl ExprType {
                     let array_type =
                         ExprType::of(&Expr::Identifier(id_name.to_string()), lval, env)?;
                     match array_type {
-                        ExprType::UnboundedArrayF64 => Ok(ExprType::F64),
-                        ExprType::UnboundedArrayI64 => Ok(ExprType::I64),
+                        ExprType::Array(ty, _len) => Ok(*ty.clone()),
                         _ => Err(TypeError::TypeMismatchSpecific {
                             s: format!("{} is not an array", id_name),
                         }),
                     }
                 } else if env.variables.contains_key(id_name) {
                     match &env.variables[id_name] {
-                        SVariable::UnboundedArrayF64(_, _) => Ok(ExprType::F64),
-                        SVariable::UnboundedArrayI64(_, _) => Ok(ExprType::I64),
+                        SVariable::Array(ty, _len) => Ok(ty.expr_type().unwrap()),
                         _ => Err(TypeError::TypeMismatchSpecific {
                             s: format!("{} is not an array", id_name),
                         }),
@@ -466,8 +464,7 @@ impl ExprType {
             | ExprType::I64
             | ExprType::Address
             | ExprType::Struct(_)
-            | ExprType::UnboundedArrayF64
-            | ExprType::UnboundedArrayI64 => 1,
+            | ExprType::Array(_, _) => 1,
             ExprType::Tuple(v) => v.len(),
         }
     }
@@ -488,8 +485,7 @@ impl ExprType {
             }),
             ExprType::F64 => Ok(cranelift::prelude::types::F64),
             ExprType::I64 => Ok(cranelift::prelude::types::I64),
-            ExprType::UnboundedArrayI64 => Ok(ptr_type),
-            ExprType::UnboundedArrayF64 => Ok(ptr_type),
+            ExprType::Array(_, _) => Ok(ptr_type),
             ExprType::Address => Ok(ptr_type),
             ExprType::Struct(_) => Ok(ptr_type),
             ExprType::Tuple(_) => Err(TypeError::TypeMismatchSpecific {

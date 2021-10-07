@@ -229,7 +229,7 @@ fn build_graph_func(
         name: "graph".to_string(),
         params: vec![Arg {
             name: "audio".into(),
-            expr_type: ExprType::UnboundedArrayF64,
+            expr_type: ExprType::Array(Box::new(ExprType::F64), None),
             default_to_float: false,
         }],
         returns: vec![],

@@ -370,8 +370,8 @@ peg::parser!(pub grammar parser() for str {
     rule type_label() -> ExprType
         = _ n:$("f64") _ { ExprType::F64 }
         / _ n:$("i64") _ { ExprType::I64 }
-        / _ n:$("&[f64]") _ { ExprType::UnboundedArrayF64 }
-        / _ n:$("&[i64]") _ { ExprType::UnboundedArrayI64 }
+        / _ n:$("&[f64]") _ { ExprType::Array(Box::new(ExprType::F64), None) }
+        / _ n:$("&[i64]") _ { ExprType::Array(Box::new(ExprType::I64), None) }
         / _ n:$("&") _ { ExprType::Address }
         / _ n:$("bool") _ { ExprType::Bool }
         / _ n:identifier() _ { ExprType::Struct(Box::new(n)) }
@@ -489,29 +489,6 @@ peg::parser!(pub grammar parser() for str {
 
     rule _() =  quiet!{comment() / [' ' | '\t' | '\n']}*
 });
-
-//turn ["l1", "b", "x"] into Binop(DotAccess,Identifier("l1"),Binop(DotAccess,Identifier("b"),Identifier("x")))
-//fn parts_to_binop(mut parts: Vec<String>) -> Expr {
-//    let mut dot_expr = Expr::Binop(
-//        Binop::DotAccess,
-//        Box::new(Expr::Identifier(parts.remove(0))),
-//        Box::new(Expr::Identifier(parts.remove(0))),
-//    );
-//    for part in &parts {
-//        if let Expr::Binop(op, e1, e2) = dot_expr.clone() {
-//            dot_expr = Expr::Binop(
-//                op,
-//                e1,
-//                Box::new(Expr::Binop(
-//                    Binop::DotAccess,
-//                    e2,
-//                    Box::new(Expr::Identifier(part.clone())),
-//                )),
-//            )
-//        }
-//    }
-//    dot_expr
-//}
 
 pub fn assign_op_to_assign(op: Binop, a: Expr, b: Expr) -> Expr {
     Expr::Assign(

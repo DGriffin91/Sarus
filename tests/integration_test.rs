@@ -2065,6 +2065,7 @@ fn process(audio: AudioData) -> () {
         audio.right[i] = i.f64()  
         i += 1
     }
+    audio.right[1].assert_eq(1.0)
 }
 "#;
 
