@@ -2170,8 +2170,12 @@ fn process(audio: AudioSamples) -> () {
         sample = audio.samples[i]
         sample.left = i.f64()
         sample.right = i.f64()  
-        
-        //audio.samples[i].left = i.f64()  //TODO validator can't figure out
+    
+        //TODO jit can't figure out, do something like what
+        //get_struct_field_type does in the validator in get_struct_field_location
+        //Also have to figure out what do since we won't have a var
+
+        //audio.samples[i].left = i.f64()  
         //audio.samples[i].right = i.f64() 
         
         //(audio.samples[i]).left = i.f64()  //TODO validator can't figure out
@@ -2180,15 +2184,15 @@ fn process(audio: AudioSamples) -> () {
         i += 1
     }
     
-    //sample = audio.samples[1]
-    //sample.left.assert_eq(1.0)
-    //sample.right.assert_eq(1.0)
-    //sample = audio.samples[2]
-    //sample.left.assert_eq(2.0)
-    //sample.right.assert_eq(2.0)
-    //sample = audio.samples[3]
-    //sample.left.assert_eq(3.0)
-    //sample.right.assert_eq(3.0)
+    sample = audio.samples[1]
+    sample.left.assert_eq(1.0)
+    sample.right.assert_eq(1.0)
+    sample = audio.samples[2]
+    sample.left.assert_eq(2.0)
+    sample.right.assert_eq(2.0)
+    sample = audio.samples[3]
+    sample.left.assert_eq(3.0)
+    sample.right.assert_eq(3.0)
 }
 "#;
 

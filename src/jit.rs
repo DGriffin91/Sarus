@@ -2169,7 +2169,7 @@ fn declare_variable_from_expr(
             )?;
         }
         expr => {
-            let expr_type = ExprType::of(expr, &mut None, &env)?;
+            let expr_type = ExprType::of(expr, &env)?;
             declare_variable_from_type(ptr_type, &expr_type, builder, index, names, env)?;
         }
     };

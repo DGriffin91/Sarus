@@ -1,8 +1,8 @@
 use std::{collections::HashMap, fmt::Display};
 
 use crate::{
-    frontend::Expr,
-    jit::{Env, SVariable, StructDef},
+    frontend::{Binop, Expr},
+    jit::{Env, SVariable, StructDef, StructField},
     sarus_std_lib,
 };
 use cranelift::prelude::types;
@@ -42,11 +42,6 @@ pub enum ExprType {
     Struct(Box<String>),
 }
 
-/*TODO
-Should the UnboundedArray type actually be:
-UnboundedArray(ExprType)? Allowing Unbounded Arrays of any type?
-*/
-
 impl Display for ExprType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -76,28 +71,38 @@ impl Display for ExprType {
 }
 
 fn get_struct_field_type(
-    struct_name: &str,
-    field_name: &str,
-    struct_map: &HashMap<String, StructDef>,
+    env: &Env,
+    parts: Vec<String>,
+    lhs_val: &Option<ExprType>,
 ) -> Result<ExprType, TypeError> {
-    Ok(if struct_map.contains_key(struct_name) {
-        if struct_map[struct_name].fields.contains_key(field_name) {
-            struct_map[struct_name].fields[field_name].expr_type.clone()
-        } else {
-            return Err(TypeError::UnknownField(
-                struct_name.to_string(),
-                field_name.to_string(),
-            ));
-        }
+    let (lhs_val, st) = if let Some(lhs_val) = lhs_val {
+        (lhs_val.clone(), 0)
     } else {
-        return Err(TypeError::UnknownStruct(struct_name.to_string()));
-    })
-}
-
-#[derive(Debug, Clone)]
-pub struct Lval {
-    pub expr: Vec<Expr>,
-    pub ty: ExprType,
+        (env.variables[&parts[0]].expr_type().unwrap(), 1)
+    };
+    match lhs_val {
+        ExprType::Struct(struct_name) => {
+            let mut struct_name = *struct_name.to_owned();
+            let mut parent_struct_field = &env.struct_map[&struct_name].fields[&parts[st]];
+            if parts.len() > 2 {
+                for i in st..parts.len() {
+                    if let ExprType::Struct(_name) = &parent_struct_field.expr_type {
+                        parent_struct_field = &env.struct_map[&struct_name].fields[&parts[i]];
+                        struct_name = parent_struct_field.expr_type.to_string().clone();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            Ok(parent_struct_field.expr_type.clone())
+        }
+        v => {
+            return Err(TypeError::TypeMismatch {
+                expected: ExprType::Struct(Box::new("".to_string())),
+                actual: v.clone(),
+            })
+        }
+    }
 }
 
 impl ExprType {
@@ -128,59 +133,10 @@ impl ExprType {
         }
     }
 
-    pub fn of(expr: &Expr, lval: &mut Option<Lval>, env: &Env) -> Result<ExprType, TypeError> {
+    pub fn of(expr: &Expr, env: &Env) -> Result<ExprType, TypeError> {
         let res = match expr {
             Expr::Identifier(id_name) => {
-                let parts = if let Some(lval) = lval {
-                    let mut parts = Vec::new();
-                    for expr in &lval.expr {
-                        if let Expr::Identifier(s) = expr {
-                            parts.push(s.as_str());
-                        } else if let Expr::ArrayAccess(s, _) = expr {
-                            parts.push(s.as_str());
-                        } else {
-                            panic!("non identifier/ArrayAccess found")
-                        }
-                    }
-                    parts.push(id_name);
-                    Some(parts)
-                } else if id_name.contains(".") {
-                    Some(id_name.split(".").collect::<Vec<&str>>())
-                } else {
-                    None
-                };
-                if let Some(parts) = parts {
-                    //TODO Refactor?
-                    if env.variables.contains_key(parts[0]) {
-                        match &env.variables[parts[0]] {
-                            SVariable::Struct(_var_name, struct_name, _var, _return_struct) => {
-                                let mut struct_name = struct_name.to_string();
-                                for i in 1..parts.len() {
-                                    let next_expr = get_struct_field_type(
-                                        &struct_name,
-                                        parts[i],
-                                        &env.struct_map,
-                                    )?;
-                                    if let ExprType::Struct(s) = next_expr.clone() {
-                                        struct_name = s.to_string();
-                                    }
-                                    if i == parts.len() - 1 {
-                                        return Ok(next_expr);
-                                    }
-                                }
-                                unreachable!("should have already returned")
-                            }
-                            _v => {
-                                return Err(TypeError::TypeMismatchSpecific {
-                                    s: format!("{} is not a Struct", id_name),
-                                });
-                            }
-                        }
-                    } else {
-                        dbg!(&id_name);
-                        return Err(TypeError::UnknownVariable(id_name.to_string()));
-                    }
-                } else if env.variables.contains_key(id_name) {
+                if env.variables.contains_key(id_name) {
                     env.variables[id_name].expr_type().unwrap()
                 } else if env.constant_vars.contains_key(id_name) {
                     ExprType::F64 //All constants are currently math like PI, TAU...
@@ -193,30 +149,154 @@ impl ExprType {
             Expr::LiteralInt(_) => ExprType::I64,
             Expr::LiteralBool(_) => ExprType::Bool,
             Expr::LiteralString(_) => ExprType::Address, //TODO change to char
-            Expr::Binop(binop, l, r) => match binop {
-                //TODO restructure to be more like translate_binop() in the jit codegen
+            Expr::Binop(binop, lhs, rhs) => match binop {
                 crate::frontend::Binop::DotAccess => {
-                    //keep on looking at rt until you hit the end or a func
-                    //find the result type of fields with struct_map and funcs with Type.func_name() in funcs
-                    let lt = ExprType::of(l, lval, env)?;
+                    let mut path = Vec::new();
+                    let mut lhs_val = None;
 
-                    if let Some(lval) = lval {
-                        lval.expr.push((**l).clone());
-                        lval.ty = lt;
-                    } else {
-                        *lval = Some(Lval {
-                            expr: vec![(**l).clone()],
-                            ty: lt,
-                        })
+                    let mut curr_expr = Some(*lhs.to_owned());
+                    let mut next_expr = Some(*rhs.to_owned());
+
+                    loop {
+                        //println!("curr_expr {:?} next_expr {:?}", &curr_expr, &next_expr);
+                        //println!("path {:?}", &path);
+                        match curr_expr.clone() {
+                            Some(expr) => {
+                                curr_expr = next_expr;
+                                next_expr = None;
+                                match expr.clone() {
+                                    Expr::Call(fn_name, args) => {
+                                        let sval = if path.len() == 0 {
+                                            if let Some(lhs_val) = lhs_val {
+                                                lhs_val
+                                            } else {
+                                                unreachable!("cannot find val type {}", expr)
+                                            }
+                                        } else if path.len() > 1 {
+                                            let spath = path
+                                                .iter()
+                                                .map(|lhs_i: &Expr| lhs_i.to_string())
+                                                .collect::<Vec<String>>();
+                                            get_struct_field_type(&env, spath, &lhs_val)?
+                                        } else {
+                                            ExprType::of(&path[0], env)?
+                                        };
+
+                                        let fn_name = format!("{}.{}", sval.to_string(), fn_name);
+
+                                        let params = &env.funcs[&fn_name].params;
+
+                                        if params.len() - 1 != args.len() {
+                                            return Err(TypeError::TupleLengthMismatch {
+                                                //TODO be more specific: function {} expected {} parameters, but {} were given
+                                                actual: args.len(),
+                                                expected: params.len() - 1,
+                                            });
+                                        }
+
+                                        for (i, (param, arg)) in
+                                            params.iter().skip(1).zip(args.iter()).enumerate()
+                                        {
+                                            let targ = ExprType::of(arg, env)?;
+                                            if param.expr_type != targ {
+                                                return Err(TypeError::TypeMismatchSpecific {
+                                                    s: format!("function {} expected parameter {} to be of type {} but type {} was found", fn_name, i, param.expr_type , targ)
+                                                });
+                                            }
+                                        }
+
+                                        let returns = &env.funcs[&fn_name].returns;
+
+                                        if returns.len() == 0 {
+                                            lhs_val = Some(ExprType::Void)
+                                        } else if returns.len() == 1 {
+                                            lhs_val = Some(returns[0].expr_type.clone())
+                                        } else {
+                                            let mut expr_types = Vec::new();
+                                            for arg in returns {
+                                                expr_types.push(arg.expr_type.clone())
+                                            }
+                                            lhs_val = Some(ExprType::Tuple(expr_types))
+                                        }
+
+                                        path = Vec::new();
+                                    }
+                                    Expr::LiteralFloat(_) => todo!(),
+                                    Expr::LiteralInt(_) => todo!(),
+                                    Expr::LiteralBool(_) => todo!(),
+                                    Expr::LiteralString(_) => {
+                                        lhs_val = Some(ExprType::of(&expr, env)?);
+                                    }
+                                    Expr::Identifier(_) => path.push(expr),
+                                    Expr::Binop(op, lhs, rhs) => {
+                                        if let Binop::DotAccess = op {
+                                            curr_expr = Some(*lhs.clone());
+                                            next_expr = Some(*rhs.clone());
+                                        } else {
+                                            todo!();
+                                        }
+                                    }
+                                    Expr::Unaryop(_, _) => todo!(),
+                                    Expr::Compare(_, _, _) => todo!(),
+                                    Expr::IfThen(_, _) => todo!(),
+                                    Expr::IfElse(_, _, _) => todo!(),
+                                    Expr::Assign(_, _) => todo!(),
+                                    Expr::AssignOp(_, _, _) => todo!(),
+                                    Expr::NewStruct(_, _) => todo!(),
+                                    Expr::WhileLoop(_, _) => todo!(),
+                                    Expr::Block(_) => todo!(),
+                                    Expr::GlobalDataAddr(_) => todo!(),
+                                    Expr::Parentheses(e) => lhs_val = Some(ExprType::of(&e, env)?),
+                                    Expr::ArrayAccess(name, idx_expr) => {
+                                        match ExprType::of(&idx_expr, env)? {
+                                            ExprType::I64 => (),
+                                            e => {
+                                                return Err(TypeError::TypeMismatch {
+                                                    expected: ExprType::I64,
+                                                    actual: e,
+                                                })
+                                            }
+                                        };
+                                        if path.len() > 0 {
+                                            let mut spath = path
+                                                .iter()
+                                                .map(|lhs_i: &Expr| lhs_i.to_string())
+                                                .collect::<Vec<String>>();
+                                            spath.push(name.to_string());
+                                            if let ExprType::Array(ty, _len) =
+                                                get_struct_field_type(&env, spath, &lhs_val)?
+                                            {
+                                                lhs_val = Some(*ty.to_owned());
+                                            }
+                                        } else {
+                                            lhs_val = Some(ExprType::of(&expr, env)?);
+                                        }
+
+                                        path = Vec::new();
+                                    }
+                                }
+                            }
+                            None => break,
+                        }
+                    }
+                    if path.len() > 0 {
+                        dbg!(&lhs_val);
+                        let spath = path
+                            .iter()
+                            .map(|lhs_i: &Expr| lhs_i.to_string())
+                            .collect::<Vec<String>>();
+                        lhs_val = Some(get_struct_field_type(&env, spath, &lhs_val)?);
                     }
 
-                    let rt = ExprType::of(r, lval, env)?;
-
-                    rt
+                    if let Some(lhs_val) = lhs_val {
+                        return Ok(lhs_val);
+                    } else {
+                        panic!("No value found");
+                    }
                 }
                 _ => {
-                    let lt = ExprType::of(l, &mut None, env)?;
-                    let rt = ExprType::of(r, &mut None, env)?;
+                    let lt = ExprType::of(lhs, env)?;
+                    let rt = ExprType::of(rhs, env)?;
                     if lt == rt {
                         lt
                     } else {
@@ -227,10 +307,10 @@ impl ExprType {
                     }
                 }
             },
-            Expr::Unaryop(_, l) => ExprType::of(l, &mut None, env)?,
+            Expr::Unaryop(_, l) => ExprType::of(l, env)?,
             Expr::Compare(_, _, _) => ExprType::Bool,
             Expr::IfThen(econd, _) => {
-                let tcond = ExprType::of(econd, &mut None, env)?;
+                let tcond = ExprType::of(econd, env)?;
                 if tcond != ExprType::Bool {
                     return Err(TypeError::TypeMismatch {
                         expected: ExprType::Bool,
@@ -240,7 +320,7 @@ impl ExprType {
                 ExprType::Void
             }
             Expr::IfElse(econd, etrue, efalse) => {
-                let tcond = ExprType::of(econd, &mut None, env)?;
+                let tcond = ExprType::of(econd, env)?;
                 if tcond != ExprType::Bool {
                     return Err(TypeError::TypeMismatch {
                         expected: ExprType::Bool,
@@ -250,14 +330,14 @@ impl ExprType {
 
                 let ttrue = etrue
                     .iter()
-                    .map(|e| ExprType::of(e, &mut None, env))
+                    .map(|e| ExprType::of(e, env))
                     .collect::<Result<Vec<_>, _>>()?
                     .last()
                     .cloned()
                     .unwrap_or(ExprType::Void);
                 let tfalse = efalse
                     .iter()
-                    .map(|e| ExprType::of(e, &mut None, env))
+                    .map(|e| ExprType::of(e, env))
                     .collect::<Result<Vec<_>, _>>()?
                     .last()
                     .cloned()
@@ -274,7 +354,7 @@ impl ExprType {
             }
             Expr::Assign(lhs_exprs, rhs_exprs) => {
                 let tlen = match rhs_exprs.len().into() {
-                    1 => ExprType::of(&rhs_exprs[0], &mut None, env)?.tuple_size(),
+                    1 => ExprType::of(&rhs_exprs[0], env)?.tuple_size(),
                     n => n,
                 };
                 if usize::from(lhs_exprs.len()) != tlen {
@@ -294,11 +374,11 @@ impl ExprType {
                     //);
                     if let Expr::Identifier(_name) = lhs_expr {
                         //The lhs_expr is just a new var
-                        let rhs_type = ExprType::of(rhs_expr, &mut None, env)?;
+                        let rhs_type = ExprType::of(rhs_expr, env)?;
                         rhs_types.push(rhs_type);
                     } else {
-                        let lhs_type = ExprType::of(lhs_expr, &mut None, env)?;
-                        let rhs_type = ExprType::of(rhs_expr, &mut None, env)?;
+                        let lhs_type = ExprType::of(lhs_expr, env)?;
+                        let rhs_type = ExprType::of(rhs_expr, env)?;
 
                         if lhs_type != rhs_type {
                             return Err(TypeError::TypeMismatch {
@@ -311,9 +391,9 @@ impl ExprType {
                 }
                 ExprType::Tuple(rhs_types)
             }
-            Expr::AssignOp(_, _, e) => ExprType::of(e, &mut None, env)?,
+            Expr::AssignOp(_, _, e) => ExprType::of(e, env)?,
             Expr::WhileLoop(idx_expr, stmts) => {
-                let idx_type = ExprType::of(idx_expr, &mut None, env)?;
+                let idx_type = ExprType::of(idx_expr, env)?;
                 if idx_type != ExprType::Bool {
                     return Err(TypeError::TypeMismatch {
                         expected: ExprType::Bool,
@@ -321,34 +401,25 @@ impl ExprType {
                     });
                 }
                 for expr in stmts {
-                    ExprType::of(expr, &mut None, env)?;
+                    ExprType::of(expr, env)?;
                 }
                 ExprType::Void
             }
 
             Expr::Block(b) => b
                 .iter()
-                .map(|e| ExprType::of(e, &mut None, env))
+                .map(|e| ExprType::of(e, env))
                 .last()
                 .map(Result::unwrap)
                 .unwrap_or(ExprType::Void),
             Expr::Call(fn_name, args) => {
-                let fn_name = if let Some(lval) = &lval {
-                    format!("{}.{}", lval.ty.to_string(), fn_name)
-                } else {
-                    fn_name.clone()
-                };
                 if let Some(_) = sarus_std_lib::is_struct_size_call(&fn_name, &env.struct_map) {
                     return Ok(ExprType::I64);
-                } else if let Some(func) = env.funcs.get(&fn_name) {
+                } else if let Some(func) = env.funcs.get(fn_name) {
                     let mut targs = Vec::new();
 
-                    if let Some(lval) = &lval {
-                        targs.push(lval.ty.clone());
-                    }
-
                     for e in args {
-                        targs.push(ExprType::of(e, &mut None, env)?);
+                        targs.push(ExprType::of(e, env)?);
                     }
 
                     if func.params.len() != targs.len() {
@@ -386,21 +457,18 @@ impl ExprType {
                 }
             }
             Expr::GlobalDataAddr(_) => ExprType::F64,
-            Expr::Parentheses(expr) => ExprType::of(expr, &mut None, env)?,
-            Expr::ArrayAccess(id_name, _) => {
-                if let Some(_) = lval {
-                    let array_type =
-                        ExprType::of(&Expr::Identifier(id_name.to_string()), lval, env)?;
-                    match array_type {
-                        ExprType::Array(ty, _len) => {
-                            //*lval = None;
-                            Ok(*ty.clone())
-                        }
-                        _ => Err(TypeError::TypeMismatchSpecific {
-                            s: format!("{} is not an array", id_name),
-                        }),
+            Expr::Parentheses(expr) => ExprType::of(expr, env)?,
+            Expr::ArrayAccess(id_name, idx_expr) => {
+                match ExprType::of(&*idx_expr, env)? {
+                    ExprType::I64 => (),
+                    e => {
+                        return Err(TypeError::TypeMismatch {
+                            expected: ExprType::I64,
+                            actual: e,
+                        })
                     }
-                } else if env.variables.contains_key(id_name) {
+                };
+                if env.variables.contains_key(id_name) {
                     match &env.variables[id_name] {
                         SVariable::Array(ty, _len) => Ok(ty.expr_type().unwrap()),
                         _ => Err(TypeError::TypeMismatchSpecific {
@@ -465,7 +533,7 @@ impl ExprType {
 
 pub fn validate_program(stmts: &Vec<Expr>, env: &Env) -> Result<(), TypeError> {
     for expr in stmts {
-        ExprType::of(expr, &mut None, env)?;
+        ExprType::of(expr, env)?;
     }
     Ok(())
 }
