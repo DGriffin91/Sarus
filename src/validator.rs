@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Display};
 
 use crate::{
     frontend::{Binop, Expr},
-    jit::{Env, SVariable, StructDef, StructField},
+    jit::{Env, SVariable, StructDef},
     sarus_std_lib,
 };
 use cranelift::prelude::types;
@@ -75,7 +75,7 @@ fn get_struct_field_type(
     parts: Vec<String>,
     lhs_val: &Option<ExprType>,
 ) -> Result<ExprType, TypeError> {
-    let (lhs_val, st) = if let Some(lhs_val) = lhs_val {
+    let (lhs_val, start) = if let Some(lhs_val) = lhs_val {
         (lhs_val.clone(), 0)
     } else {
         (env.variables[&parts[0]].expr_type().unwrap(), 1)
@@ -83,9 +83,9 @@ fn get_struct_field_type(
     match lhs_val {
         ExprType::Struct(struct_name) => {
             let mut struct_name = *struct_name.to_owned();
-            let mut parent_struct_field = &env.struct_map[&struct_name].fields[&parts[st]];
+            let mut parent_struct_field = &env.struct_map[&struct_name].fields[&parts[start]];
             if parts.len() > 2 {
-                for i in st..parts.len() {
+                for i in start..parts.len() {
                     if let ExprType::Struct(_name) = &parent_struct_field.expr_type {
                         parent_struct_field = &env.struct_map[&struct_name].fields[&parts[i]];
                         struct_name = parent_struct_field.expr_type.to_string().clone();
@@ -280,7 +280,6 @@ impl ExprType {
                         }
                     }
                     if path.len() > 0 {
-                        dbg!(&lhs_val);
                         let spath = path
                             .iter()
                             .map(|lhs_i: &Expr| lhs_i.to_string())

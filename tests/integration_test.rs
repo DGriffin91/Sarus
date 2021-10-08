@@ -2170,16 +2170,12 @@ fn process(audio: AudioSamples) -> () {
         sample = audio.samples[i]
         sample.left = i.f64()
         sample.right = i.f64()  
-    
-        //TODO jit can't figure out, do something like what
-        //get_struct_field_type does in the validator in get_struct_field_location
-        //Also have to figure out what do since we won't have a var
 
-        //audio.samples[i].left = i.f64()  
-        //audio.samples[i].right = i.f64() 
+        audio.samples[i].left = i.f64()  
+        audio.samples[i].right = i.f64() 
         
-        //(audio.samples[i]).left = i.f64()  //TODO validator can't figure out
-        //(audio.samples[i]).right = i.f64() 
+        (audio.samples[i]).left = i.f64()
+        (audio.samples[i]).right = i.f64() 
         
         i += 1
     }

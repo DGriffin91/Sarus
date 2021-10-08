@@ -688,7 +688,7 @@ impl<'a> FunctionTranslator<'a> {
                                         .map(|lhs_i: &Expr| lhs_i.to_string())
                                         .collect::<Vec<String>>();
                                     let (sval_address, struct_def) =
-                                        self.get_struct_field_address(spath)?;
+                                        self.get_struct_field_address(spath, lhs_val)?;
                                     if let ExprType::Struct(_name) = struct_def.clone().expr_type {
                                         struct_field_def = Some(struct_def);
                                         sval_address
@@ -736,7 +736,7 @@ impl<'a> FunctionTranslator<'a> {
                                     .collect::<Vec<String>>();
                                 spath.push(name.to_string());
                                 let (sval_address, struct_def) =
-                                    self.get_struct_field_address(spath)?;
+                                    self.get_struct_field_address(spath, lhs_val)?;
                                 struct_field_def = Some(struct_def.clone());
                                 let array_ptr =
                                     if let ExprType::Struct(_name) = struct_def.clone().expr_type {
@@ -825,7 +825,7 @@ impl<'a> FunctionTranslator<'a> {
                 .iter()
                 .map(|lhs_i: &Expr| lhs_i.to_string())
                 .collect::<Vec<String>>();
-            let (sval_address, struct_def) = self.get_struct_field_address(spath)?;
+            let (sval_address, struct_def) = self.get_struct_field_address(spath, lhs_val)?;
             if get_address {
                 struct_field_def = Some(struct_def);
                 lhs_val = Some(sval_address);
@@ -1589,39 +1589,61 @@ impl<'a> FunctionTranslator<'a> {
     fn get_struct_field_location(
         &mut self,
         parts: Vec<String>,
+        lhs_val: Option<SValue>,
     ) -> anyhow::Result<(StructField, Value, usize)> {
-        //println!("get_struct_field_location {:?}", &parts);
-        match &self.env.variables[&parts[0]] {
-            SVariable::Struct(_var_name, struct_name, var, _return_struct) => {
-                let mut parent_struct_field = &self.env.struct_map[struct_name].fields[&parts[1]];
-                let base_struct_var_ptr = self.builder.use_var(*var);
-                let mut struct_name = struct_name.clone();
-                let mut offset = parent_struct_field.offset;
-                if parts.len() > 2 {
-                    offset = 0;
-                    for i in 1..parts.len() {
-                        if let ExprType::Struct(_name) = &parent_struct_field.expr_type {
-                            parent_struct_field =
-                                &self.env.struct_map[&struct_name].fields[&parts[i]];
-                            offset += parent_struct_field.offset;
-                            struct_name = parent_struct_field.expr_type.to_string().clone();
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                Ok(((*parent_struct_field).clone(), base_struct_var_ptr, offset))
+        let mut struct_name: String;
+        let start: usize;
+        println!("get_struct_field_location {:?}", &parts);
+        let base_struct_var_ptr = if let Some(lhs_val) = lhs_val {
+            if let SValue::Struct(vstruct_name, base_struct_var_ptr) = lhs_val {
+                start = 0;
+                struct_name = vstruct_name;
+                base_struct_var_ptr
+            } else {
+                anyhow::bail!("struct type not found")
             }
-            _ => unreachable!("validator should catch this"),
+        } else {
+            if self.env.variables.contains_key(&parts[0]) {
+                if let SVariable::Struct(_var_name, vstruct_name, var, _return_struct) =
+                    &self.env.variables[&parts[0]]
+                {
+                    let base_struct_var_ptr = self.builder.use_var(*var);
+                    start = 1;
+                    struct_name = vstruct_name.to_string();
+                    base_struct_var_ptr
+                } else {
+                    anyhow::bail!("struct type not found")
+                }
+            } else {
+                anyhow::bail!("variable {} not found", &parts[0])
+            }
+            //(&self.env.variables[&parts[0]], 1)
+        };
+
+        let mut parent_struct_field = &self.env.struct_map[&struct_name].fields[&parts[start]];
+        let mut offset = parent_struct_field.offset;
+        if parts.len() > 2 {
+            offset = 0;
+            for i in start..parts.len() {
+                if let ExprType::Struct(_name) = &parent_struct_field.expr_type {
+                    parent_struct_field = &self.env.struct_map[&struct_name].fields[&parts[i]];
+                    offset += parent_struct_field.offset;
+                    struct_name = parent_struct_field.expr_type.to_string();
+                } else {
+                    break;
+                }
+            }
         }
+        Ok(((*parent_struct_field).clone(), base_struct_var_ptr, offset))
     }
 
     fn get_struct_field_address(
         &mut self,
         parts: Vec<String>,
+        lhs_val: Option<SValue>,
     ) -> anyhow::Result<(SValue, StructField)> {
         let (parent_struct_field_def, base_struct_var_ptr, offset) =
-            self.get_struct_field_location(parts)?;
+            self.get_struct_field_location(parts, lhs_val)?;
         //println!(
         //    "get_struct_field_address {:?} base_struct_var_ptr {} offset {}",
         //    &parent_struct_field_def, base_struct_var_ptr, offset
