@@ -4,7 +4,8 @@ use toposort_scc::IndexGraph;
 
 use crate::{
     frontend::{
-        assign_op_to_assign, make_nonempty, parser, Arg, Binop, Cmp, Declaration, Expr, Function,
+        assign_op_to_assign, make_nonempty, parser, Arg, Binop, Cmp, CodeRef, Declaration, Expr,
+        Function,
     },
     jit, sarus_std_lib,
     validator::ExprType,
@@ -122,16 +123,23 @@ fn build_graph_func(
 
     main_body.push(Expr::Assign(
         //i = 0
-        make_nonempty(vec![Expr::Identifier("i".to_string())]).unwrap(),
-        make_nonempty(vec![Expr::LiteralInt("0".to_string())]).unwrap(),
+        CodeRef::z(),
+        make_nonempty(vec![Expr::Identifier(CodeRef::z(), "i".to_string())]).unwrap(),
+        make_nonempty(vec![Expr::LiteralInt(CodeRef::z(), "0".to_string())]).unwrap(),
     ));
 
     body.push(Expr::Assign(
         //vINPUT_0 = audio[i]
-        make_nonempty(vec![Expr::Identifier("vINPUT_src".to_string())]).unwrap(),
+        CodeRef::z(),
+        make_nonempty(vec![Expr::Identifier(
+            CodeRef::z(),
+            "vINPUT_src".to_string(),
+        )])
+        .unwrap(),
         make_nonempty(vec![Expr::ArrayAccess(
+            CodeRef::z(),
             "audio".to_string(),
-            Box::new(Expr::Identifier("i".to_string())),
+            Box::new(Expr::Identifier(CodeRef::z(), "i".to_string())),
         )])
         .unwrap(),
     ));
@@ -146,7 +154,10 @@ fn build_graph_func(
 
         let mut return_var_names = Vec::new();
         for ret in node_src_ast.returns.iter() {
-            return_var_names.push(Expr::Identifier(format!("v{}_{}", node_id, ret)))
+            return_var_names.push(Expr::Identifier(
+                CodeRef::z(),
+                format!("v{}_{}", node_id, ret),
+            ))
         }
 
         let mut param_names = Vec::new();
@@ -161,24 +172,30 @@ fn build_graph_func(
             if connection.len() > 0 {
                 // If a connection if found use the appropriate var name
                 let connection = connection.first().unwrap();
-                param_names.push(Expr::Identifier(format!(
-                    "v{}_{}",
-                    &connection.src_node, connection.src_port
-                )))
+                param_names.push(Expr::Identifier(
+                    CodeRef::z(),
+                    format!("v{}_{}", &connection.src_node, connection.src_port),
+                ))
             } else {
                 println!("{}", format!("{}", node.port_defaults[&param.name]));
                 // If there is no connection use the default val
-                param_names.push(Expr::LiteralFloat(format!(
-                    "{:.10}",
-                    node.port_defaults[&param.name]
-                )))
+                param_names.push(Expr::LiteralFloat(
+                    CodeRef::z(),
+                    format!("{:.10}", node.port_defaults[&param.name]),
+                ))
                 //TODO arbitrary precision while always printing decimal?
             }
         }
 
         body.push(Expr::Assign(
+            CodeRef::z(),
             make_nonempty(return_var_names).unwrap(),
-            make_nonempty(vec![Expr::Call(node.func_name.clone(), param_names)]).unwrap(),
+            make_nonempty(vec![Expr::Call(
+                CodeRef::z(),
+                node.func_name.clone(),
+                param_names,
+            )])
+            .unwrap(),
         ))
     }
 
@@ -192,35 +209,55 @@ fn build_graph_func(
     let last_connection = last_connection.first().unwrap();
 
     body.push(Expr::Assign(
+        CodeRef::z(),
         //assign last node to output
-        make_nonempty(vec![Expr::Identifier(format!("v{}_dst", last_node_id))]).unwrap(),
-        make_nonempty(vec![Expr::Identifier(format!(
-            "v{}_{}",
-            &last_connection.src_node, last_connection.src_port
-        ))])
+        make_nonempty(vec![Expr::Identifier(
+            CodeRef::z(),
+            format!("v{}_dst", last_node_id),
+        )])
+        .unwrap(),
+        make_nonempty(vec![Expr::Identifier(
+            CodeRef::z(),
+            format!(
+                "v{}_{}",
+                &last_connection.src_node, last_connection.src_port
+            ),
+        )])
         .unwrap(),
     ));
 
     body.push(Expr::Assign(
+        CodeRef::z(),
         make_nonempty(vec![Expr::ArrayAccess(
+            CodeRef::z(),
             "audio".to_string(),
-            Box::new(Expr::Identifier("i".to_string())),
+            Box::new(Expr::Identifier(CodeRef::z(), "i".to_string())),
         )])
         .unwrap(),
-        make_nonempty(vec![Expr::Identifier("vOUTPUT_dst".to_string())]).unwrap(),
+        make_nonempty(vec![Expr::Identifier(
+            CodeRef::z(),
+            "vOUTPUT_dst".to_string(),
+        )])
+        .unwrap(),
     ));
 
     body.push(assign_op_to_assign(
+        0,
         Binop::Add,
-        Expr::Identifier("i".to_string()),
-        Expr::LiteralInt("1".to_string()),
+        Expr::Identifier(CodeRef::z(), "i".to_string()),
+        Expr::LiteralInt(CodeRef::z(), "1".to_string()),
     ));
 
     main_body.push(Expr::WhileLoop(
+        CodeRef::z(),
         Box::new(Expr::Compare(
+            CodeRef::z(),
             Cmp::Le,
-            Box::new(Expr::Identifier("i".to_string())),
-            Box::new(Expr::LiteralInt(format!("{}", (block_size - 1) as f64))),
+            Box::new(Expr::Identifier(CodeRef::z(), "i".to_string())),
+            Box::new(Expr::LiteralInt(
+                CodeRef::z(),
+                format!("{}", (block_size - 1) as f64),
+            )),
         )),
         body,
     ));

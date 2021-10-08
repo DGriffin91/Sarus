@@ -66,44 +66,58 @@ impl Display for Cmp {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct CodeRef {
+    pub pos: usize,
+}
+
+impl CodeRef {
+    pub fn new(pos: usize) -> Self {
+        CodeRef { pos }
+    }
+    pub fn z() -> Self {
+        CodeRef { pos: 0 }
+    }
+}
+
 type NV<T> = non_empty_vec::NonEmpty<T>;
 
 /// The AST node for expressions.
 #[derive(Debug, Clone)]
 pub enum Expr {
-    LiteralFloat(String),
-    LiteralInt(String),
-    LiteralBool(bool),
-    LiteralString(String),
-    Identifier(String),
-    Binop(Binop, Box<Expr>, Box<Expr>),
-    Unaryop(Unaryop, Box<Expr>),
-    Compare(Cmp, Box<Expr>, Box<Expr>),
-    IfThen(Box<Expr>, Vec<Expr>),
-    IfElse(Box<Expr>, Vec<Expr>, Vec<Expr>),
-    Assign(NV<Expr>, NV<Expr>),
-    AssignOp(Binop, Box<String>, Box<Expr>),
-    NewStruct(String, Vec<StructAssignField>),
-    WhileLoop(Box<Expr>, Vec<Expr>), //Should this take a block instead of Vec<Expr>?
-    Block(Vec<Expr>),
-    Call(String, Vec<Expr>),
-    GlobalDataAddr(String),
-    Parentheses(Box<Expr>),
-    ArrayAccess(String, Box<Expr>),
+    LiteralFloat(CodeRef, String),
+    LiteralInt(CodeRef, String),
+    LiteralBool(CodeRef, bool),
+    LiteralString(CodeRef, String),
+    Identifier(CodeRef, String),
+    Binop(CodeRef, Binop, Box<Expr>, Box<Expr>),
+    Unaryop(CodeRef, Unaryop, Box<Expr>),
+    Compare(CodeRef, Cmp, Box<Expr>, Box<Expr>),
+    IfThen(CodeRef, Box<Expr>, Vec<Expr>),
+    IfElse(CodeRef, Box<Expr>, Vec<Expr>, Vec<Expr>),
+    Assign(CodeRef, NV<Expr>, NV<Expr>),
+    AssignOp(CodeRef, Binop, Box<String>, Box<Expr>),
+    NewStruct(CodeRef, String, Vec<StructAssignField>),
+    WhileLoop(CodeRef, Box<Expr>, Vec<Expr>), //Should this take a block instead of Vec<Expr>?
+    Block(CodeRef, Vec<Expr>),
+    Call(CodeRef, String, Vec<Expr>),
+    GlobalDataAddr(CodeRef, String),
+    Parentheses(CodeRef, Box<Expr>),
+    ArrayAccess(CodeRef, String, Box<Expr>),
 }
 
 //TODO indentation, tests
 impl Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Expr::LiteralFloat(s) => write!(f, "{}", s),
-            Expr::LiteralInt(s) => write!(f, "{}", s),
-            Expr::LiteralString(s) => write!(f, "\"{}\"", s),
-            Expr::Identifier(s) => write!(f, "{}", s),
-            Expr::Binop(op, e1, e2) => write!(f, "{} {} {}", e1, op, e2),
-            Expr::Unaryop(op, e1) => write!(f, "{} {}", op, e1),
-            Expr::Compare(cmp, e1, e2) => write!(f, "{} {} {}", e1, cmp, e2),
-            Expr::IfThen(e, body) => {
+            Expr::LiteralFloat(_, s) => write!(f, "{}", s),
+            Expr::LiteralInt(_, s) => write!(f, "{}", s),
+            Expr::LiteralString(_, s) => write!(f, "\"{}\"", s),
+            Expr::Identifier(_, s) => write!(f, "{}", s),
+            Expr::Binop(_, op, e1, e2) => write!(f, "{} {} {}", e1, op, e2),
+            Expr::Unaryop(_, op, e1) => write!(f, "{} {}", op, e1),
+            Expr::Compare(_, cmp, e1, e2) => write!(f, "{} {} {}", e1, cmp, e2),
+            Expr::IfThen(_, e, body) => {
                 writeln!(f, "if {} {{", e)?;
                 for expr in body.iter() {
                     writeln!(f, "{}", expr)?;
@@ -111,7 +125,7 @@ impl Display for Expr {
                 write!(f, "}}")?;
                 Ok(())
             }
-            Expr::IfElse(e, body, else_body) => {
+            Expr::IfElse(_, e, body, else_body) => {
                 writeln!(f, "if {} {{", e)?;
                 for expr in body.iter() {
                     writeln!(f, "{}", expr)?;
@@ -123,7 +137,7 @@ impl Display for Expr {
                 write!(f, "}}")?;
                 Ok(())
             }
-            Expr::Assign(vars, exprs) => {
+            Expr::Assign(_, vars, exprs) => {
                 for (i, var) in vars.iter().enumerate() {
                     write!(f, "{}", var)?;
                     let len: usize = vars.len().into();
@@ -141,8 +155,8 @@ impl Display for Expr {
                 }
                 Ok(())
             }
-            Expr::AssignOp(op, s, e) => write!(f, "{} {}= {}", s, op, e),
-            Expr::NewStruct(struct_name, args) => {
+            Expr::AssignOp(_, op, s, e) => write!(f, "{} {}= {}", s, op, e),
+            Expr::NewStruct(_, struct_name, args) => {
                 writeln!(f, "{}{{", struct_name)?;
                 for arg in args.iter() {
                     writeln!(f, "{},", arg)?;
@@ -150,7 +164,7 @@ impl Display for Expr {
                 writeln!(f, "}}")?;
                 Ok(())
             }
-            Expr::WhileLoop(eval, block) => {
+            Expr::WhileLoop(_, eval, block) => {
                 writeln!(f, "while {} {{", eval)?;
                 for expr in block.iter() {
                     writeln!(f, "{}", expr)?;
@@ -158,13 +172,13 @@ impl Display for Expr {
                 write!(f, "}}")?;
                 Ok(())
             }
-            Expr::Block(block) => {
+            Expr::Block(_, block) => {
                 for expr in block.iter() {
                     writeln!(f, "{}", expr)?;
                 }
                 Ok(())
             }
-            Expr::Call(func_name, args) => {
+            Expr::Call(_, func_name, args) => {
                 //todo print this correctly
                 write!(f, "{}(", func_name)?;
                 for (i, arg) in args.iter().enumerate() {
@@ -176,10 +190,10 @@ impl Display for Expr {
                 write!(f, ")")?;
                 Ok(())
             }
-            Expr::GlobalDataAddr(e) => write!(f, "{}", e),
-            Expr::LiteralBool(b) => write!(f, "{}", b),
-            Expr::Parentheses(e) => write!(f, "({})", e),
-            Expr::ArrayAccess(var, e) => write!(f, "{}[{}]", var, e),
+            Expr::GlobalDataAddr(_, e) => write!(f, "{}", e),
+            Expr::LiteralBool(_, b) => write!(f, "{}", b),
+            Expr::Parentheses(_, e) => write!(f, "({})", e),
+            Expr::ArrayAccess(_, var, e) => write!(f, "{}[{}]", var, e),
         }
     }
 }
@@ -391,52 +405,52 @@ peg::parser!(pub grammar parser() for str {
         / binary_op()
 
     rule if_then() -> Expr
-        = _ "if" _ e:expression() then_body:block() "\n"
-        { Expr::IfThen(Box::new(e), then_body) }
+        = _ pos:position!() "if" _ e:expression() then_body:block() "\n"
+        { Expr::IfThen(CodeRef::new(pos), Box::new(e), then_body) }
 
     rule if_else() -> Expr
-        = _ "if" e:expression() _ when_true:block() _ "else" when_false:block()
-        { Expr::IfElse(Box::new(e), when_true, when_false) }
+        = _ pos:position!() "if" e:expression() _ when_true:block() _ "else" when_false:block()
+        { Expr::IfElse(CodeRef::new(pos), Box::new(e), when_true, when_false) }
 
     rule while_loop() -> Expr
-        = _ "while" e:expression() body:block()
-        { Expr::WhileLoop(Box::new(e), body) }
+        = _ pos:position!() "while" e:expression() body:block()
+        { Expr::WhileLoop(CodeRef::new(pos), Box::new(e), body) }
 
     rule assignment() -> Expr
-        = assignments:((binary_op()) ** comma()) _ "=" args:((_ e:expression() _ {e}) ** comma()) {?
+        = assignments:((binary_op()) ** comma()) _ pos:position!() "=" args:((_ e:expression() _ {e}) ** comma()) {?
             make_nonempty(assignments)
                 .and_then(|assignments| make_nonempty(args)
-                .map(|args| Expr::Assign(assignments, args)))
+                .map(|args| Expr::Assign(CodeRef::new(pos), assignments, args)))
                 .ok_or("Cannot assign to/from empty tuple")
         }
 
 
     rule op_assignment() -> Expr
-    = a:(binary_op()) _ "+=" _ b:expression() {assign_op_to_assign(Binop::Add, a, b)}
-    / a:(binary_op()) _ "-=" _ b:expression() {assign_op_to_assign(Binop::Sub, a, b)}
-    / a:(binary_op()) _ "*=" _ b:expression() {assign_op_to_assign(Binop::Mul, a, b)}
-    / a:(binary_op()) _ "/=" _ b:expression() {assign_op_to_assign(Binop::Div, a, b)}
+    = pos:position!() a:(binary_op()) _ "+=" _ b:expression() {assign_op_to_assign(pos, Binop::Add, a, b)}
+    / pos:position!() a:(binary_op()) _ "-=" _ b:expression() {assign_op_to_assign(pos, Binop::Sub, a, b)}
+    / pos:position!() a:(binary_op()) _ "*=" _ b:expression() {assign_op_to_assign(pos, Binop::Mul, a, b)}
+    / pos:position!() a:(binary_op()) _ "/=" _ b:expression() {assign_op_to_assign(pos, Binop::Div, a, b)}
 
     rule binary_op() -> Expr = precedence!{
-        a:@ _ "&&" _ b:(@) { Expr::Binop(Binop::LogicalAnd, Box::new(a), Box::new(b)) }
-        a:@ _ "||" _ b:(@) { Expr::Binop(Binop::LogicalOr, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "&&" _ b:(@) { Expr::Binop(CodeRef::new(pos), Binop::LogicalAnd, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "||" _ b:(@) { Expr::Binop(CodeRef::new(pos), Binop::LogicalOr, Box::new(a), Box::new(b)) }
         --
-        a:@ _ "==" b:(@) { Expr::Compare(Cmp::Eq, Box::new(a), Box::new(b)) }
-        a:@ _ "!=" b:(@) { Expr::Compare(Cmp::Ne, Box::new(a), Box::new(b)) }
-        a:@ _ "<"  b:(@) { Expr::Compare(Cmp::Lt, Box::new(a), Box::new(b)) }
-        a:@ _ "<=" b:(@) { Expr::Compare(Cmp::Le, Box::new(a), Box::new(b)) }
-        a:@ _ ">"  b:(@) { Expr::Compare(Cmp::Gt, Box::new(a), Box::new(b)) }
-        a:@ _ ">=" b:(@) { Expr::Compare(Cmp::Ge, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "==" b:(@) { Expr::Compare(CodeRef::new(pos), Cmp::Eq, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "!=" b:(@) { Expr::Compare(CodeRef::new(pos), Cmp::Ne, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "<"  b:(@) { Expr::Compare(CodeRef::new(pos), Cmp::Lt, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "<=" b:(@) { Expr::Compare(CodeRef::new(pos), Cmp::Le, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() ">"  b:(@) { Expr::Compare(CodeRef::new(pos), Cmp::Gt, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() ">=" b:(@) { Expr::Compare(CodeRef::new(pos), Cmp::Ge, Box::new(a), Box::new(b)) }
         --
-        a:@ _ "+" _ b:(@) { Expr::Binop(Binop::Add, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "+" _ b:(@) { Expr::Binop(CodeRef::new(pos), Binop::Add, Box::new(a), Box::new(b)) }
         --
-        a:@ _ "-" _ b:(@) { Expr::Binop(Binop::Sub, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "-" _ b:(@) { Expr::Binop(CodeRef::new(pos), Binop::Sub, Box::new(a), Box::new(b)) }
         --
-        a:@ _ "*" _ b:(@) { Expr::Binop(Binop::Mul, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "*" _ b:(@) { Expr::Binop(CodeRef::new(pos), Binop::Mul, Box::new(a), Box::new(b)) }
         --
-        a:@ _ "/" _ b:(@) { Expr::Binop(Binop::Div, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "/" _ b:(@) { Expr::Binop(CodeRef::new(pos), Binop::Div, Box::new(a), Box::new(b)) }
         --
-        a:@ "." b:(@) { Expr::Binop(Binop::DotAccess, Box::new(a), Box::new(b)) }
+        a:@ pos:position!() "." b:(@) { Expr::Binop(CodeRef::new(pos), Binop::DotAccess, Box::new(a), Box::new(b)) }
         --
         u:unary_op()  { u }
     }
@@ -445,16 +459,16 @@ peg::parser!(pub grammar parser() for str {
         //Having a _ before the () breaks in this case:
         //c = p.x + p.y + p.z
         //(p.x).print()
-        i:func_identifier() "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
-            Expr::Call(i, args)
+        pos:position!() i:func_identifier() "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
+            Expr::Call(CodeRef::new(pos), i, args)
         }
-        i:identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" { Expr::NewStruct(i, args) }
-        i:identifier() _ "[" idx:expression() "]" { Expr::ArrayAccess(i, Box::new(idx)) }
-        i:identifier() { Expr::Identifier(i) }
+        pos:position!() i:identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" { Expr::NewStruct(CodeRef::new(pos), i, args) }
+        pos:position!() i:identifier() _ "[" idx:expression() "]" { Expr::ArrayAccess(CodeRef::new(pos), i, Box::new(idx)) }
+        pos:position!() i:identifier() { Expr::Identifier(CodeRef::new(pos), i) }
         l:literal() { l }
-        "!" e:expression() { Expr::Unaryop(Unaryop::Not, Box::new(e)) }
+        pos:position!() "!" e:expression() { Expr::Unaryop(CodeRef::new(pos),Unaryop::Not, Box::new(e)) }
         --
-        "(" e:expression() ")" { Expr::Parentheses(Box::new(e)) }
+        pos:position!() "(" e:expression() ")" { Expr::Parentheses(CodeRef::new(pos), Box::new(e)) }
     }
 
     rule identifier() -> String
@@ -467,15 +481,15 @@ peg::parser!(pub grammar parser() for str {
         / identifier()
 
     rule literal() -> Expr
-        = _ n:$(['-']*['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat(n.into()) }
-        / _ n:$(['-']*['0'..='9']+) { Expr::LiteralInt(n.into()) }
-        / "*" i:identifier() { Expr::GlobalDataAddr(i) }
-        / _ "true" _ { Expr::LiteralBool(true) }
-        / _ "false" _ { Expr::LiteralBool(false) }
-        / _ "\"" body:$[^'"']* "\"" _ { Expr::LiteralString(body.join("")) }
-        / _ "[" _ "\"" repstr:$[^'\"']* "\"" _ ";" _ len:$(['0'..='9']+) _ "]" _ {
+        = _ pos:position!() n:$(['-']*['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat(CodeRef::new(pos), n.into()) }
+        / _ pos:position!() n:$(['-']*['0'..='9']+) { Expr::LiteralInt(CodeRef::new(pos), n.into()) }
+        / pos:position!() "*" i:identifier() { Expr::GlobalDataAddr(CodeRef::new(pos), i) }
+        / _ pos:position!() "true" _ { Expr::LiteralBool(CodeRef::new(pos), true) }
+        / _ pos:position!() "false" _ { Expr::LiteralBool(CodeRef::new(pos), false) }
+        / _ pos:position!() "\"" body:$[^'"']* "\"" _ { Expr::LiteralString(CodeRef::new(pos), body.join("")) }
+        / _ pos:position!() "[" _ "\"" repstr:$[^'\"']* "\"" _ ";" _ len:$(['0'..='9']+) _ "]" _ {
             //Temp solution for creating empty strings
-            Expr::LiteralString(repstr.join("").repeat( len.parse().unwrap()))
+            Expr::LiteralString(CodeRef::new(pos), repstr.join("").repeat( len.parse().unwrap()))
         } //[" "; 10]
 
     rule struct_assign_field() -> StructAssignField
@@ -489,9 +503,16 @@ peg::parser!(pub grammar parser() for str {
     rule _() =  quiet!{comment() / [' ' | '\t' | '\n']}*
 });
 
-pub fn assign_op_to_assign(op: Binop, a: Expr, b: Expr) -> Expr {
+pub fn assign_op_to_assign(pos: usize, op: Binop, a: Expr, b: Expr) -> Expr {
     Expr::Assign(
+        CodeRef { pos },
         make_nonempty(vec![a.clone()]).unwrap(),
-        make_nonempty(vec![Expr::Binop(op, Box::new(a), Box::new(b))]).unwrap(),
+        make_nonempty(vec![Expr::Binop(
+            CodeRef { pos },
+            op,
+            Box::new(a),
+            Box::new(b),
+        )])
+        .unwrap(),
     )
 }

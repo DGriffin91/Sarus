@@ -564,26 +564,28 @@ impl<'a> FunctionTranslator<'a> {
     fn translate_expr(&mut self, expr: &Expr) -> anyhow::Result<SValue> {
         //dbg!(&expr);
         match expr {
-            Expr::LiteralFloat(literal) => Ok(SValue::F64(
+            Expr::LiteralFloat(_code_ref, literal) => Ok(SValue::F64(
                 self.builder.ins().f64const::<f64>(literal.parse().unwrap()),
             )),
-            Expr::LiteralInt(literal) => Ok(SValue::I64(
+            Expr::LiteralInt(_code_ref, literal) => Ok(SValue::I64(
                 self.builder
                     .ins()
                     .iconst::<i64>(types::I64, literal.parse().unwrap()),
             )),
-            Expr::LiteralString(literal) => self.translate_string(literal),
-            Expr::Binop(op, lhs, rhs) => Ok(self.translate_binop(*op, lhs, rhs, false)?.0),
-            Expr::Unaryop(op, lhs) => self.translate_unaryop(*op, lhs),
-            Expr::Compare(cmp, lhs, rhs) => self.translate_cmp(*cmp, lhs, rhs),
-            Expr::Call(name, args) => self.translate_call(name, args, None),
-            Expr::GlobalDataAddr(name) => Ok(SValue::Array(
+            Expr::LiteralString(_code_ref, literal) => self.translate_string(literal),
+            Expr::Binop(_code_ref, op, lhs, rhs) => {
+                Ok(self.translate_binop(*op, lhs, rhs, false)?.0)
+            }
+            Expr::Unaryop(_code_ref, op, lhs) => self.translate_unaryop(*op, lhs),
+            Expr::Compare(_code_ref, cmp, lhs, rhs) => self.translate_cmp(*cmp, lhs, rhs),
+            Expr::Call(_code_ref, name, args) => self.translate_call(name, args, None),
+            Expr::GlobalDataAddr(_code_ref, name) => Ok(SValue::Array(
                 Box::new(SValue::F64(
                     self.translate_global_data_addr(self.ptr_ty, name),
                 )),
                 None,
             )),
-            Expr::Identifier(name) => {
+            Expr::Identifier(_code_ref, name) => {
                 match self.env.variables.get(name) {
                     Some(var) => SValue::get_from_variable(&mut self.builder, var),
                     None => Ok(SValue::F64(
@@ -592,33 +594,39 @@ impl<'a> FunctionTranslator<'a> {
                     )), //Try to load global
                 }
             }
-            Expr::Assign(to_exprs, from_exprs) => self.translate_assign(to_exprs, from_exprs),
-            Expr::AssignOp(_op, _lhs, _rhs) => {
+            Expr::Assign(_code_ref, to_exprs, from_exprs) => {
+                self.translate_assign(to_exprs, from_exprs)
+            }
+            Expr::AssignOp(_code_ref, _op, _lhs, _rhs) => {
                 unimplemented!("currently AssignOp is turned into seperate assign and op")
                 //self.translate_math_assign(*op, lhs, rhs),
                 //for what this used to look like see:
                 //https://github.com/DGriffin91/sarus/tree/cd4bf6472bf02f00ea6037d606842ec84d0ff205
             }
-            Expr::NewStruct(struct_name, fields) => self.translate_new_struct(struct_name, fields),
-            Expr::IfThen(condition, then_body) => {
+            Expr::NewStruct(_code_ref, struct_name, fields) => {
+                self.translate_new_struct(struct_name, fields)
+            }
+            Expr::IfThen(_code_ref, condition, then_body) => {
                 self.translate_if_then(condition, then_body)?;
                 Ok(SValue::Void)
             }
-            Expr::IfElse(condition, then_body, else_body) => {
+            Expr::IfElse(_code_ref, condition, then_body, else_body) => {
                 self.translate_if_else(condition, then_body, else_body)
             }
-            Expr::WhileLoop(condition, loop_body) => {
+            Expr::WhileLoop(_code_ref, condition, loop_body) => {
                 self.translate_while_loop(condition, loop_body)?;
                 Ok(SValue::Void)
             }
-            Expr::Block(b) => b
+            Expr::Block(_code_ref, b) => b
                 .into_iter()
                 .map(|e| self.translate_expr(e))
                 .last()
                 .unwrap(),
-            Expr::LiteralBool(b) => Ok(SValue::Bool(self.builder.ins().bconst(types::B1, *b))),
-            Expr::Parentheses(expr) => self.translate_expr(expr),
-            Expr::ArrayAccess(name, idx_expr) => {
+            Expr::LiteralBool(_code_ref, b) => {
+                Ok(SValue::Bool(self.builder.ins().bconst(types::B1, *b)))
+            }
+            Expr::Parentheses(_code_ref, expr) => self.translate_expr(expr),
+            Expr::ArrayAccess(_code_ref, name, idx_expr) => {
                 self.translate_array_get(name.to_string(), idx_expr, false)
             } //Expr::ArraySet(name, idx_expr, expr) => {
               //    self.translate_array_set(name.to_string(), idx_expr, expr)
@@ -678,7 +686,7 @@ impl<'a> FunctionTranslator<'a> {
                     curr_expr = next_expr;
                     next_expr = None;
                     match expr {
-                        Expr::Call(fn_name, args) => {
+                        Expr::Call(_code_ref, fn_name, args) => {
                             if path.len() == 0 {
                                 lhs_val = Some(self.translate_call(fn_name, args, lhs_val)?);
                             } else {
@@ -704,12 +712,14 @@ impl<'a> FunctionTranslator<'a> {
                                 path = Vec::new();
                             }
                         }
-                        Expr::LiteralFloat(_) => todo!(),
-                        Expr::LiteralInt(_) => todo!(),
-                        Expr::LiteralBool(_) => todo!(),
-                        Expr::LiteralString(_) => lhs_val = Some(self.translate_expr(expr)?),
-                        Expr::Identifier(_) => path.push(expr.clone()),
-                        Expr::Binop(op, lhs, rhs) => {
+                        Expr::LiteralFloat(_code_ref, _) => todo!(),
+                        Expr::LiteralInt(_code_ref, _) => todo!(),
+                        Expr::LiteralBool(_code_ref, _) => todo!(),
+                        Expr::LiteralString(_code_ref, _) => {
+                            lhs_val = Some(self.translate_expr(expr)?)
+                        }
+                        Expr::Identifier(_code_ref, _) => path.push(expr.clone()),
+                        Expr::Binop(_code_ref, op, lhs, rhs) => {
                             if let Binop::DotAccess = op {
                                 curr_expr = Some(lhs);
                                 next_expr = Some(rhs);
@@ -717,18 +727,18 @@ impl<'a> FunctionTranslator<'a> {
                                 todo!();
                             }
                         }
-                        Expr::Unaryop(_, _) => todo!(),
-                        Expr::Compare(_, _, _) => todo!(),
-                        Expr::IfThen(_, _) => todo!(),
-                        Expr::IfElse(_, _, _) => todo!(),
-                        Expr::Assign(_, _) => todo!(),
-                        Expr::AssignOp(_, _, _) => todo!(),
-                        Expr::NewStruct(_, _) => todo!(),
-                        Expr::WhileLoop(_, _) => todo!(),
-                        Expr::Block(_) => todo!(),
-                        Expr::GlobalDataAddr(_) => todo!(),
-                        Expr::Parentheses(e) => lhs_val = Some(self.translate_expr(e)?),
-                        Expr::ArrayAccess(name, idx_expr) => {
+                        Expr::Unaryop(_code_ref, _, _) => todo!(),
+                        Expr::Compare(_code_ref, _, _, _) => todo!(),
+                        Expr::IfThen(_code_ref, _, _) => todo!(),
+                        Expr::IfElse(_code_ref, _, _, _) => todo!(),
+                        Expr::Assign(_code_ref, _, _) => todo!(),
+                        Expr::AssignOp(_code_ref, _, _, _) => todo!(),
+                        Expr::NewStruct(_code_ref, _, _) => todo!(),
+                        Expr::WhileLoop(_code_ref, _, _) => todo!(),
+                        Expr::Block(_code_ref, _) => todo!(),
+                        Expr::GlobalDataAddr(_code_ref, _) => todo!(),
+                        Expr::Parentheses(_code_ref, e) => lhs_val = Some(self.translate_expr(e)?),
+                        Expr::ArrayAccess(_code_ref, name, idx_expr) => {
                             if path.len() > 0 {
                                 let mut spath = path
                                     .iter()
@@ -1038,7 +1048,7 @@ impl<'a> FunctionTranslator<'a> {
             'expression: for (i, to_expr) in to_exprs.iter().enumerate() {
                 let val = self.translate_expr(from_exprs.get(i).unwrap())?;
                 match to_expr {
-                    Expr::Binop(op, lhs, rhs) => {
+                    Expr::Binop(_code_ref, op, lhs, rhs) => {
                         let (struct_field_address, struct_field) =
                             self.translate_binop(*op, lhs, rhs, true)?;
 
@@ -1052,7 +1062,7 @@ impl<'a> FunctionTranslator<'a> {
                             unreachable!()
                         }
                     }
-                    Expr::Identifier(name) => {
+                    Expr::Identifier(_code_ref, name) => {
                         let var = match self.env.variables.get(name) {
                             Some(v) => v,
                             None => anyhow::bail!("variable {} not found", name),
@@ -1099,7 +1109,7 @@ impl<'a> FunctionTranslator<'a> {
                         self.builder
                             .def_var(var.inner(), val.inner("translate_assign")?);
                     }
-                    Expr::ArrayAccess(name, idx_expr) => {
+                    Expr::ArrayAccess(_code_ref, name, idx_expr) => {
                         self.translate_array_set(name.to_string(), idx_expr, &val)?;
                     }
                     _ => {
@@ -1113,10 +1123,10 @@ impl<'a> FunctionTranslator<'a> {
             match self.translate_expr(from_exprs.first().unwrap())? {
                 SValue::Tuple(values) => {
                     for (i, to_expr) in to_exprs.iter().enumerate() {
-                        if let Expr::Binop(_, _, _) = to_expr {
+                        if let Expr::Binop(_code_ref, _, _, _) = to_expr {
                             todo!()
                             //self.set_struct_field(to_expr, values[i].clone())?
-                        } else if let Expr::Identifier(name) = to_expr {
+                        } else if let Expr::Identifier(_code_ref, name) = to_expr {
                             let var = match self.env.variables.get(name) {
                                 Some(v) => v,
                                 None => anyhow::bail!("variable {} not found", name),
@@ -2134,24 +2144,24 @@ fn declare_variables_in_stmt(
     env: &mut Env,
 ) -> anyhow::Result<()> {
     match *expr {
-        Expr::Assign(ref to_exprs, ref from_exprs) => {
+        Expr::Assign(_code_ref, ref to_exprs, ref from_exprs) => {
             if to_exprs.len() == from_exprs.len() {
                 for (to_expr, _from_expr) in to_exprs.iter().zip(from_exprs.iter()) {
-                    if let Expr::Identifier(name) = to_expr {
+                    if let Expr::Identifier(_code_ref, name) = to_expr {
                         declare_variable_from_expr(ptr_type, expr, builder, index, &[name], env)?;
                     }
                 }
             } else {
                 let mut sto_exprs = Vec::new();
                 for to_expr in to_exprs.iter() {
-                    if let Expr::Identifier(name) = to_expr {
+                    if let Expr::Identifier(_code_ref, name) = to_expr {
                         sto_exprs.push(name.as_str());
                     }
                 }
                 declare_variable_from_expr(ptr_type, expr, builder, index, &sto_exprs, env)?;
             }
         }
-        Expr::IfElse(ref _condition, ref then_body, ref else_body) => {
+        Expr::IfElse(_code_ref, ref _condition, ref then_body, ref else_body) => {
             for stmt in then_body {
                 declare_variables_in_stmt(ptr_type, builder, index, &stmt, env)?;
             }
@@ -2159,7 +2169,7 @@ fn declare_variables_in_stmt(
                 declare_variables_in_stmt(ptr_type, builder, index, &stmt, env)?;
             }
         }
-        Expr::WhileLoop(ref _condition, ref loop_body) => {
+        Expr::WhileLoop(_code_ref, ref _condition, ref loop_body) => {
             for stmt in loop_body {
                 declare_variables_in_stmt(ptr_type, builder, index, &stmt, env)?;
             }
@@ -2179,7 +2189,7 @@ fn declare_variable_from_expr(
     env: &mut Env,
 ) -> anyhow::Result<()> {
     match expr {
-        Expr::IfElse(_condition, then_body, _else_body) => {
+        Expr::IfElse(_code_ref, _condition, then_body, _else_body) => {
             //TODO make sure then & else returns match
             declare_variable_from_expr(
                 ptr_type,

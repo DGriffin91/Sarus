@@ -135,7 +135,7 @@ impl ExprType {
 
     pub fn of(expr: &Expr, env: &Env) -> Result<ExprType, TypeError> {
         let res = match expr {
-            Expr::Identifier(id_name) => {
+            Expr::Identifier(_code_ref, id_name) => {
                 if env.variables.contains_key(id_name) {
                     env.variables[id_name].expr_type().unwrap()
                 } else if env.constant_vars.contains_key(id_name) {
@@ -145,11 +145,11 @@ impl ExprType {
                     return Err(TypeError::UnknownVariable(id_name.to_string()));
                 }
             }
-            Expr::LiteralFloat(_) => ExprType::F64,
-            Expr::LiteralInt(_) => ExprType::I64,
-            Expr::LiteralBool(_) => ExprType::Bool,
-            Expr::LiteralString(_) => ExprType::Address, //TODO change to char
-            Expr::Binop(binop, lhs, rhs) => match binop {
+            Expr::LiteralFloat(_code_ref, _) => ExprType::F64,
+            Expr::LiteralInt(_code_ref, _) => ExprType::I64,
+            Expr::LiteralBool(_code_ref, _) => ExprType::Bool,
+            Expr::LiteralString(_code_ref, _) => ExprType::Address, //TODO change to char
+            Expr::Binop(_code_ref, binop, lhs, rhs) => match binop {
                 crate::frontend::Binop::DotAccess => {
                     let mut path = Vec::new();
                     let mut lhs_val = None;
@@ -165,7 +165,7 @@ impl ExprType {
                                 curr_expr = next_expr;
                                 next_expr = None;
                                 match expr.clone() {
-                                    Expr::Call(fn_name, args) => {
+                                    Expr::Call(_code_ref, fn_name, args) => {
                                         let sval = if path.len() == 0 {
                                             if let Some(lhs_val) = lhs_val {
                                                 lhs_val
@@ -221,14 +221,14 @@ impl ExprType {
 
                                         path = Vec::new();
                                     }
-                                    Expr::LiteralFloat(_) => todo!(),
-                                    Expr::LiteralInt(_) => todo!(),
-                                    Expr::LiteralBool(_) => todo!(),
-                                    Expr::LiteralString(_) => {
+                                    Expr::LiteralFloat(_code_ref, _) => todo!(),
+                                    Expr::LiteralInt(_code_ref, _) => todo!(),
+                                    Expr::LiteralBool(_code_ref, _) => todo!(),
+                                    Expr::LiteralString(_code_ref, _) => {
                                         lhs_val = Some(ExprType::of(&expr, env)?);
                                     }
-                                    Expr::Identifier(_) => path.push(expr),
-                                    Expr::Binop(op, lhs, rhs) => {
+                                    Expr::Identifier(_code_ref, _) => path.push(expr),
+                                    Expr::Binop(_code_ref, op, lhs, rhs) => {
                                         if let Binop::DotAccess = op {
                                             curr_expr = Some(*lhs.clone());
                                             next_expr = Some(*rhs.clone());
@@ -236,18 +236,20 @@ impl ExprType {
                                             todo!();
                                         }
                                     }
-                                    Expr::Unaryop(_, _) => todo!(),
-                                    Expr::Compare(_, _, _) => todo!(),
-                                    Expr::IfThen(_, _) => todo!(),
-                                    Expr::IfElse(_, _, _) => todo!(),
-                                    Expr::Assign(_, _) => todo!(),
-                                    Expr::AssignOp(_, _, _) => todo!(),
-                                    Expr::NewStruct(_, _) => todo!(),
-                                    Expr::WhileLoop(_, _) => todo!(),
-                                    Expr::Block(_) => todo!(),
-                                    Expr::GlobalDataAddr(_) => todo!(),
-                                    Expr::Parentheses(e) => lhs_val = Some(ExprType::of(&e, env)?),
-                                    Expr::ArrayAccess(name, idx_expr) => {
+                                    Expr::Unaryop(_code_ref, _, _) => todo!(),
+                                    Expr::Compare(_code_ref, _, _, _) => todo!(),
+                                    Expr::IfThen(_code_ref, _, _) => todo!(),
+                                    Expr::IfElse(_code_ref, _, _, _) => todo!(),
+                                    Expr::Assign(_code_ref, _, _) => todo!(),
+                                    Expr::AssignOp(_code_ref, _, _, _) => todo!(),
+                                    Expr::NewStruct(_code_ref, _, _) => todo!(),
+                                    Expr::WhileLoop(_code_ref, _, _) => todo!(),
+                                    Expr::Block(_code_ref, _) => todo!(),
+                                    Expr::GlobalDataAddr(_code_ref, _) => todo!(),
+                                    Expr::Parentheses(_code_ref, e) => {
+                                        lhs_val = Some(ExprType::of(&e, env)?)
+                                    }
+                                    Expr::ArrayAccess(_code_ref, name, idx_expr) => {
                                         match ExprType::of(&idx_expr, env)? {
                                             ExprType::I64 => (),
                                             e => {
@@ -306,9 +308,9 @@ impl ExprType {
                     }
                 }
             },
-            Expr::Unaryop(_, l) => ExprType::of(l, env)?,
-            Expr::Compare(_, _, _) => ExprType::Bool,
-            Expr::IfThen(econd, _) => {
+            Expr::Unaryop(_code_ref, _, l) => ExprType::of(l, env)?,
+            Expr::Compare(_code_ref, _, _, _) => ExprType::Bool,
+            Expr::IfThen(_code_ref, econd, _) => {
                 let tcond = ExprType::of(econd, env)?;
                 if tcond != ExprType::Bool {
                     return Err(TypeError::TypeMismatch {
@@ -318,7 +320,7 @@ impl ExprType {
                 }
                 ExprType::Void
             }
-            Expr::IfElse(econd, etrue, efalse) => {
+            Expr::IfElse(_code_ref, econd, etrue, efalse) => {
                 let tcond = ExprType::of(econd, env)?;
                 if tcond != ExprType::Bool {
                     return Err(TypeError::TypeMismatch {
@@ -351,7 +353,7 @@ impl ExprType {
                     });
                 }
             }
-            Expr::Assign(lhs_exprs, rhs_exprs) => {
+            Expr::Assign(_code_ref, lhs_exprs, rhs_exprs) => {
                 let tlen = match rhs_exprs.len().into() {
                     1 => ExprType::of(&rhs_exprs[0], env)?.tuple_size(),
                     n => n,
@@ -371,7 +373,7 @@ impl ExprType {
                     //    lhs_expr,
                     //    rhs_expr
                     //);
-                    if let Expr::Identifier(_name) = lhs_expr {
+                    if let Expr::Identifier(_code_ref, _name) = lhs_expr {
                         //The lhs_expr is just a new var
                         let rhs_type = ExprType::of(rhs_expr, env)?;
                         rhs_types.push(rhs_type);
@@ -390,8 +392,8 @@ impl ExprType {
                 }
                 ExprType::Tuple(rhs_types)
             }
-            Expr::AssignOp(_, _, e) => ExprType::of(e, env)?,
-            Expr::WhileLoop(idx_expr, stmts) => {
+            Expr::AssignOp(_code_ref, _, _, e) => ExprType::of(e, env)?,
+            Expr::WhileLoop(_code_ref, idx_expr, stmts) => {
                 let idx_type = ExprType::of(idx_expr, env)?;
                 if idx_type != ExprType::Bool {
                     return Err(TypeError::TypeMismatch {
@@ -405,13 +407,13 @@ impl ExprType {
                 ExprType::Void
             }
 
-            Expr::Block(b) => b
+            Expr::Block(_code_ref, b) => b
                 .iter()
                 .map(|e| ExprType::of(e, env))
                 .last()
                 .map(Result::unwrap)
                 .unwrap_or(ExprType::Void),
-            Expr::Call(fn_name, args) => {
+            Expr::Call(_code_ref, fn_name, args) => {
                 if let Some(_) = sarus_std_lib::is_struct_size_call(&fn_name, &env.struct_map) {
                     return Ok(ExprType::I64);
                 } else if let Some(func) = env.funcs.get(fn_name) {
@@ -455,9 +457,9 @@ impl ExprType {
                     return Err(TypeError::UnknownFunction(fn_name.to_string()));
                 }
             }
-            Expr::GlobalDataAddr(_) => ExprType::F64,
-            Expr::Parentheses(expr) => ExprType::of(expr, env)?,
-            Expr::ArrayAccess(id_name, idx_expr) => {
+            Expr::GlobalDataAddr(_code_ref, _) => ExprType::F64,
+            Expr::Parentheses(_code_ref, expr) => ExprType::of(expr, env)?,
+            Expr::ArrayAccess(_code_ref, id_name, idx_expr) => {
                 match ExprType::of(&*idx_expr, env)? {
                     ExprType::I64 => (),
                     e => {
@@ -479,7 +481,7 @@ impl ExprType {
                     return Err(TypeError::UnknownVariable(id_name.to_string()));
                 }?
             }
-            Expr::NewStruct(struct_name, _fields) => {
+            Expr::NewStruct(_code_ref, struct_name, _fields) => {
                 if env.struct_map.contains_key(struct_name) {
                     //Need to check field types
                 } else {
