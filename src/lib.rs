@@ -23,12 +23,10 @@ macro_rules! hashmap {
 pub fn default_std_jit_from_code(code: &str) -> anyhow::Result<jit::JIT> {
     let mut ast = parser::program(&code)?;
     let mut jit_builder = jit::new_jit_builder();
-    sarus_std_lib::append_std_symbols(&mut jit_builder);
-    sarus_std_lib::append_std_funcs(&mut ast);
+    sarus_std_lib::append_std(&mut ast, &mut jit_builder);
     sarus_std_lib::append_std_math(&mut ast, &mut jit_builder);
 
     let mut jit = jit::JIT::from(jit_builder);
-    jit.add_math_constants()?;
 
     jit.translate(ast.clone(), code.to_string())?;
     Ok(jit)
@@ -41,14 +39,12 @@ pub fn default_std_jit_from_code_with_importer(
 ) -> anyhow::Result<jit::JIT> {
     let mut ast = parser::program(&code)?;
     let mut jit_builder = jit::new_jit_builder();
-    sarus_std_lib::append_std_symbols(&mut jit_builder);
-    sarus_std_lib::append_std_funcs(&mut ast);
+    sarus_std_lib::append_std(&mut ast, &mut jit_builder);
     sarus_std_lib::append_std_math(&mut ast, &mut jit_builder);
 
     importer(&mut ast, &mut jit_builder);
 
     let mut jit = jit::JIT::from(jit_builder);
-    jit.add_math_constants()?;
 
     jit.translate(ast.clone(), code.to_string())?;
     Ok(jit)
@@ -58,6 +54,7 @@ pub fn default_std_jit_from_code_with_importer(
 macro_rules! decl {
     ( $prog:expr, $jit_builder:expr, $name:expr, $func:expr,  ($( $param:expr ),*), ($( $ret:expr ),*) ) => {
         {
+            #[allow(unused_mut)]
             let mut params = Vec::new();
             $(
                 params.push(Arg {
@@ -67,6 +64,7 @@ macro_rules! decl {
                 });
             )*
 
+            #[allow(unused_mut)]
             let mut returns = Vec::new();
             $(
                 returns.push(Arg {

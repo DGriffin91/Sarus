@@ -3,7 +3,6 @@ use std::{collections::HashMap, fmt::Display};
 use crate::{
     frontend::{Binop, CodeRef, Expr},
     jit::{Env, SVariable, StructDef},
-    sarus_std_lib,
 };
 use cranelift::prelude::types;
 use thiserror::Error;
@@ -258,8 +257,8 @@ impl ExprType {
             Expr::Identifier(code_ref, id_name) => {
                 if env.variables.contains_key(id_name) {
                     env.variables[id_name].expr_type().unwrap()
-                } else if env.constant_vars.contains_key(id_name) {
-                    ExprType::F64(*code_ref) //All constants are currently math like PI, TAU...
+                } else if let Some(v) = env.constant_vars.get(id_name) {
+                    v.expr_type(Some(*code_ref)) //Constants like PI, TAU...
                 } else {
                     dbg!(&id_name);
                     return Err(TypeError::UnknownVariable(*code_ref, id_name.to_string()));
@@ -290,10 +289,9 @@ impl ExprType {
                                             if let Some(lhs_val) = lhs_val {
                                                 lhs_val
                                             } else {
-                                                unreachable!(
-                                                    "{} cannot find val type {}",
-                                                    code_ref, expr
-                                                )
+                                                //This is a lhs call
+                                                lhs_val = Some(ExprType::of(&expr, env)?);
+                                                continue;
                                             }
                                         } else if path.len() > 1 {
                                             let spath = path
@@ -561,9 +559,7 @@ impl ExprType {
                 .map(Result::unwrap)
                 .unwrap_or(ExprType::Void(*code_ref)),
             Expr::Call(code_ref, fn_name, args) => {
-                if let Some(_) = sarus_std_lib::is_struct_size_call(&fn_name, &env.struct_map) {
-                    return Ok(ExprType::I64(*code_ref));
-                } else if let Some(func) = env.funcs.get(fn_name) {
+                if let Some(func) = env.funcs.get(fn_name) {
                     let mut targs = Vec::new();
 
                     for e in args {

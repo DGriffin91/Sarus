@@ -40,15 +40,12 @@ impl Graph {
         connections: Vec<Connection>,
         block_size: usize,
     ) -> anyhow::Result<Graph> {
-        // Create the JIT instance, which manages all generated functions and data.
-        let mut jit = jit::JIT::default();
-        jit.add_math_constants()?;
-
-        // Generate AST from string
         let mut ast = parser::program(&code)?;
+        let mut jit_builder = jit::new_jit_builder();
+        sarus_std_lib::append_std(&mut ast, &mut jit_builder);
+        sarus_std_lib::append_std_math(&mut ast, &mut jit_builder);
 
-        // Add STD lib to ast
-        sarus_std_lib::append_std_funcs(&mut ast);
+        let mut jit = jit::JIT::from(jit_builder);
 
         let node_execution_order = order_connections(&connections, &nodes);
 

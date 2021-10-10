@@ -1892,19 +1892,19 @@ struct Misc3 {
 }
 
 fn misc_size() -> (size: i64) {
-    size = Misc::size()
+    size = Misc::size
 }
 
 fn misc2_size() -> (size: i64) {
-    size = Misc2::size()
+    size = Misc2::size
 }
 
 fn misc3_size() -> (size: i64) {
-    size = Misc3::size()
+    size = Misc3::size
 }
 
 fn f64_size() -> (size: i64) {
-    size = f64::size()
+    size = f64::size
 }
 
 
@@ -1973,7 +1973,7 @@ fn takes_a_stuff(s: Stuff) -> () {
     s.i.assert_eq(123)
 }
 fn size_of_stuff() -> (size: i64) {
-    size = Stuff::size()
+    size = Stuff::size
 }
 "#;
 
@@ -2323,5 +2323,37 @@ fn set_val(self: Filter) -> () {
     let func = unsafe { mem::transmute::<_, extern "C" fn() -> ()>(func_ptr) };
     func();
 
+    Ok(())
+}
+
+#[test]
+fn src_line() -> anyhow::Result<()> {
+    let code = r#"
+fn main() -> () {
+    src_line().assert_eq(2)
+    src_line().assert_eq(3) src_line().assert_eq(3)
+    //
+
+    src_line().assert_eq(6)
+}
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn const_size() -> anyhow::Result<()> {
+    let code = r#"
+fn main() -> () {
+    f64::size.println()
+}
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
     Ok(())
 }

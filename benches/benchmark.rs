@@ -130,10 +130,12 @@ fn get_eq_jit() -> jit::JIT {
 
 "#;
 
-    let mut jit = jit::JIT::default();
-    jit.add_math_constants().unwrap();
-    let mut ast = frontend::parser::program(&code).unwrap();
-    sarus_std_lib::append_std_funcs(&mut ast);
+    let mut ast = parser::program(&code).unwrap();
+    let mut jit_builder = jit::new_jit_builder();
+    sarus_std_lib::append_std(&mut ast, &mut jit_builder);
+    sarus_std_lib::append_std_math(&mut ast, &mut jit_builder);
+
+    let mut jit = jit::JIT::from(jit_builder);
     jit.translate(ast, code.to_string()).unwrap();
     jit
 }

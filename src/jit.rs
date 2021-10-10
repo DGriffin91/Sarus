@@ -1,5 +1,6 @@
 use crate::frontend::*;
 use crate::sarus_std_lib;
+use crate::sarus_std_lib::SConstant;
 use crate::validator::validate_program;
 use crate::validator::ExprType;
 use cranelift::codegen::ir::immediates::Offset32;
@@ -80,6 +81,10 @@ impl JIT {
         //}
 
         let mut prog = prog;
+
+        let struct_map = create_struct_map(&prog, self.module.target_config().pointer_type())?;
+        let constant_vars = sarus_std_lib::get_constants(&struct_map);
+
         let mut funcs = HashMap::new();
 
         for decl in prog.iter_mut() {
@@ -102,9 +107,8 @@ impl JIT {
         //    funcs.insert(func.name.clone(), func);
         //}
 
-        let struct_map = create_struct_map(&prog, self.module.target_config().pointer_type())?;
-
         // First, parse the string, producing AST nodes.
+
         for d in prog.clone() {
             match d {
                 Declaration::Function(func) => {
@@ -117,7 +121,7 @@ impl JIT {
                     ////    &name, &params, &the_return
                     ////);
                     //// Then, translate the AST nodes into Cranelift IR.
-                    self.codegen(&func, funcs.to_owned(), &prog, &struct_map)?;
+                    self.codegen(&func, funcs.to_owned(), &prog, &struct_map, &constant_vars)?;
                     // Next, declare the function to jit. Functions must be declared
                     // before they can be called, or defined.
                     let id = self
@@ -153,6 +157,14 @@ impl JIT {
                     self.module.finalize_definitions();
                 }
                 _ => continue,
+            };
+        }
+
+        for (name, val) in constant_vars.iter() {
+            match val {
+                SConstant::I64(n) => self.create_data(&name, (*n).to_ne_bytes().to_vec())?,
+                SConstant::F64(n) => self.create_data(&name, (*n).to_ne_bytes().to_vec())?,
+                SConstant::Bool(n) => self.create_data(&name, (*n as i8).to_ne_bytes().to_vec())?,
             };
         }
 
@@ -200,6 +212,7 @@ impl JIT {
         funcs: HashMap<String, Function>,
         prog: &[Declaration],
         struct_map: &HashMap<String, StructDef>,
+        constant_vars: &HashMap<String, SConstant>,
     ) -> anyhow::Result<()> {
         let ptr_ty = self.module.target_config().pointer_type();
 
@@ -260,7 +273,7 @@ impl JIT {
         // predecessors. Since it's the entry block, it won't have any
         // predecessors.
         builder.seal_block(entry_block);
-        let constant_vars = sarus_std_lib::get_constants();
+
         // The toy language allows variables to be declared implicitly.
         // Walk the AST and declare all implicitly-declared variables.
 
@@ -351,13 +364,6 @@ impl JIT {
             func.name.to_string(),
             trans.builder.func.display(None).to_string(),
         );
-        Ok(())
-    }
-
-    pub fn add_math_constants(&mut self) -> anyhow::Result<()> {
-        for (name, val) in sarus_std_lib::get_constants() {
-            self.create_data(&name, val.to_ne_bytes().to_vec())?;
-        }
         Ok(())
     }
 
@@ -563,7 +569,7 @@ impl SValue {
 
 pub struct Env<'a> {
     pub prog: &'a [Declaration],
-    pub constant_vars: HashMap<String, f64>,
+    pub constant_vars: &'a HashMap<String, SConstant>,
     pub struct_map: HashMap<String, StructDef>,
     pub variables: HashMap<String, SVariable>,
     pub ptr_ty: types::Type,
@@ -600,7 +606,7 @@ impl<'a> FunctionTranslator<'a> {
             }
             Expr::Unaryop(_code_ref, op, lhs) => self.translate_unaryop(*op, lhs),
             Expr::Compare(_code_ref, cmp, lhs, rhs) => self.translate_cmp(*cmp, lhs, rhs),
-            Expr::Call(_code_ref, name, args) => self.translate_call(name, args, None),
+            Expr::Call(code_ref, name, args) => self.translate_call(code_ref, name, args, None),
             Expr::GlobalDataAddr(_code_ref, name) => Ok(SValue::Array(
                 Box::new(SValue::F64(
                     self.translate_global_data_addr(self.ptr_ty, name),
@@ -608,12 +614,15 @@ impl<'a> FunctionTranslator<'a> {
                 None,
             )),
             Expr::Identifier(_code_ref, name) => {
-                match self.env.variables.get(name) {
-                    Some(var) => SValue::get_from_variable(&mut self.builder, var),
-                    None => Ok(SValue::F64(
-                        //TODO Don't assume this is a float (this is used for math const)
+                if let Some(svar) = self.env.variables.get(name) {
+                    SValue::get_from_variable(&mut self.builder, svar)
+                } else if let Some(sval) = self.translate_constant(name)? {
+                    Ok(sval)
+                } else {
+                    Ok(SValue::F64(
+                        //TODO Don't assume this is a float
                         self.translate_global_data_addr(types::F64, name),
-                    )), //Try to load global
+                    )) //Try to load global
                 }
             }
             Expr::Assign(_code_ref, to_exprs, from_exprs) => {
@@ -708,9 +717,10 @@ impl<'a> FunctionTranslator<'a> {
                     curr_expr = next_expr;
                     next_expr = None;
                     match expr {
-                        Expr::Call(_code_ref, fn_name, args) => {
+                        Expr::Call(code_ref, fn_name, args) => {
                             if path.len() == 0 {
-                                lhs_val = Some(self.translate_call(fn_name, args, lhs_val)?);
+                                lhs_val =
+                                    Some(self.translate_call(code_ref, fn_name, args, lhs_val)?);
                             } else {
                                 let sval = if path.len() > 1 {
                                     let spath = path
@@ -732,7 +742,12 @@ impl<'a> FunctionTranslator<'a> {
                                     self.translate_expr(&path[0])?
                                 };
                                 //dbg!(&sval);
-                                lhs_val = Some(self.translate_call(fn_name, args, Some(sval))?);
+                                lhs_val = Some(self.translate_call(
+                                    code_ref,
+                                    fn_name,
+                                    args,
+                                    Some(sval),
+                                )?);
                                 path = Vec::new();
                             }
                         }
@@ -1491,6 +1506,7 @@ impl<'a> FunctionTranslator<'a> {
 
     fn translate_call(
         &mut self,
+        code_ref: &CodeRef,
         fn_name: &str,
         args: &[Expr],
         impl_val: Option<SValue>,
@@ -1514,27 +1530,24 @@ impl<'a> FunctionTranslator<'a> {
             arg_values.push(self.translate_expr(expr)?.inner("translate_call")?)
         }
 
-        //TODO refactor, we call is_struct_size_call too many times redundantly
-        let stack_slot_return =
-            if let Some(_) = sarus_std_lib::is_struct_size_call(&fn_name, &self.env.struct_map) {
-                None
-            } else {
-                let returns = &self.env.funcs[&fn_name].returns;
-                if returns.len() > 0 {
-                    if let ExprType::Struct(_code_ref, name) = &returns[0].expr_type {
-                        Some((
-                            name.to_string(),
-                            self.env.struct_map[&name.to_string()].size,
-                        ))
-                    } else {
-                        None
-                    }
+        let stack_slot_return = {
+            let returns = &self.env.funcs[&fn_name].returns;
+            if returns.len() > 0 {
+                if let ExprType::Struct(_code_ref, name) = &returns[0].expr_type {
+                    Some((
+                        name.to_string(),
+                        self.env.struct_map[&name.to_string()].size,
+                    ))
                 } else {
                     None
                 }
-            };
+            } else {
+                None
+            }
+        };
 
         call_with_values(
+            &code_ref,
             &fn_name,
             &arg_values,
             &self.env.funcs,
@@ -1545,7 +1558,19 @@ impl<'a> FunctionTranslator<'a> {
         )
     }
 
-    fn translate_global_data_addr(&mut self, ptr_ty: Type, name: &str) -> Value {
+    fn translate_constant(&mut self, name: &str) -> anyhow::Result<Option<SValue>> {
+        if let Some(const_var) = self.env.constant_vars.get(name) {
+            let expr = const_var.expr_type(None);
+            Ok(Some(SValue::from(
+                &expr,
+                self.translate_global_data_addr(expr.cranelift_type(self.ptr_ty, true)?, name),
+            )?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn translate_global_data_addr(&mut self, data_type: Type, name: &str) -> Value {
         let sym = self
             .module
             .declare_data(&name, Linkage::Export, true, false)
@@ -1556,12 +1581,12 @@ impl<'a> FunctionTranslator<'a> {
         let global_val = self.builder.create_global_value(GlobalValueData::Load {
             base: local_id,
             offset: Offset32::new(0),
-            global_type: ptr_ty,
+            global_type: data_type,
             readonly: true,
         });
 
         //self.builder.ins().symbol_value(ptr_ty, local_id)
-        self.builder.ins().global_value(ptr_ty, global_val)
+        self.builder.ins().global_value(data_type, global_val)
     }
 
     fn value_type(&self, val: Value) -> Type {
@@ -1849,6 +1874,7 @@ fn copy_to_stack_slot(
 }
 
 fn call_with_values(
+    code_ref: &CodeRef,
     name: &str,
     arg_values: &[Value],
     funcs: &HashMap<String, Function>,
@@ -1858,14 +1884,6 @@ fn call_with_values(
     stack_slot_return: Option<(String, usize)>,
 ) -> anyhow::Result<SValue> {
     let name = &name.to_string();
-
-    if let Some(struct_name) = sarus_std_lib::is_struct_size_call(name, struct_map) {
-        return Ok(sarus_std_lib::translate_size_call(
-            builder,
-            struct_name,
-            struct_map,
-        ));
-    }
 
     if !funcs.contains_key(name) {
         anyhow::bail!("function {} not found", name)
@@ -1884,6 +1902,7 @@ fn call_with_values(
         if let Some(v) = sarus_std_lib::translate_std(
             module.target_config().pointer_type(),
             builder,
+            code_ref,
             name,
             arg_values,
         )? {

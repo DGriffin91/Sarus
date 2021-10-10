@@ -477,7 +477,7 @@ peg::parser!(pub grammar parser() for str {
         / expected!("identifier")
 
     rule function() -> Declaration
-        = _ ext:("extern")? _  "fn" name:func_identifier() _
+        = _ ext:("extern")? _  "fn" name:identifier() _
         "(" params:(i:arg() ** comma()) ")" _
         "->" _
         "(" returns:(i:arg() ** comma()) _ ")"
@@ -580,7 +580,7 @@ peg::parser!(pub grammar parser() for str {
         //Having a _ before the () breaks in this case:
         //c = p.x + p.y + p.z
         //(p.x).print()
-        pos:position!() i:func_identifier() "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
+        pos:position!() i:identifier() "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
             Expr::Call(CodeRef::new(pos), i, args)
         }
         pos:position!() i:identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" { Expr::NewStruct(CodeRef::new(pos), i, args) }
@@ -593,13 +593,7 @@ peg::parser!(pub grammar parser() for str {
     }
 
     rule identifier() -> String
-        = quiet!{ _ n:$((!"true"!"false")['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.into() } }
-        / expected!("identifier")
-
-
-    rule func_identifier() -> String
-        = quiet!{ _ n:$((!"true"!"false")['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']* "::" ['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.into() } }
-        / identifier()
+        = quiet!{ _ n:$((!"true"!"false")['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']* "::"? ['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.into() } }
 
     rule literal() -> Expr
         = _ pos:position!() n:$(['-']*['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat(CodeRef::new(pos), n.into()) }

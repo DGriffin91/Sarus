@@ -5,9 +5,9 @@ use cranelift::frontend::FunctionBuilder;
 use cranelift::prelude::{types, InstBuilder, Value};
 use cranelift_jit::JITBuilder;
 
-use crate::frontend::Arg;
+use crate::frontend::{Arg, CodeRef};
 use crate::jit::{SValue, StructDef};
-use crate::validator::{address_t, bool_t, f64_t, i64_t};
+use crate::validator::{address_t, bool_t, f64_t, i64_t, ExprType};
 use crate::{
     decl,
     frontend::{Declaration, Function},
@@ -115,21 +115,8 @@ extern "C" fn str_assert_eq(s1: *const i8, s2: *const i8) {
     }
 }
 
-pub fn append_std_symbols(jit_builder: &mut JITBuilder) {
-    jit_builder.symbols([
-        ("f64.print", f64_print as *const u8),
-        ("i64.print", i64_print as *const u8),
-        ("bool.print", bool_print as *const u8),
-        ("&.print", str_print as *const u8), //TODO setup actual str type
-        ("f64.println", f64_println as *const u8),
-        ("i64.println", i64_println as *const u8),
-        ("bool.println", bool_println as *const u8),
-        ("&.println", str_println as *const u8), //TODO setup actual str type
-        ("f64.assert_eq", f64_assert_eq as *const u8),
-        ("i64.assert_eq", i64_assert_eq as *const u8),
-        ("bool.assert_eq", bool_assert_eq as *const u8),
-        ("&.assert_eq", str_assert_eq as *const u8), //TODO setup actual str type
-    ]);
+extern "C" fn spanic(s: *const i8) {
+    unsafe { panic!("{}", CStr::from_ptr(s).to_str().unwrap()) }
 }
 
 #[rustfmt::skip]
@@ -204,7 +191,9 @@ pub fn append_std_math(
     */
 }
 
-pub fn append_std_funcs(prog: &mut Vec<Declaration>) {
+#[rustfmt::skip]
+pub fn append_std(prog: &mut Vec<Declaration>, jit_builder: &mut JITBuilder) {
+    let jb = jit_builder;
     for n in STD_1ARG_FF {
         prog.push(make_decl(n, vec![("x", f64_t())], vec![("y", f64_t())]));
     }
@@ -228,83 +217,43 @@ pub fn append_std_funcs(prog: &mut Vec<Declaration>) {
             vec![("z", i64_t())],
         ));
     }
-    prog.push(make_decl("f64.print", vec![("x", f64_t())], vec![]));
-    prog.push(make_decl("i64.print", vec![("x", i64_t())], vec![]));
-    prog.push(make_decl("bool.print", vec![("x", bool_t())], vec![]));
-    prog.push(make_decl("&.print", vec![("x", address_t())], vec![]));
-    prog.push(make_decl("f64.println", vec![("x", f64_t())], vec![]));
-    prog.push(make_decl("i64.println", vec![("x", i64_t())], vec![]));
-    prog.push(make_decl("bool.println", vec![("x", bool_t())], vec![]));
-    prog.push(make_decl("&.println", vec![("x", address_t())], vec![]));
-    prog.push(make_decl(
-        "f64.assert_eq",
-        vec![("x", f64_t()), ("y", f64_t())],
-        vec![],
-    ));
-    prog.push(make_decl(
-        "i64.assert_eq",
-        vec![("x", i64_t()), ("y", i64_t())],
-        vec![],
-    ));
-    prog.push(make_decl(
-        "bool.assert_eq",
-        vec![("x", bool_t()), ("y", bool_t())],
-        vec![],
-    ));
-    prog.push(make_decl(
-        "&.assert_eq",
-        vec![("x", address_t()), ("y", address_t())],
-        vec![],
-    ));
 
-    //prog.push(make_decl(
-    //    "bytes",
-    //    vec![("size", ExprType::I64)],
-    //    vec![("mem", ExprType::Address)],
-    //));
-}
+    decl!(prog, jb, "f64.print",           f64_print,           (f64_t()),                 ());
+    decl!(prog, jb, "i64.print",           i64_print,           (i64_t()),                 ());
+    decl!(prog, jb, "bool.print",          bool_print,          (bool_t()),                ());
+    decl!(prog, jb, "&.print",             str_print,           (address_t()),             ()); //TODO setup actual str type
 
-pub fn is_struct_size_call(name: &str, struct_map: &HashMap<String, StructDef>) -> Option<String> {
-    if name.contains("::") {
-        let parts = name.split("::").collect::<Vec<&str>>();
-        if parts.len() == 2 {
-            let s = parts[0];
-            if parts[1] == "size"
-                && (struct_map.contains_key(s)
-                    || s == "f64"
-                    || s == "i64"
-                    || s == "bool"
-                    || s == "u8")
-            {
-                return Some(parts[0].to_string());
-            }
-        }
-    }
-    None
-}
+    decl!(prog, jb, "f64.println",         f64_println,         (f64_t()),                 ());
+    decl!(prog, jb, "i64.println",         i64_println,         (i64_t()),                 ());
+    decl!(prog, jb, "bool.println",        bool_println,        (bool_t()),                ());
+    decl!(prog, jb, "&.println",           str_println,         (address_t()),             ());
 
-pub fn translate_size_call(
-    builder: &mut FunctionBuilder,
-    struct_name: String,
-    struct_map: &HashMap<String, StructDef>,
-) -> SValue {
-    let len = if struct_name == "f64" {
-        types::F64.bytes() as i64
-    } else if struct_name == "i64" {
-        types::I64.bytes() as i64
-    } else if struct_name == "bool" {
-        types::I8.bytes() as i64 //for extern and structs we use I8 for bool
-    } else if struct_name == "u8" {
-        types::I8.bytes() as i64
-    } else {
-        struct_map[&struct_name].size as i64
-    };
-    return SValue::I64(builder.ins().iconst(types::I64, len));
+    
+    decl!(prog, jb, "f64.assert_eq",       f64_assert_eq,       (f64_t(), f64_t()),        ());
+    decl!(prog, jb, "i64.assert_eq",       i64_assert_eq,       (i64_t(), i64_t()),        ());
+    decl!(prog, jb, "bool.assert_eq",      bool_assert_eq,      (bool_t(), bool_t()),      ());
+    decl!(prog, jb, "&.assert_eq",         str_assert_eq,       (address_t(), address_t()),());
+    
+    decl!(prog, jb, "panic",               spanic,              (address_t()),             ());
+    
+    prog.push(make_decl("src_line", vec![], vec![("line", i64_t())]));
+
+    //fn i64_size_fn () -> i64 {types::I64.bytes() as i64} 
+    //decl!(prog, jb, "i64::size",               i64_size_fn,              (),             (i64_t()));
+    //fn f64_size_fn () -> i64 {types::F64.bytes() as i64} 
+    //decl!(prog, jb, "f64::size",               f64_size_fn,              (),             (i64_t()));
+    //fn bool_size_fn () -> i64 {types::I8.bytes() as i64} //for extern and structs we use I8 for bool
+    //decl!(prog, jb, "bool::size",              bool_size_fn,             (),             (i64_t()));
+
+
+    
+
 }
 
 pub(crate) fn translate_std(
     _ptr_ty: cranelift::prelude::Type,
     builder: &mut FunctionBuilder,
+    code_ref: &CodeRef,
     name: &str,
     args: &[Value],
 ) -> anyhow::Result<Option<SValue>> {
@@ -329,29 +278,63 @@ pub(crate) fn translate_std(
         "f64.max" => Ok(Some(SValue::F64(builder.ins().fmax(args[0], args[1])))),
         "i64.min" => Ok(Some(SValue::I64(builder.ins().imin(args[0], args[1])))),
         "i64.max" => Ok(Some(SValue::I64(builder.ins().imax(args[0], args[1])))),
+        "src_line" => {
+            let line = code_ref.line.unwrap_or(0) as i64;
+            Ok(Some(SValue::I64(builder.ins().iconst(types::I64, line))))
+        }
         _ => Ok(None),
     }
 }
 
-pub fn get_constants() -> HashMap<String, f64> {
-    hashmap!(
-        "E".into() => std::f64::consts::E,
-        "FRAC_1_PI".into() => std::f64::consts::FRAC_1_PI,
-        "FRAC_1_SQRT_2".into() => std::f64::consts::FRAC_1_SQRT_2,
-        "FRAC_2_SQRT_PI".into() => std::f64::consts::FRAC_2_SQRT_PI,
-        "FRAC_PI_2".into() => std::f64::consts::FRAC_PI_2,
-        "FRAC_PI_3".into() => std::f64::consts::FRAC_PI_3,
-        "FRAC_PI_4".into() => std::f64::consts::FRAC_PI_4,
-        "FRAC_PI_6".into() => std::f64::consts::FRAC_PI_6,
-        "FRAC_PI_8".into() => std::f64::consts::FRAC_PI_8,
-        "LN_2".into() => std::f64::consts::LN_2,
-        "LN_10".into() => std::f64::consts::LN_10,
-        "LOG2_10".into() => std::f64::consts::LOG2_10,
-        "LOG2_E".into() => std::f64::consts::LOG2_E,
-        "LOG10_2".into() => std::f64::consts::LOG10_2,
-        "LOG10_E".into() => std::f64::consts::LOG10_E,
-        "PI".into() => std::f64::consts::PI,
-        "SQRT_2".into() => std::f64::consts::SQRT_2,
-        "TAU".into() => std::f64::consts::TAU
-    )
+pub enum SConstant {
+    F64(f64),
+    I64(i64),
+    Bool(bool),
+}
+
+impl SConstant {
+    pub fn expr_type(&self, code_ref: Option<CodeRef>) -> ExprType {
+        let code_ref = if let Some(code_ref) = code_ref {
+            code_ref
+        } else {
+            CodeRef::z()
+        };
+        match self {
+            SConstant::F64(_) => ExprType::F64(code_ref),
+            SConstant::I64(_) => ExprType::I64(code_ref),
+            SConstant::Bool(_) => ExprType::Bool(code_ref),
+        }
+    }
+}
+
+pub fn get_constants(struct_map: &HashMap<String, StructDef>) -> HashMap<String, SConstant> {
+    use std::f64::consts::*;
+    let mut constants = hashmap!(
+        "E".into() => SConstant::F64(E),
+        "FRAC_1_PI".into() => SConstant::F64(FRAC_1_PI),
+        "FRAC_1_SQRT_2".into() => SConstant::F64(FRAC_1_SQRT_2),
+        "FRAC_2_SQRT_PI".into() => SConstant::F64(FRAC_2_SQRT_PI),
+        "FRAC_PI_2".into() => SConstant::F64(FRAC_PI_2),
+        "FRAC_PI_3".into() => SConstant::F64(FRAC_PI_3),
+        "FRAC_PI_4".into() => SConstant::F64(FRAC_PI_4),
+        "FRAC_PI_6".into() => SConstant::F64(FRAC_PI_6),
+        "FRAC_PI_8".into() => SConstant::F64(FRAC_PI_8),
+        "LN_2".into() => SConstant::F64(LN_2),
+        "LN_10".into() => SConstant::F64(LN_10),
+        "LOG2_10".into() => SConstant::F64(LOG2_10),
+        "LOG2_E".into() => SConstant::F64(LOG2_E),
+        "LOG10_2".into() => SConstant::F64(LOG10_2),
+        "LOG10_E".into() => SConstant::F64(LOG10_E),
+        "PI".into() => SConstant::F64(PI),
+        "SQRT_2".into() => SConstant::F64(SQRT_2),
+        "TAU".into() => SConstant::F64(TAU),
+        "f64::size".into() => SConstant::I64(types::F64.bytes() as i64),
+        "i64::size".into() => SConstant::I64(types::I64.bytes() as i64),
+        "bool::size".into() => SConstant::I64(types::I8.bytes() as i64) //for extern and structs we use I8 for bool
+
+    );
+    for (name, def) in struct_map {
+        constants.insert(format!("{}::size", name), SConstant::I64(def.size as i64));
+    }
+    constants
 }
