@@ -185,6 +185,18 @@ impl JIT {
         }
     }
 
+    pub fn get_data(&mut self, data_name: &str) -> anyhow::Result<(*const u8, usize)> {
+        match self.module.get_name(data_name) {
+            Some(func) => match func {
+                cranelift_module::FuncOrDataId::Func(_) => {
+                    anyhow::bail!("data {} required, function found", data_name);
+                }
+                cranelift_module::FuncOrDataId::Data(id) => Ok(self.module.get_finalized_data(id)),
+            },
+            None => anyhow::bail!("No data {} found", data_name),
+        }
+    }
+
     /// Create a zero-initialized data section.
     pub fn create_data(&mut self, name: &str, contents: Vec<u8>) -> anyhow::Result<&[u8]> {
         // The steps here are analogous to `compile`, except that data is much

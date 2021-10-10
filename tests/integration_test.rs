@@ -1890,39 +1890,21 @@ struct Misc3 {
     f1: f64,
     b3: bool,
 }
-
-fn misc_size() -> (size: i64) {
-    size = Misc::size
-}
-
-fn misc2_size() -> (size: i64) {
-    size = Misc2::size
-}
-
-fn misc3_size() -> (size: i64) {
-    size = Misc3::size
-}
-
-fn f64_size() -> (size: i64) {
-    size = f64::size
-}
-
-
 "#;
     let mut jit = default_std_jit_from_code(&code)?;
     //jit.print_clif(true);
-    let func_ptr = jit.get_func("misc_size")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn() -> i64>(func_ptr) };
-    assert_eq!(mem::size_of::<Misc>(), func() as usize);
-    let func_ptr = jit.get_func("misc2_size")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn() -> i64>(func_ptr) };
-    assert_eq!(mem::size_of::<Misc2>(), func() as usize);
-    let func_ptr = jit.get_func("misc3_size")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn() -> i64>(func_ptr) };
-    assert_eq!(mem::size_of::<Misc3>(), func() as usize);
-    let func_ptr = jit.get_func("f64_size")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn() -> i64>(func_ptr) };
-    assert_eq!(mem::size_of::<f64>(), func() as usize);
+    let (data_ptr, _size) = jit.get_data("Misc::size")?;
+    let f64_size: &i64 = unsafe { mem::transmute(data_ptr) };
+    assert_eq!(mem::size_of::<Misc>(), *f64_size as usize);
+    let (data_ptr, _size) = jit.get_data("Misc2::size")?;
+    let f64_size: &i64 = unsafe { mem::transmute(data_ptr) };
+    assert_eq!(mem::size_of::<Misc2>(), *f64_size as usize);
+    let (data_ptr, _size) = jit.get_data("Misc3::size")?;
+    let f64_size: &i64 = unsafe { mem::transmute(data_ptr) };
+    assert_eq!(mem::size_of::<Misc3>(), *f64_size as usize);
+    let (data_ptr, _size) = jit.get_data("f64::size")?;
+    let f64_size: &i64 = unsafe { mem::transmute(data_ptr) };
+    assert_eq!(mem::size_of::<f64>(), *f64_size as usize);
     Ok(())
 }
 
@@ -2355,5 +2337,8 @@ fn main() -> () {
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
     func();
+    let (data_ptr, _size) = jit.get_data("f64::size")?;
+    let f64_size: &i64 = unsafe { mem::transmute(data_ptr) };
+    assert_eq!(*f64_size, 8);
     Ok(())
 }
