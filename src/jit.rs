@@ -70,7 +70,7 @@ impl JIT {
     }
 
     /// Compile a string in the toy language into machine code.
-    pub fn translate(&mut self, prog: Vec<Declaration>) -> anyhow::Result<()> {
+    pub fn translate(&mut self, prog: Vec<Declaration>, src_code: String) -> anyhow::Result<()> {
         //let mut return_counts = HashMap::new();
         //for func in prog.iter().filter_map(|d| match d {
         //    Declaration::Function(func) => Some(func.clone()),
@@ -79,13 +79,28 @@ impl JIT {
         //    return_counts.insert(func.name.to_string(), func.returns.len());
         //}
 
+        let mut prog = prog;
         let mut funcs = HashMap::new();
-        for func in prog.iter().filter_map(|d| match d {
-            Declaration::Function(func) => Some(func.clone()),
-            _ => None,
-        }) {
-            funcs.insert(func.name.clone(), func);
+
+        for decl in prog.iter_mut() {
+            match decl {
+                Declaration::Function(func) => {
+                    setup_coderef(&mut func.body, &src_code);
+                    funcs.insert(func.name.clone(), func.clone());
+                }
+                Declaration::Metadata(_, _) => continue,
+                Declaration::Struct(_) => continue,
+            }
         }
+
+        //for func in prog.iter().filter_map(|d| match d {
+        //    Declaration::Function(func) => Some(func),
+        //    _ => None,
+        //}) {
+        //    let mut func = func.clone();
+        //    setup_coderef(&mut func.body, &src_code);
+        //    funcs.insert(func.name.clone(), func);
+        //}
 
         let struct_map = create_struct_map(&prog, self.module.target_config().pointer_type())?;
 
@@ -189,7 +204,7 @@ impl JIT {
         let ptr_ty = self.module.target_config().pointer_type();
 
         if func.returns.len() > 0 {
-            if let ExprType::Struct(_struct_name) = &func.returns[0].expr_type {
+            if let ExprType::Struct(_code_ref, _struct_name) = &func.returns[0].expr_type {
                 if func.returns.len() > 1 {
                     anyhow::bail!(
                         "If returning a struct, only 1 return value is currently supported"
@@ -214,14 +229,16 @@ impl JIT {
         for p in &func.params {
             self.ctx.func.signature.params.push({
                 match &p.expr_type {
-                    ExprType::F64 => AbiParam::new(types::F64),
-                    ExprType::I64 => AbiParam::new(types::I64),
-                    ExprType::Array(_ty, _len) => AbiParam::new(ptr_ty),
-                    ExprType::Address => AbiParam::new(ptr_ty),
-                    ExprType::Void => continue,
-                    ExprType::Bool => AbiParam::new(types::B1),
-                    ExprType::Struct(_) => AbiParam::new(ptr_ty),
-                    ExprType::Tuple(_) => anyhow::bail!("Tuple as parameter not supported"),
+                    ExprType::F64(_code_ref) => AbiParam::new(types::F64),
+                    ExprType::I64(_code_ref) => AbiParam::new(types::I64),
+                    ExprType::Array(_code_ref, _ty, _len) => AbiParam::new(ptr_ty),
+                    ExprType::Address(_code_ref) => AbiParam::new(ptr_ty),
+                    ExprType::Void(_code_ref) => continue,
+                    ExprType::Bool(_code_ref) => AbiParam::new(types::B1),
+                    ExprType::Struct(_code_ref, _) => AbiParam::new(ptr_ty),
+                    ExprType::Tuple(code_ref, _) => {
+                        anyhow::bail!("{} Tuple as parameter not supported", code_ref)
+                    }
                 }
             });
         }
@@ -297,28 +314,29 @@ impl JIT {
         let mut return_values = Vec::new();
         for ret in func.returns.iter() {
             let return_variable = trans.env.variables.get(&ret.name).unwrap();
-            let v =
-                match &ret.expr_type {
-                    ExprType::F64 => trans
-                        .builder
-                        .use_var(return_variable.expect_f64("return_variable")?),
-                    ExprType::I64 => trans
-                        .builder
-                        .use_var(return_variable.expect_i64("return_variable")?),
-                    ExprType::Array(ty, len) => trans.builder.use_var(
-                        return_variable.expect_array(*ty.clone(), *len, "return_variable")?,
-                    ),
-                    ExprType::Address => trans
-                        .builder
-                        .use_var(return_variable.expect_address("return_variable")?),
-                    ExprType::Void => continue,
-                    ExprType::Bool => trans
-                        .builder
-                        .use_var(return_variable.expect_bool("return_variable")?),
-                    ExprType::Tuple(_) => anyhow::bail!("tuple not supported in return"),
-                    //We don't actually return structs, they are passed in as StackSlotKind::StructReturnSlot and written to from there
-                    ExprType::Struct(_) => continue, //trans.builder.use_var(return_variable.expect_struct(n, "codegen return variables")?)
-                };
+            let v = match &ret.expr_type {
+                ExprType::F64(_code_ref) => trans
+                    .builder
+                    .use_var(return_variable.expect_f64("return_variable")?),
+                ExprType::I64(_code_ref) => trans
+                    .builder
+                    .use_var(return_variable.expect_i64("return_variable")?),
+                ExprType::Array(_code_ref, ty, len) => trans
+                    .builder
+                    .use_var(return_variable.expect_array(*ty.clone(), *len, "return_variable")?),
+                ExprType::Address(_code_ref) => trans
+                    .builder
+                    .use_var(return_variable.expect_address("return_variable")?),
+                ExprType::Void(_code_ref) => continue,
+                ExprType::Bool(_code_ref) => trans
+                    .builder
+                    .use_var(return_variable.expect_bool("return_variable")?),
+                ExprType::Tuple(code_ref, _) => {
+                    anyhow::bail!("{} tuple not supported in return", code_ref)
+                }
+                //We don't actually return structs, they are passed in as StackSlotKind::StructReturnSlot and written to from there
+                ExprType::Struct(_code_ref, _) => continue, //trans.builder.use_var(return_variable.expect_struct(n, "codegen return variables")?)
+            };
             return_values.push(v);
         }
 
@@ -396,14 +414,16 @@ impl Display for SValue {
 impl SValue {
     fn from(expr_type: &ExprType, value: Value) -> anyhow::Result<SValue> {
         Ok(match expr_type {
-            ExprType::Void => SValue::Void,
-            ExprType::Bool => SValue::Bool(value),
-            ExprType::F64 => SValue::F64(value),
-            ExprType::I64 => SValue::I64(value),
-            ExprType::Array(ty, len) => SValue::Array(Box::new(SValue::from(ty, value)?), *len),
-            ExprType::Address => SValue::Address(value),
-            ExprType::Tuple(_) => anyhow::bail!("use SValue::from_tuple"),
-            ExprType::Struct(name) => SValue::Struct(name.to_string(), value),
+            ExprType::Void(_code_ref) => SValue::Void,
+            ExprType::Bool(_code_ref) => SValue::Bool(value),
+            ExprType::F64(_code_ref) => SValue::F64(value),
+            ExprType::I64(_code_ref) => SValue::I64(value),
+            ExprType::Array(_code_ref, ty, len) => {
+                SValue::Array(Box::new(SValue::from(ty, value)?), *len)
+            }
+            ExprType::Address(_code_ref) => SValue::Address(value),
+            ExprType::Tuple(_code_ref, _) => anyhow::bail!("use SValue::from_tuple"),
+            ExprType::Struct(_code_ref, name) => SValue::Struct(name.to_string(), value),
         })
     }
     fn get_from_variable(
@@ -447,13 +467,15 @@ impl SValue {
     pub fn expr_type(&self) -> anyhow::Result<ExprType> {
         Ok(match self {
             SValue::Unknown(_) => anyhow::bail!("expression type is unknown"),
-            SValue::Bool(_) => ExprType::Bool,
-            SValue::F64(_) => ExprType::F64,
-            SValue::I64(_) => ExprType::I64,
-            SValue::Array(sval, len) => ExprType::Array(Box::new(sval.expr_type()?), *len),
-            SValue::Address(_) => ExprType::Address,
-            SValue::Struct(name, _) => ExprType::Struct(Box::new(name.to_string())),
-            SValue::Void => ExprType::Void,
+            SValue::Bool(_) => ExprType::Bool(CodeRef::z()),
+            SValue::F64(_) => ExprType::F64(CodeRef::z()),
+            SValue::I64(_) => ExprType::I64(CodeRef::z()),
+            SValue::Array(sval, len) => {
+                ExprType::Array(CodeRef::z(), Box::new(sval.expr_type()?), *len)
+            }
+            SValue::Address(_) => ExprType::Address(CodeRef::z()),
+            SValue::Struct(name, _) => ExprType::Struct(CodeRef::z(), Box::new(name.to_string())),
+            SValue::Void => ExprType::Void(CodeRef::z()),
             SValue::Tuple(_) => todo!(),
         })
     }
@@ -697,7 +719,9 @@ impl<'a> FunctionTranslator<'a> {
                                         .collect::<Vec<String>>();
                                     let (sval_address, struct_def) =
                                         self.get_struct_field_address(spath, lhs_val)?;
-                                    if let ExprType::Struct(_name) = struct_def.clone().expr_type {
+                                    if let ExprType::Struct(_code_ref, _name) =
+                                        struct_def.clone().expr_type
+                                    {
                                         struct_field_def = Some(struct_def);
                                         sval_address
                                     } else {
@@ -748,28 +772,33 @@ impl<'a> FunctionTranslator<'a> {
                                 let (sval_address, struct_def) =
                                     self.get_struct_field_address(spath, lhs_val)?;
                                 struct_field_def = Some(struct_def.clone());
-                                let array_ptr =
-                                    if let ExprType::Struct(_name) = struct_def.clone().expr_type {
-                                        sval_address
-                                    } else {
-                                        self.get_struct_field(sval_address, &struct_def)?
-                                    };
+                                let array_ptr = if let ExprType::Struct(_code_ref, _name) =
+                                    struct_def.clone().expr_type
+                                {
+                                    sval_address
+                                } else {
+                                    self.get_struct_field(sval_address, &struct_def)?
+                                };
 
                                 let mut base_struct = None;
                                 let mut width;
                                 let base_type = match &struct_def.expr_type {
-                                    ExprType::Array(ty, _len) => {
+                                    ExprType::Array(_code_ref, ty, _len) => {
                                         let c_ty = ty.cranelift_type(self.ptr_ty, true)?;
                                         width = c_ty.bytes() as usize;
-                                        if let ExprType::Struct(name) = *ty.to_owned() {
+                                        if let ExprType::Struct(_code_ref, name) = *ty.to_owned() {
                                             let s = self.env.struct_map[&name.to_string()].clone();
                                             width = s.size;
                                             base_struct = Some(s);
                                         }
                                         c_ty
                                     }
-                                    _ => {
-                                        anyhow::bail!("can't index type {}", &struct_def.expr_type)
+                                    e => {
+                                        anyhow::bail!(
+                                            "{} can't index type {}",
+                                            e.get_code_ref(),
+                                            &struct_def.expr_type
+                                        )
                                     }
                                 };
 
@@ -806,10 +835,13 @@ impl<'a> FunctionTranslator<'a> {
                                         Offset32::new(0),
                                     );
                                     lhs_val = match &struct_def.expr_type {
-                                        ExprType::Array(ty, _len) => Some(SValue::from(ty, val)?),
-                                        _ => {
+                                        ExprType::Array(_code_ref, ty, _len) => {
+                                            Some(SValue::from(ty, val)?)
+                                        }
+                                        e => {
                                             anyhow::bail!(
-                                                "can't index type {}",
+                                                "{} can't index type {}",
+                                                e.get_code_ref(),
                                                 &struct_def.expr_type
                                             )
                                         }
@@ -839,7 +871,7 @@ impl<'a> FunctionTranslator<'a> {
             if get_address {
                 struct_field_def = Some(struct_def);
                 lhs_val = Some(sval_address);
-            } else if let ExprType::Struct(_name) = struct_def.clone().expr_type {
+            } else if let ExprType::Struct(_code_ref, _name) = struct_def.clone().expr_type {
                 struct_field_def = Some(struct_def);
                 lhs_val = Some(sval_address);
             } else {
@@ -1062,7 +1094,7 @@ impl<'a> FunctionTranslator<'a> {
                             unreachable!()
                         }
                     }
-                    Expr::Identifier(_code_ref, name) => {
+                    Expr::Identifier(code_ref, name) => {
                         let var = match self.env.variables.get(name) {
                             Some(v) => v,
                             None => anyhow::bail!("variable {} not found", name),
@@ -1070,7 +1102,7 @@ impl<'a> FunctionTranslator<'a> {
 
                         for arg in &self.func.params {
                             if *name == arg.name {
-                                if let ExprType::Struct(stuct_name) = &arg.expr_type {
+                                if let ExprType::Struct(code_ref, stuct_name) = &arg.expr_type {
                                     //copy to struct that was passed in as parameter
                                     //TODO should there be specifc syntax for this?
                                     let return_address = self.builder.use_var(var.inner());
@@ -1080,7 +1112,7 @@ impl<'a> FunctionTranslator<'a> {
                                         self.env.struct_map[&stuct_name.to_string()].size,
                                         val.expect_struct(
                                             &stuct_name.to_string(),
-                                            "translate_assign",
+                                            &format!("{} translate_assign", code_ref),
                                         )?,
                                         return_address,
                                         0,
@@ -1095,6 +1127,13 @@ impl<'a> FunctionTranslator<'a> {
                             if *return_struct {
                                 //copy to struct, we don't want to return a reference
                                 let return_address = self.builder.use_var(var.inner());
+                                if !self.env.struct_map.contains_key(struct_name) {
+                                    anyhow::bail!(
+                                        "{} struct {} does not exist",
+                                        code_ref,
+                                        struct_name
+                                    )
+                                }
                                 copy_to_stack_slot(
                                     self.module.target_config(),
                                     &mut self.builder,
@@ -1105,6 +1144,15 @@ impl<'a> FunctionTranslator<'a> {
                                 )?;
                                 continue 'expression;
                             }
+                        }
+                        if var.expr_type()? != val.expr_type()? {
+                            anyhow::bail!(
+                                "{} cannot assign value of type {} to variable {} of type {} ",
+                                code_ref,
+                                val.expr_type()?,
+                                var,
+                                var.expr_type()?,
+                            )
                         }
                         self.builder
                             .def_var(var.inner(), val.inner("translate_assign")?);
@@ -1174,14 +1222,16 @@ impl<'a> FunctionTranslator<'a> {
 
         let expr_type = &variable.expr_type()?;
         let base_type = match expr_type {
-            ExprType::Array(ty, _len) => ty.cranelift_type(self.ptr_ty, true)?,
-            ExprType::Void
-            | ExprType::Bool
-            | ExprType::F64
-            | ExprType::I64
-            | ExprType::Address
-            | ExprType::Tuple(_)
-            | ExprType::Struct(_) => anyhow::bail!("can't index type {}", &expr_type), //TODO get struct width
+            ExprType::Array(_code_ref, ty, _len) => ty.cranelift_type(self.ptr_ty, true)?,
+            ExprType::Void(code_ref)
+            | ExprType::Bool(code_ref)
+            | ExprType::F64(code_ref)
+            | ExprType::I64(code_ref)
+            | ExprType::Address(code_ref)
+            | ExprType::Tuple(code_ref, _)
+            | ExprType::Struct(code_ref, _) => {
+                anyhow::bail!("{} can't index type {}", code_ref, &expr_type)
+            } //TODO get struct width
         };
 
         let idx_ptr =
@@ -1196,14 +1246,16 @@ impl<'a> FunctionTranslator<'a> {
             Ok(SValue::Address(val))
         } else {
             let sval = match &expr_type {
-                ExprType::Array(ty, _len) => SValue::from(ty, val)?,
-                ExprType::Void
-                | ExprType::Bool
-                | ExprType::F64
-                | ExprType::I64
-                | ExprType::Address
-                | ExprType::Tuple(_)
-                | ExprType::Struct(_) => anyhow::bail!("can't index type {}", &expr_type),
+                ExprType::Array(_code_ref, ty, _len) => SValue::from(ty, val)?,
+                ExprType::Void(code_ref)
+                | ExprType::Bool(code_ref)
+                | ExprType::F64(code_ref)
+                | ExprType::I64(code_ref)
+                | ExprType::Address(code_ref)
+                | ExprType::Tuple(code_ref, _)
+                | ExprType::Struct(code_ref, _) => {
+                    anyhow::bail!("{} can't index type {}", code_ref, &expr_type)
+                }
             };
             Ok(sval)
         }
@@ -1469,7 +1521,7 @@ impl<'a> FunctionTranslator<'a> {
             } else {
                 let returns = &self.env.funcs[&fn_name].returns;
                 if returns.len() > 0 {
-                    if let ExprType::Struct(name) = &returns[0].expr_type {
+                    if let ExprType::Struct(_code_ref, name) = &returns[0].expr_type {
                         Some((
                             name.to_string(),
                             self.env.struct_map[&name.to_string()].size,
@@ -1603,7 +1655,7 @@ impl<'a> FunctionTranslator<'a> {
     ) -> anyhow::Result<(StructField, Value, usize)> {
         let mut struct_name: String;
         let start: usize;
-        println!("get_struct_field_location {:?}", &parts);
+        //println!("get_struct_field_location {:?}", &parts);
         let base_struct_var_ptr = if let Some(lhs_val) = lhs_val {
             if let SValue::Struct(vstruct_name, base_struct_var_ptr) = lhs_val {
                 start = 0;
@@ -1635,7 +1687,7 @@ impl<'a> FunctionTranslator<'a> {
         if parts.len() > 2 {
             offset = 0;
             for i in start..parts.len() {
-                if let ExprType::Struct(_name) = &parent_struct_field.expr_type {
+                if let ExprType::Struct(_code_ref, _name) = &parent_struct_field.expr_type {
                     parent_struct_field = &self.env.struct_map[&struct_name].fields[&parts[i]];
                     offset += parent_struct_field.offset;
                     struct_name = parent_struct_field.expr_type.to_string();
@@ -1661,7 +1713,7 @@ impl<'a> FunctionTranslator<'a> {
 
         let offset_v = self.builder.ins().iconst(self.ptr_ty, offset as i64);
         let address = self.builder.ins().iadd(base_struct_var_ptr, offset_v);
-        if let ExprType::Struct(name) = &parent_struct_field_def.expr_type {
+        if let ExprType::Struct(_code_ref, name) = &parent_struct_field_def.expr_type {
             //println!("get_struct_field_address ExprType::Struct {}", name);
             //If the struct field is a struct, return address of sub struct
             Ok((
@@ -1695,7 +1747,7 @@ impl<'a> FunctionTranslator<'a> {
                     field_address.inner("get_struct_field")?,
                     Offset32::new(0),
                 );
-                if let ExprType::Bool = parent_struct_field_def.expr_type {
+                if let ExprType::Bool(_code_ref) = parent_struct_field_def.expr_type {
                     let t = self.builder.ins().iconst(types::I8, 1);
                     val = self.builder.ins().icmp(IntCC::Equal, t, val)
                 }
@@ -1715,7 +1767,7 @@ impl<'a> FunctionTranslator<'a> {
         set_value: SValue,
         struct_field_def: StructField,
     ) -> anyhow::Result<()> {
-        if let ExprType::Struct(name) = &struct_field_def.expr_type {
+        if let ExprType::Struct(_code_ref, name) = &struct_field_def.expr_type {
             let src_ptr = set_value.expect_struct(name, "set_struct_field")?;
             self.builder.emit_small_memory_copy(
                 self.module.target_config(),
@@ -1914,10 +1966,10 @@ pub enum SVariable {
 impl Display for SVariable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SVariable::Unknown(name, _) => write!(f, "Unknown {}", name),
-            SVariable::Bool(name, _) => write!(f, "Bool {}", name),
-            SVariable::F64(name, _) => write!(f, "Float {}", name),
-            SVariable::I64(name, _) => write!(f, "Int {}", name),
+            SVariable::Unknown(name, _) => write!(f, "{}", name),
+            SVariable::Bool(name, _) => write!(f, "{}", name),
+            SVariable::F64(name, _) => write!(f, "{}", name),
+            SVariable::I64(name, _) => write!(f, "{}", name),
             SVariable::Array(svar, len) => {
                 if let Some(len) = len {
                     write!(f, "&[{}; {}]", svar, len)
@@ -1925,9 +1977,9 @@ impl Display for SVariable {
                     write!(f, "&[{}]", svar)
                 }
             }
-            SVariable::Address(name, _) => write!(f, "Address {}", name),
+            SVariable::Address(name, _) => write!(f, "{}", name),
             SVariable::Struct(name, structname, _, _return_struct) => {
-                write!(f, "Struct {} {}", name, structname)
+                write!(f, "struct {} {}", name, structname)
             }
         }
     }
@@ -1948,12 +2000,16 @@ impl SVariable {
     pub fn expr_type(&self) -> anyhow::Result<ExprType> {
         Ok(match self {
             SVariable::Unknown(_, _) => anyhow::bail!("expression type is unknown"),
-            SVariable::Bool(_, _) => ExprType::Bool,
-            SVariable::F64(_, _) => ExprType::F64,
-            SVariable::I64(_, _) => ExprType::I64,
-            SVariable::Array(svar, len) => ExprType::Array(Box::new(svar.expr_type()?), *len),
-            SVariable::Address(_, _) => ExprType::Address,
-            SVariable::Struct(_, name, _, _) => ExprType::Struct(Box::new(name.to_string())),
+            SVariable::Bool(_, _) => ExprType::Bool(CodeRef::z()),
+            SVariable::F64(_, _) => ExprType::F64(CodeRef::z()),
+            SVariable::I64(_, _) => ExprType::I64(CodeRef::z()),
+            SVariable::Array(svar, len) => {
+                ExprType::Array(CodeRef::z(), Box::new(svar.expr_type()?), *len)
+            }
+            SVariable::Address(_, _) => ExprType::Address(CodeRef::z()),
+            SVariable::Struct(_, name, _, _) => {
+                ExprType::Struct(CodeRef::z(), Box::new(name.to_string()))
+            }
         })
     }
     pub fn type_name(&self) -> anyhow::Result<String> {
@@ -2048,19 +2104,19 @@ impl SVariable {
 
     fn from(expr_type: &ExprType, name: String, var: Variable) -> anyhow::Result<SVariable> {
         Ok(match expr_type {
-            ExprType::Bool => SVariable::Bool(name, var),
-            ExprType::F64 => SVariable::F64(name, var),
-            ExprType::I64 => SVariable::I64(name, var),
-            ExprType::Array(ty, len) => {
+            ExprType::Bool(_code_ref) => SVariable::Bool(name, var),
+            ExprType::F64(_code_ref) => SVariable::F64(name, var),
+            ExprType::I64(_code_ref) => SVariable::I64(name, var),
+            ExprType::Array(_code_ref, ty, len) => {
                 SVariable::Array(Box::new(SVariable::from(ty, name, var)?), *len)
             }
-            ExprType::Address => SVariable::Address(name, var),
-            ExprType::Tuple(_) => anyhow::bail!("use SVariable::from_tuple"),
-            ExprType::Struct(name) => {
+            ExprType::Address(_code_ref) => SVariable::Address(name, var),
+            ExprType::Tuple(_code_ref, _) => anyhow::bail!("use SVariable::from_tuple"),
+            ExprType::Struct(_code_ref, name) => {
                 SVariable::Struct(name.to_string(), name.to_string(), var, false)
                 //last bool is return struct
             }
-            ExprType::Void => anyhow::bail!("SVariable cannot be void"),
+            ExprType::Void(code_ref) => anyhow::bail!("{} SVariable cannot be void", code_ref),
         })
     }
 }
@@ -2077,7 +2133,7 @@ fn declare_variables(
     let mut index = 0;
 
     let entry_block_is_offset = if returns.len() > 0 {
-        if let ExprType::Struct(_struct_name) = &returns[0].expr_type {
+        if let ExprType::Struct(_code_ref, _struct_name) = &returns[0].expr_type {
             // When calling a function that will return a struct, Rust (or possibly anything using the C ABI),
             // will allocate the stack space needed for the struct that will be returned. This is allocated in
             // the callers frame, then the stack address is passed as a special argument to the first parameter
@@ -2221,8 +2277,10 @@ fn declare_variable_from_type(
         return Ok(());
     }
     match expr_type {
-        ExprType::Void => anyhow::bail!("can't assign void type to {}", name),
-        ExprType::Bool => {
+        ExprType::Void(code_ref) => {
+            anyhow::bail!("{} can't assign void type to {}", code_ref, name)
+        }
+        ExprType::Bool(_code_ref) => {
             if !env.variables.contains_key(name) {
                 let var = Variable::new(*index);
                 env.variables
@@ -2231,7 +2289,7 @@ fn declare_variable_from_type(
                 *index += 1;
             }
         }
-        ExprType::F64 => {
+        ExprType::F64(_code_ref) => {
             if !env.variables.contains_key(name) {
                 let var = Variable::new(*index);
                 env.variables
@@ -2240,7 +2298,7 @@ fn declare_variable_from_type(
                 *index += 1;
             }
         }
-        ExprType::I64 => {
+        ExprType::I64(_code_ref) => {
             if !env.variables.contains_key(name) {
                 let var = Variable::new(*index);
                 env.variables
@@ -2249,7 +2307,7 @@ fn declare_variable_from_type(
                 *index += 1;
             }
         }
-        ExprType::Array(ty, len) => {
+        ExprType::Array(_code_ref, ty, len) => {
             if !env.variables.contains_key(name) {
                 let var = Variable::new(*index);
                 env.variables.insert(
@@ -2260,7 +2318,7 @@ fn declare_variable_from_type(
                 *index += 1;
             }
         }
-        ExprType::Address => {
+        ExprType::Address(_code_ref) => {
             if !env.variables.contains_key(name) {
                 let var = Variable::new(*index);
                 env.variables
@@ -2269,10 +2327,10 @@ fn declare_variable_from_type(
                 *index += 1;
             }
         }
-        ExprType::Tuple(expr_types) => {
+        ExprType::Tuple(_code_ref, expr_types) => {
             if expr_types.len() == 1 {
                 //Single nested tuple
-                if let ExprType::Tuple(expr_types) = expr_types.first().unwrap() {
+                if let ExprType::Tuple(_code_ref, expr_types) = expr_types.first().unwrap() {
                     for (expr_type, sname) in expr_types.iter().zip(names.iter()) {
                         declare_variable_from_type(
                             ptr_type,
@@ -2290,7 +2348,7 @@ fn declare_variable_from_type(
                 declare_variable_from_type(ptr_type, expr_type, builder, index, &[sname], env)?
             }
         }
-        ExprType::Struct(structname) => {
+        ExprType::Struct(_code_ref, structname) => {
             if !env.variables.contains_key(name) {
                 let var = Variable::new(*index);
                 env.variables.insert(
@@ -2316,15 +2374,15 @@ fn declare_variable(
     let ptr_ty = module.target_config().pointer_type();
     if !variables.contains_key(&arg.name) {
         let (var, ty) = match &arg.expr_type {
-            ExprType::F64 => (
+            ExprType::F64(_code_ref) => (
                 SVariable::F64(arg.name.clone(), Variable::new(*index)),
                 types::F64,
             ),
-            ExprType::I64 => (
+            ExprType::I64(_code_ref) => (
                 SVariable::I64(arg.name.clone(), Variable::new(*index)),
                 types::I64,
             ),
-            ExprType::Array(ty, len) => (
+            ExprType::Array(_code_ref, ty, len) => (
                 SVariable::Array(
                     Box::new(SVariable::from(
                         ty,
@@ -2335,17 +2393,17 @@ fn declare_variable(
                 ),
                 ptr_ty,
             ),
-            ExprType::Address => (
+            ExprType::Address(_code_ref) => (
                 SVariable::Address(arg.name.clone(), Variable::new(*index)),
                 ptr_ty,
             ),
-            ExprType::Void => return Ok(None),
-            ExprType::Bool => (
+            ExprType::Void(_code_ref) => return Ok(None),
+            ExprType::Bool(_code_ref) => (
                 SVariable::Bool(arg.name.clone(), Variable::new(*index)),
                 types::B1,
             ),
-            ExprType::Tuple(_) => return Ok(None), //anyhow::bail!("single variable tuple not supported"),
-            ExprType::Struct(structname) => (
+            ExprType::Tuple(_code_ref, _) => return Ok(None), //anyhow::bail!("single variable tuple not supported"),
+            ExprType::Struct(_code_ref, structname) => (
                 SVariable::Struct(
                     arg.name.clone(),
                     structname.to_string(),
@@ -2471,7 +2529,7 @@ fn get_field_size(
     max_base_field: bool,
 ) -> anyhow::Result<(usize, bool)> {
     Ok(match expr_type {
-        ExprType::Struct(name) => {
+        ExprType::Struct(_code_ref, name) => {
             if max_base_field {
                 (
                     get_largest_field_size(0, &expr_type, structs, ptr_type)?,
@@ -2497,7 +2555,7 @@ fn get_largest_field_size(
     let mut largest = largest;
     match expr_type {
         t => match t {
-            ExprType::Struct(name) => {
+            ExprType::Struct(_code_ref, name) => {
                 for (_name, field) in &structs[&name.to_string()].fields {
                     let size =
                         get_largest_field_size(largest, &field.expr_type, structs, ptr_type)?;
@@ -2525,14 +2583,14 @@ fn order_structs(in_structs: &HashMap<String, &Struct>) -> anyhow::Result<Vec<St
             let mut can_insert = true;
             for field in &struc.fields {
                 match &field.expr_type {
-                    ExprType::Void
-                    | ExprType::Bool
-                    | ExprType::F64
-                    | ExprType::I64
-                    | ExprType::Array(_, _)
-                    | ExprType::Address
-                    | ExprType::Tuple(_) => continue,
-                    ExprType::Struct(field_struct_name) => {
+                    ExprType::Void(_code_ref)
+                    | ExprType::Bool(_code_ref)
+                    | ExprType::F64(_code_ref)
+                    | ExprType::I64(_code_ref)
+                    | ExprType::Array(_code_ref, _, _)
+                    | ExprType::Address(_code_ref)
+                    | ExprType::Tuple(_code_ref, _) => continue,
+                    ExprType::Struct(_code_ref, field_struct_name) => {
                         if !in_structs.contains_key(&field_struct_name.to_string()) {
                             anyhow::bail!(
                                 "Can't find Struct {} referenced in Struct {} field {}",

@@ -6,16 +6,16 @@ fn main() -> anyhow::Result<()> {
     // Create the JIT instance, which manages all generated functions and data.
     let mut jit = jit::JIT::default();
 
+    let code = r#"
+    fn add(a, b) -> (c) {
+        c = a + b
+    }
+    "#;
+
     // Generate AST from string
-    let ast = parser::program(
-        r#"
-fn add(a, b) -> (c) {
-    c = a + b
-}
-"#,
-    )?;
+    let ast = parser::program(code)?;
     // Pass the AST to the JIT to compile
-    jit.translate(ast)?;
+    jit.translate(ast, code.to_string())?;
 
     //Get the function, returns a raw pointer to machine code.
     let func_ptr = jit.get_func("add")?;
@@ -27,16 +27,16 @@ fn add(a, b) -> (c) {
 
     println!("the answer is: {}", func(3.0f64, 5.0f64));
 
-    // Generate AST from 2nd string
-    let ast = parser::program(
-        r#"
-fn mult(a, b) -> (c) {
-    c = a * b
-}
-"#,
-    )?;
+    let code = r#"
+    fn mult(a, b) -> (c) {
+        c = a * b
+    }
+    "#;
 
-    jit.translate(ast)?;
+    // Generate AST from 2nd string
+    let ast = parser::program(code)?;
+
+    jit.translate(ast, code.to_string())?;
     let func_ptr = jit.get_func("mult")?;
     let func = unsafe { mem::transmute::<_, fn(f64, f64) -> f64>(func_ptr) };
     println!("the answer is: {}", func(3.0f64, 5.0f64));

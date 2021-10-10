@@ -69,14 +69,30 @@ impl Display for Cmp {
 #[derive(Debug, Copy, Clone)]
 pub struct CodeRef {
     pub pos: usize,
+    pub line: Option<usize>,
 }
 
 impl CodeRef {
     pub fn new(pos: usize) -> Self {
-        CodeRef { pos }
+        CodeRef { pos, line: None }
     }
     pub fn z() -> Self {
-        CodeRef { pos: 0 }
+        CodeRef { pos: 0, line: None }
+    }
+    pub fn setup(&mut self, code: &String) {
+        if self.line.is_none() {
+            self.line = Some(code[..self.pos].matches("\n").count());
+        }
+    }
+}
+
+impl Display for CodeRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(line) = self.line {
+            write!(f, "line {}", line)
+        } else {
+            write!(f, "pos {}", self.pos)
+        }
     }
 }
 
@@ -104,6 +120,111 @@ pub enum Expr {
     GlobalDataAddr(CodeRef, String),
     Parentheses(CodeRef, Box<Expr>),
     ArrayAccess(CodeRef, String, Box<Expr>),
+}
+
+impl Expr {
+    pub fn get_code_ref(&mut self) -> &mut CodeRef {
+        match self {
+            Expr::LiteralFloat(code_ref, ..) => code_ref,
+            Expr::LiteralInt(code_ref, ..) => code_ref,
+            Expr::LiteralBool(code_ref, ..) => code_ref,
+            Expr::LiteralString(code_ref, ..) => code_ref,
+            Expr::Identifier(code_ref, ..) => code_ref,
+            Expr::Binop(code_ref, ..) => code_ref,
+            Expr::Unaryop(code_ref, ..) => code_ref,
+            Expr::Compare(code_ref, ..) => code_ref,
+            Expr::IfThen(code_ref, ..) => code_ref,
+            Expr::IfElse(code_ref, ..) => code_ref,
+            Expr::Assign(code_ref, ..) => code_ref,
+            Expr::AssignOp(code_ref, ..) => code_ref,
+            Expr::NewStruct(code_ref, ..) => code_ref,
+            Expr::WhileLoop(code_ref, ..) => code_ref,
+            Expr::Block(code_ref, ..) => code_ref,
+            Expr::Call(code_ref, ..) => code_ref,
+            Expr::GlobalDataAddr(code_ref, ..) => code_ref,
+            Expr::Parentheses(code_ref, ..) => code_ref,
+            Expr::ArrayAccess(code_ref, ..) => code_ref,
+        }
+    }
+
+    pub fn setup_ref(&mut self, src_code: &String) {
+        //Walk the AST and Set line numbers, etc.. in code ref
+        self.get_code_ref().setup(src_code);
+        match self {
+            Expr::LiteralFloat(_, _) => (),
+            Expr::LiteralInt(_, _) => (),
+            Expr::LiteralBool(_, _) => (),
+            Expr::LiteralString(_, _) => (),
+            Expr::Identifier(_, _) => (),
+            Expr::Binop(_, _, a, b) => {
+                a.setup_ref(src_code);
+                b.setup_ref(src_code);
+            }
+            Expr::Unaryop(_, _, a) => {
+                a.setup_ref(src_code);
+            }
+            Expr::Compare(_, _, a, b) => {
+                a.setup_ref(src_code);
+                b.setup_ref(src_code);
+            }
+            Expr::IfThen(_, a, bv) => {
+                a.setup_ref(src_code);
+                for b in bv {
+                    b.setup_ref(src_code);
+                }
+            }
+            Expr::IfElse(_, a, bv, cv) => {
+                a.setup_ref(src_code);
+                for b in bv {
+                    b.setup_ref(src_code);
+                }
+                for c in cv {
+                    c.setup_ref(src_code);
+                }
+            }
+            Expr::Assign(_, bv, cv) => {
+                for b in bv.as_mut_slice() {
+                    b.setup_ref(src_code);
+                }
+                for c in cv.as_mut_slice() {
+                    c.setup_ref(src_code);
+                }
+            }
+            Expr::AssignOp(_, _, _, a) => {
+                a.setup_ref(src_code);
+            }
+            Expr::NewStruct(_, _, _) => (),
+            Expr::WhileLoop(_, a, bv) => {
+                a.setup_ref(src_code);
+                for b in bv {
+                    b.setup_ref(src_code);
+                }
+            }
+            Expr::Block(_, bv) => {
+                for b in bv {
+                    b.setup_ref(src_code);
+                }
+            }
+            Expr::Call(_, _, bv) => {
+                for b in bv {
+                    b.setup_ref(src_code);
+                }
+            }
+            Expr::GlobalDataAddr(_, _) => (),
+            Expr::Parentheses(_, a) => {
+                a.setup_ref(src_code);
+            }
+            Expr::ArrayAccess(_, _, a) => {
+                a.setup_ref(src_code);
+            }
+        }
+    }
+}
+
+pub fn setup_coderef(stmts: &mut Vec<Expr>, src_code: &String) {
+    for expr in stmts.iter_mut() {
+        expr.setup_ref(src_code);
+    }
 }
 
 //TODO indentation, tests
@@ -379,15 +500,15 @@ peg::parser!(pub grammar parser() for str {
 
     rule arg() -> Arg
         = _ i:identifier() _ ":" _ t:type_label() _ { Arg {name: i.into(), expr_type: t.into(), default_to_float: false } }
-        / _ i:identifier() _ { Arg {name: i.into(), expr_type: ExprType::F64, default_to_float: true } }
+        / _ pos:position!() i:identifier() _ { Arg {name: i.into(), expr_type: ExprType::F64(CodeRef::new(pos)), default_to_float: true } }
 
     rule type_label() -> ExprType
-        = _ "f64" _ { ExprType::F64 }
-        / _ "i64" _ { ExprType::I64 }
-        / _ "&[" ty:type_label() "]" _ { ExprType::Array(Box::new(ty), None) }
-        / _ "&" _ { ExprType::Address }
-        / _ "bool" _ { ExprType::Bool }
-        / _ n:identifier() _ { ExprType::Struct(Box::new(n)) }
+        = _ pos:position!() "f64" _ { ExprType::F64(CodeRef::new(pos)) }
+        / _ pos:position!() "i64" _ { ExprType::I64(CodeRef::new(pos)) }
+        / _ pos:position!() "&[" ty:type_label() "]" _ { ExprType::Array(CodeRef::new(pos), Box::new(ty), None) }
+        / _ pos:position!() "&" _ { ExprType::Address(CodeRef::new(pos)) }
+        / _ pos:position!() "bool" _ { ExprType::Bool(CodeRef::new(pos)) }
+        / _ pos:position!() n:identifier() _ { ExprType::Struct(CodeRef::new(pos), Box::new(n)) }
 
     rule block() -> Vec<Expr>
         = _ "{" _ b:(statement() ** _) _ "}" { b }
@@ -426,10 +547,10 @@ peg::parser!(pub grammar parser() for str {
 
 
     rule op_assignment() -> Expr
-    = pos:position!() a:(binary_op()) _ "+=" _ b:expression() {assign_op_to_assign(pos, Binop::Add, a, b)}
-    / pos:position!() a:(binary_op()) _ "-=" _ b:expression() {assign_op_to_assign(pos, Binop::Sub, a, b)}
-    / pos:position!() a:(binary_op()) _ "*=" _ b:expression() {assign_op_to_assign(pos, Binop::Mul, a, b)}
-    / pos:position!() a:(binary_op()) _ "/=" _ b:expression() {assign_op_to_assign(pos, Binop::Div, a, b)}
+    = a:(binary_op()) _ "+=" _ b:expression() {assign_op_to_assign(Binop::Add, a, b)}
+    / a:(binary_op()) _ "-=" _ b:expression() {assign_op_to_assign(Binop::Sub, a, b)}
+    / a:(binary_op()) _ "*=" _ b:expression() {assign_op_to_assign(Binop::Mul, a, b)}
+    / a:(binary_op()) _ "/=" _ b:expression() {assign_op_to_assign(Binop::Div, a, b)}
 
     rule binary_op() -> Expr = precedence!{
         a:@ _ pos:position!() "&&" _ b:(@) { Expr::Binop(CodeRef::new(pos), Binop::LogicalAnd, Box::new(a), Box::new(b)) }
@@ -503,12 +624,12 @@ peg::parser!(pub grammar parser() for str {
     rule _() =  quiet!{comment() / [' ' | '\t' | '\n']}*
 });
 
-pub fn assign_op_to_assign(pos: usize, op: Binop, a: Expr, b: Expr) -> Expr {
+pub fn assign_op_to_assign(op: Binop, a: Expr, b: Expr) -> Expr {
     Expr::Assign(
-        CodeRef { pos },
+        *a.clone().get_code_ref(),
         make_nonempty(vec![a.clone()]).unwrap(),
         make_nonempty(vec![Expr::Binop(
-            CodeRef { pos },
+            *b.clone().get_code_ref(),
             op,
             Box::new(a),
             Box::new(b),

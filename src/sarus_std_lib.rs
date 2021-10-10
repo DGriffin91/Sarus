@@ -7,13 +7,12 @@ use cranelift_jit::JITBuilder;
 
 use crate::frontend::Arg;
 use crate::jit::{SValue, StructDef};
+use crate::validator::{address_t, bool_t, f64_t, i64_t};
 use crate::{
     decl,
     frontend::{Declaration, Function},
 };
 use crate::{hashmap, make_decl};
-
-use crate::validator::ExprType as E;
 
 //Reference: https://www.gnu.org/software/libc/manual/html_node/Mathematics.html
 //https://docs.rs/libc/0.2.101/libc/
@@ -139,49 +138,49 @@ pub fn append_std_math(
     jit_builder: &mut JITBuilder,
 ) {
     let jb = jit_builder;
-    decl!(prog, jb, "f64.signum",           f64::signum,           (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.copysign",         f64::copysign,         (E::F64, E::F64),         (E::F64));
-    decl!(prog, jb, "f64.mul_add",          f64::mul_add,          (E::F64, E::F64, E::F64), (E::F64));
-    decl!(prog, jb, "f64.div_euclid",       f64::div_euclid,       (E::F64, E::F64),         (E::F64));
-    decl!(prog, jb, "f64.rem_euclid",       f64::rem_euclid,       (E::F64, E::F64),         (E::F64));
-    decl!(prog, jb, "f64.powi",             f64::powi,             (E::F64, E::F64),         (E::F64));
-    decl!(prog, jb, "f64.powf",             f64::powf,             (E::F64, E::F64),         (E::F64));
-    decl!(prog, jb, "f64.sqrt",             f64::sqrt,             (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.exp",              f64::exp,              (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.exp2",             f64::exp2,             (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.ln",               f64::ln,               (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.log",              f64::log,              (E::F64, E::F64),         (E::F64));
-    decl!(prog, jb, "f64.log2",             f64::log2,             (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.log10",            f64::log10,            (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.cbrt",             f64::cbrt,             (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.hypot",            f64::hypot,            (E::F64, E::F64),         (E::F64));
-    decl!(prog, jb, "f64.sin",              f64::sin,              (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.tan",              f64::tan,              (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.cos",              f64::cos,              (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.asin",             f64::asin,             (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.acos",             f64::acos,             (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.atan",             f64::atan,             (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.atan2",            f64::atan2,            (E::F64, E::F64),         (E::F64));
-    decl!(prog, jb, "f64.sin_cos",          f64::sin_cos,          (E::F64),                 (E::F64, E::F64));
-    decl!(prog, jb, "f64.exp_m1",           f64::exp_m1,           (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.ln_1p",            f64::ln_1p,            (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.sinh",             f64::sinh,             (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.cosh",             f64::cosh,             (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.tanh",             f64::tanh,             (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.asinh",            f64::asinh,            (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.acosh",            f64::acosh,            (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.atanh",            f64::atanh,            (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.is_nan",           f64::is_nan,           (E::F64),                 (E::Bool));
-    decl!(prog, jb, "f64.is_infinite",      f64::is_infinite,      (E::F64),                 (E::Bool));
-    decl!(prog, jb, "f64.is_finite",        f64::is_finite,        (E::F64),                 (E::Bool));
-    decl!(prog, jb, "f64.is_subnormal",     f64::is_subnormal,     (E::F64),                 (E::Bool));
-    decl!(prog, jb, "f64.is_normal",        f64::is_normal,        (E::F64),                 (E::Bool));
-    decl!(prog, jb, "f64.is_sign_positive", f64::is_sign_positive, (E::F64),                 (E::Bool));
-    decl!(prog, jb, "f64.is_sign_negative", f64::is_sign_negative, (E::F64),                 (E::Bool));
-    decl!(prog, jb, "f64.recip",            f64::recip,            (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.to_degrees",       f64::to_degrees,       (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.to_radians",       f64::to_radians,       (E::F64),                 (E::F64));
-    decl!(prog, jb, "f64.cosh",             f64::cosh,             (E::F64),                 (E::F64));
+    decl!(prog, jb, "f64.signum",           f64::signum,           (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.copysign",         f64::copysign,         (f64_t(), f64_t()),         (f64_t()));
+    decl!(prog, jb, "f64.mul_add",          f64::mul_add,          (f64_t(), f64_t(), f64_t()), (f64_t()));
+    decl!(prog, jb, "f64.div_euclid",       f64::div_euclid,       (f64_t(), f64_t()),         (f64_t()));
+    decl!(prog, jb, "f64.rem_euclid",       f64::rem_euclid,       (f64_t(), f64_t()),         (f64_t()));
+    decl!(prog, jb, "f64.powi",             f64::powi,             (f64_t(), f64_t()),         (f64_t()));
+    decl!(prog, jb, "f64.powf",             f64::powf,             (f64_t(), f64_t()),         (f64_t()));
+    decl!(prog, jb, "f64.sqrt",             f64::sqrt,             (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.exp",              f64::exp,              (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.exp2",             f64::exp2,             (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.ln",               f64::ln,               (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.log",              f64::log,              (f64_t(), f64_t()),         (f64_t()));
+    decl!(prog, jb, "f64.log2",             f64::log2,             (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.log10",            f64::log10,            (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.cbrt",             f64::cbrt,             (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.hypot",            f64::hypot,            (f64_t(), f64_t()),         (f64_t()));
+    decl!(prog, jb, "f64.sin",              f64::sin,              (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.tan",              f64::tan,              (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.cos",              f64::cos,              (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.asin",             f64::asin,             (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.acos",             f64::acos,             (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.atan",             f64::atan,             (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.atan2",            f64::atan2,            (f64_t(), f64_t()),         (f64_t()));
+    decl!(prog, jb, "f64.sin_cos",          f64::sin_cos,          (f64_t()),                 (f64_t(), f64_t()));
+    decl!(prog, jb, "f64.exp_m1",           f64::exp_m1,           (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.ln_1p",            f64::ln_1p,            (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.sinh",             f64::sinh,             (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.cosh",             f64::cosh,             (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.tanh",             f64::tanh,             (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.asinh",            f64::asinh,            (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.acosh",            f64::acosh,            (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.atanh",            f64::atanh,            (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.is_nan",           f64::is_nan,           (f64_t()),                 (bool_t()));
+    decl!(prog, jb, "f64.is_infinite",      f64::is_infinite,      (f64_t()),                 (bool_t()));
+    decl!(prog, jb, "f64.is_finite",        f64::is_finite,        (f64_t()),                 (bool_t()));
+    decl!(prog, jb, "f64.is_subnormal",     f64::is_subnormal,     (f64_t()),                 (bool_t()));
+    decl!(prog, jb, "f64.is_normal",        f64::is_normal,        (f64_t()),                 (bool_t()));
+    decl!(prog, jb, "f64.is_sign_positive", f64::is_sign_positive, (f64_t()),                 (bool_t()));
+    decl!(prog, jb, "f64.is_sign_negative", f64::is_sign_negative, (f64_t()),                 (bool_t()));
+    decl!(prog, jb, "f64.recip",            f64::recip,            (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.to_degrees",       f64::to_degrees,       (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.to_radians",       f64::to_radians,       (f64_t()),                 (f64_t()));
+    decl!(prog, jb, "f64.cosh",             f64::cosh,             (f64_t()),                 (f64_t()));
     /*TODO
     pub fn to_bits(self) -> u64
     pub fn from_bits(v: u64) -> f64
@@ -207,54 +206,54 @@ pub fn append_std_math(
 
 pub fn append_std_funcs(prog: &mut Vec<Declaration>) {
     for n in STD_1ARG_FF {
-        prog.push(make_decl(n, vec![("x", E::F64)], vec![("y", E::F64)]));
+        prog.push(make_decl(n, vec![("x", f64_t())], vec![("y", f64_t())]));
     }
     for n in STD_1ARG_FI {
-        prog.push(make_decl(n, vec![("x", E::F64)], vec![("y", E::I64)]));
+        prog.push(make_decl(n, vec![("x", f64_t())], vec![("y", i64_t())]));
     }
     for n in STD_1ARG_IF {
-        prog.push(make_decl(n, vec![("x", E::I64)], vec![("y", E::F64)]));
+        prog.push(make_decl(n, vec![("x", i64_t())], vec![("y", f64_t())]));
     }
     for n in STD_2ARG_FF {
         prog.push(make_decl(
             n,
-            vec![("x", E::F64), ("y", E::F64)],
-            vec![("z", E::F64)],
+            vec![("x", f64_t()), ("y", f64_t())],
+            vec![("z", f64_t())],
         ));
     }
     for n in STD_2ARG_II {
         prog.push(make_decl(
             n,
-            vec![("x", E::I64), ("y", E::I64)],
-            vec![("z", E::I64)],
+            vec![("x", i64_t()), ("y", i64_t())],
+            vec![("z", i64_t())],
         ));
     }
-    prog.push(make_decl("f64.print", vec![("x", E::F64)], vec![]));
-    prog.push(make_decl("i64.print", vec![("x", E::I64)], vec![]));
-    prog.push(make_decl("bool.print", vec![("x", E::Bool)], vec![]));
-    prog.push(make_decl("&.print", vec![("x", E::Address)], vec![]));
-    prog.push(make_decl("f64.println", vec![("x", E::F64)], vec![]));
-    prog.push(make_decl("i64.println", vec![("x", E::I64)], vec![]));
-    prog.push(make_decl("bool.println", vec![("x", E::Bool)], vec![]));
-    prog.push(make_decl("&.println", vec![("x", E::Address)], vec![]));
+    prog.push(make_decl("f64.print", vec![("x", f64_t())], vec![]));
+    prog.push(make_decl("i64.print", vec![("x", i64_t())], vec![]));
+    prog.push(make_decl("bool.print", vec![("x", bool_t())], vec![]));
+    prog.push(make_decl("&.print", vec![("x", address_t())], vec![]));
+    prog.push(make_decl("f64.println", vec![("x", f64_t())], vec![]));
+    prog.push(make_decl("i64.println", vec![("x", i64_t())], vec![]));
+    prog.push(make_decl("bool.println", vec![("x", bool_t())], vec![]));
+    prog.push(make_decl("&.println", vec![("x", address_t())], vec![]));
     prog.push(make_decl(
         "f64.assert_eq",
-        vec![("x", E::F64), ("y", E::F64)],
+        vec![("x", f64_t()), ("y", f64_t())],
         vec![],
     ));
     prog.push(make_decl(
         "i64.assert_eq",
-        vec![("x", E::I64), ("y", E::I64)],
+        vec![("x", i64_t()), ("y", i64_t())],
         vec![],
     ));
     prog.push(make_decl(
         "bool.assert_eq",
-        vec![("x", E::Bool), ("y", E::Bool)],
+        vec![("x", bool_t()), ("y", bool_t())],
         vec![],
     ));
     prog.push(make_decl(
         "&.assert_eq",
-        vec![("x", E::Address), ("y", E::Address)],
+        vec![("x", address_t()), ("y", address_t())],
         vec![],
     ));
 

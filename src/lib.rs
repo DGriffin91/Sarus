@@ -30,7 +30,7 @@ pub fn default_std_jit_from_code(code: &str) -> anyhow::Result<jit::JIT> {
     let mut jit = jit::JIT::from(jit_builder);
     jit.add_math_constants()?;
 
-    jit.translate(ast.clone())?;
+    jit.translate(ast.clone(), code.to_string())?;
     Ok(jit)
 }
 
@@ -50,7 +50,7 @@ pub fn default_std_jit_from_code_with_importer(
     let mut jit = jit::JIT::from(jit_builder);
     jit.add_math_constants()?;
 
-    jit.translate(ast.clone())?;
+    jit.translate(ast.clone(), code.to_string())?;
     Ok(jit)
 }
 

@@ -65,7 +65,7 @@ impl Graph {
         ast.push(graph_func_ast);
 
         // Pass the AST to the JIT to compile
-        jit.translate(ast.clone())?;
+        jit.translate(ast.clone(), code.to_string())?;
 
         Ok(Graph {
             code,
@@ -242,7 +242,6 @@ fn build_graph_func(
     ));
 
     body.push(assign_op_to_assign(
-        0,
         Binop::Add,
         Expr::Identifier(CodeRef::z(), "i".to_string()),
         Expr::LiteralInt(CodeRef::z(), "1".to_string()),
@@ -266,7 +265,7 @@ fn build_graph_func(
         name: "graph".to_string(),
         params: vec![Arg {
             name: "audio".into(),
-            expr_type: ExprType::Array(Box::new(ExprType::F64), None),
+            expr_type: ExprType::Array(CodeRef::z(), Box::new(ExprType::F64(CodeRef::z())), None),
             default_to_float: false,
         }],
         returns: vec![],

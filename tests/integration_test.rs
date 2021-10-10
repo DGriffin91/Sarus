@@ -2325,23 +2325,3 @@ fn set_val(self: Filter) -> () {
 
     Ok(())
 }
-
-fn test_func2(x: f32) -> f32 {
-    let y = x / 62.0;
-    dbg!(y);
-    y
-}
-
-fn test_func(x: f32) -> f32 {
-    let y = x * test_func2(x);
-    dbg!(y);
-    y
-}
-
-#[test]
-fn example() {
-    let a = 1.0 + 2.0;
-    let mut b = test_func(a);
-    b = test_func2(b);
-    println!("{}", b);
-}

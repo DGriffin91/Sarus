@@ -14,7 +14,7 @@ fn main() -> anyhow::Result<()> {
         let ast = parser::program(&code)?;
 
         // Pass the AST to the JIT to compile
-        jit.translate(ast)?;
+        jit.translate(ast, code.to_string())?;
 
         //Get the function, returns a raw pointer to machine code.
         let func_ptr = jit.get_func("main")?;

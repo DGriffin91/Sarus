@@ -15,7 +15,7 @@ fn subprocess_code<I, O>(input: (String, I)) -> Result<O, String> {
 
     let mut jit = jit::JIT::default();
     // Pass the AST to the JIT to compile
-    jit.translate(ast)
+    jit.translate(ast, code.to_string())
         .map_err(|e| format!("jit translate failed: {}", e))?;
 
     // Run compiled code
