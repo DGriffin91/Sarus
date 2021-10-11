@@ -673,7 +673,8 @@ impl<'a> FunctionTranslator<'a> {
             }
             Expr::Parentheses(_code_ref, expr) => self.translate_expr(expr),
             Expr::ArrayAccess(_code_ref, name, idx_expr) => {
-                self.translate_array_get_from_var(name.to_string(), idx_expr, false)
+                let idx_val = self.idx_expr_to_val(idx_expr)?;
+                self.translate_array_get_from_var(name.to_string(), idx_val, false)
             }
         }
     }
@@ -704,31 +705,44 @@ impl<'a> FunctionTranslator<'a> {
 
     fn translate_array_create(
         &mut self,
-        _code_ref: &CodeRef,
-        _item: &Expr,
-        _len: usize,
+        code_ref: &CodeRef,
+        item_expr: &Expr,
+        len: usize,
     ) -> anyhow::Result<SValue> {
-        todo!();
-        //let bytes = cstr.to_bytes_with_nul();
-        //let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
-        //    StackSlotKind::ExplicitSlot,
-        //    types::I8.bytes() * len as u32,
-        //));
-        //let stack_slot_address =
-        //    self.builder
-        //        .ins()
-        //        .stack_addr(self.ptr_ty, stack_slot, Offset32::new(0));
-        ////TODO Is this really how this is done?
-        //for (i, c) in bytes.iter().enumerate() {
-        //    let v = self.builder.ins().iconst::<i64>(types::I64, *c as i64);
-        //    self.builder.ins().istore8(
-        //        MemFlags::new(),
-        //        v,
-        //        stack_slot_address,
-        //        Offset32::new(i as i32),
-        //    );
-        //}
-        //Ok(SValue::Address(stack_slot_address))
+        let item_value = self.translate_expr(item_expr)?;
+
+        let item_width = match item_value
+            .expr_type()?
+            .width(self.ptr_ty, &self.env.struct_map)
+        {
+            Some(item_width) => item_width,
+            None => anyhow::bail!("{} expression {} has no size", code_ref, item_expr),
+        };
+
+        let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            (item_width * len) as u32,
+        ));
+        let stack_slot_address =
+            self.builder
+                .ins()
+                .stack_addr(self.ptr_ty, stack_slot, Offset32::new(0));
+
+        for i in 0..len {
+            copy_to_stack_slot(
+                self.module.target_config(),
+                &mut self.builder,
+                item_width,
+                item_value.inner("translate_array_create")?,
+                stack_slot_address,
+                i * item_width,
+            )?;
+        }
+
+        Ok(SValue::Array(
+            Box::new(SValue::from(&item_value.expr_type()?, stack_slot_address)?),
+            Some(len),
+        ))
     }
 
     fn translate_binop(
@@ -840,16 +854,18 @@ impl<'a> FunctionTranslator<'a> {
                                     self.get_struct_field(sval_address, &struct_def)?
                                 };
 
+                                let idx_val = self.idx_expr_to_val(idx_expr)?;
                                 lhs_val = Some(self.array_get(
                                     array_address.inner("Expr::ArrayAccess")?,
                                     &struct_def.expr_type,
-                                    idx_expr,
+                                    idx_val,
                                     get_address,
                                 )?);
                             } else {
+                                let idx_val = self.idx_expr_to_val(idx_expr)?;
                                 lhs_val = Some(self.translate_array_get_from_var(
                                     name.to_string(),
-                                    idx_expr,
+                                    idx_val,
                                     get_address,
                                 )?);
                             }
@@ -1157,7 +1173,8 @@ impl<'a> FunctionTranslator<'a> {
                             .def_var(var.inner(), val.inner("translate_assign")?);
                     }
                     Expr::ArrayAccess(_code_ref, name, idx_expr) => {
-                        self.translate_array_set_from_var(name.to_string(), idx_expr, &val)?;
+                        let idx_val = self.idx_expr_to_val(idx_expr)?;
+                        self.translate_array_set_from_var(name.to_string(), idx_val, &val)?;
                     }
                     _ => {
                         //dbg!(to_expr);
@@ -1202,7 +1219,7 @@ impl<'a> FunctionTranslator<'a> {
     fn translate_array_get_from_var(
         &mut self,
         name: String,
-        idx_expr: &Expr,
+        idx_val: Value,
         get_address: bool,
     ) -> anyhow::Result<SValue> {
         //TODO crash if idx_val > ExprType::Array(_, len)
@@ -1215,23 +1232,25 @@ impl<'a> FunctionTranslator<'a> {
 
         let array_expr_type = &variable.expr_type()?;
 
-        self.array_get(array_address, array_expr_type, idx_expr, get_address)
+        self.array_get(array_address, array_expr_type, idx_val, get_address)
+    }
+
+    fn idx_expr_to_val(&mut self, idx_expr: &Expr) -> anyhow::Result<Value> {
+        let idx_val = self.translate_expr(idx_expr).unwrap();
+        match idx_val {
+            SValue::I64(v) => Ok(v),
+            _ => anyhow::bail!("only int supported for array access"),
+        }
     }
 
     fn array_get(
         &mut self,
         array_address: Value,
         array_expr_type: &ExprType,
-        idx_expr: &Expr,
+        idx_val: Value,
         get_address: bool,
     ) -> anyhow::Result<SValue> {
         //TODO crash if idx_val > ExprType::Array(_, len)
-
-        let idx_val = self.translate_expr(idx_expr).unwrap();
-        let idx_val = match idx_val {
-            SValue::I64(v) => v,
-            _ => anyhow::bail!("only int supported for array access"),
-        };
 
         let mut base_struct = None;
         let mut width;
@@ -1291,7 +1310,7 @@ impl<'a> FunctionTranslator<'a> {
     fn translate_array_set_from_var(
         &mut self,
         name: String,
-        idx_expr: &Expr,
+        idx_val: Value,
         val: &SValue,
     ) -> anyhow::Result<SValue> {
         //TODO crash if idx_val > ExprType::Array(_, len)
@@ -1304,7 +1323,7 @@ impl<'a> FunctionTranslator<'a> {
 
         let array_expr_type = &variable.expr_type()?;
 
-        self.array_set(val, &array_address, array_expr_type, idx_expr)?;
+        self.array_set(val, &array_address, array_expr_type, idx_val)?;
 
         Ok(SValue::Void)
     }
@@ -1314,10 +1333,10 @@ impl<'a> FunctionTranslator<'a> {
         from_val: &SValue,
         array_address: &Value,
         array_expr_type: &ExprType,
-        idx_expr: &Expr,
+        idx_val: Value,
     ) -> anyhow::Result<()> {
         let array_address_at_idx_ptr =
-            self.array_get(*array_address, array_expr_type, idx_expr, true)?;
+            self.array_get(*array_address, array_expr_type, idx_val, true)?;
 
         match array_address_at_idx_ptr {
             SValue::Void => todo!(),

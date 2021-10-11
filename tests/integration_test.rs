@@ -2369,3 +2369,28 @@ fn main() -> () {
 
     Ok(())
 }
+
+//#[test]
+//fn fixed_array_size() -> anyhow::Result<()> {
+//    let code = r#"
+//struct A {
+//    a: f64,
+//}
+//
+//fn main() -> () {
+//    s = A {
+//        a: 1.0,
+//    }
+//    n = [s; 10]
+//    n[0].a.println()
+//    n1 = [1; 10]
+//    n2 = [1.0; 10]
+//}
+//"#;
+//    let mut jit = default_std_jit_from_code(&code)?;
+//    let func_ptr = jit.get_func("main")?;
+//    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+//    func();
+//
+//    Ok(())
+//}
