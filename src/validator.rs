@@ -268,6 +268,9 @@ impl ExprType {
             Expr::LiteralInt(code_ref, _) => ExprType::I64(*code_ref),
             Expr::LiteralBool(code_ref, _) => ExprType::Bool(*code_ref),
             Expr::LiteralString(code_ref, _) => ExprType::Address(*code_ref), //TODO change to char
+            Expr::LiteralArray(code_ref, e, len) => {
+                ExprType::Array(*code_ref, Box::new(ExprType::of(e, env)?), Some(*len))
+            }
             Expr::Binop(binop_code_ref, binop, lhs, rhs) => match binop {
                 crate::frontend::Binop::DotAccess => {
                     let mut path = Vec::new();
@@ -293,7 +296,7 @@ impl ExprType {
                                                 lhs_val = Some(ExprType::of(&expr, env)?);
                                                 continue;
                                             }
-                                        } else if path.len() > 1 {
+                                        } else if path.len() > 1 || lhs_val.is_some() {
                                             let spath = path
                                                 .iter()
                                                 .map(|lhs_i: &Expr| lhs_i.to_string())
@@ -357,7 +360,10 @@ impl ExprType {
                                     Expr::LiteralString(_code_ref, _) => {
                                         lhs_val = Some(ExprType::of(&expr, env)?);
                                     }
-                                    Expr::Identifier(_code_ref, _) => path.push(expr),
+                                    Expr::LiteralArray(_code_ref, _, _) => {
+                                        lhs_val = Some(ExprType::of(&expr, env)?);
+                                    }
+                                    Expr::Identifier(_code_ref, _i) => path.push(expr),
                                     Expr::Binop(_code_ref, op, lhs, rhs) => {
                                         if let Binop::DotAccess = op {
                                             curr_expr = Some(*lhs.clone());

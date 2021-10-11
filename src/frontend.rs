@@ -105,6 +105,7 @@ pub enum Expr {
     LiteralInt(CodeRef, String),
     LiteralBool(CodeRef, bool),
     LiteralString(CodeRef, String),
+    LiteralArray(CodeRef, Box<Expr>, usize),
     Identifier(CodeRef, String),
     Binop(CodeRef, Binop, Box<Expr>, Box<Expr>),
     Unaryop(CodeRef, Unaryop, Box<Expr>),
@@ -129,6 +130,7 @@ impl Expr {
             Expr::LiteralInt(code_ref, ..) => code_ref,
             Expr::LiteralBool(code_ref, ..) => code_ref,
             Expr::LiteralString(code_ref, ..) => code_ref,
+            Expr::LiteralArray(code_ref, ..) => code_ref,
             Expr::Identifier(code_ref, ..) => code_ref,
             Expr::Binop(code_ref, ..) => code_ref,
             Expr::Unaryop(code_ref, ..) => code_ref,
@@ -155,6 +157,7 @@ impl Expr {
             Expr::LiteralInt(_, _) => (),
             Expr::LiteralBool(_, _) => (),
             Expr::LiteralString(_, _) => (),
+            Expr::LiteralArray(_, _, _) => (),
             Expr::Identifier(_, _) => (),
             Expr::Binop(_, _, a, b) => {
                 a.setup_ref(src_code);
@@ -234,6 +237,7 @@ impl Display for Expr {
             Expr::LiteralFloat(_, s) => write!(f, "{}", s),
             Expr::LiteralInt(_, s) => write!(f, "{}", s),
             Expr::LiteralString(_, s) => write!(f, "\"{}\"", s),
+            Expr::LiteralArray(_, e, len) => write!(f, "[{}; {}]", e, len),
             Expr::Identifier(_, s) => write!(f, "{}", s),
             Expr::Binop(_, op, e1, e2) => write!(f, "{} {} {}", e1, op, e2),
             Expr::Unaryop(_, op, e1) => write!(f, "{} {}", op, e1),
@@ -598,7 +602,7 @@ peg::parser!(pub grammar parser() for str {
     rule literal() -> Expr
         = _ pos:position!() n:$(['-']*['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat(CodeRef::new(pos), n.into()) }
         / _ pos:position!() n:$(['-']*['0'..='9']+) { Expr::LiteralInt(CodeRef::new(pos), n.into()) }
-        / pos:position!() "*" i:identifier() { Expr::GlobalDataAddr(CodeRef::new(pos), i) }
+        / _ pos:position!() "*" i:identifier() { Expr::GlobalDataAddr(CodeRef::new(pos), i) }
         / _ pos:position!() "true" _ { Expr::LiteralBool(CodeRef::new(pos), true) }
         / _ pos:position!() "false" _ { Expr::LiteralBool(CodeRef::new(pos), false) }
         / _ pos:position!() "\"" body:$[^'"']* "\"" _ { Expr::LiteralString(CodeRef::new(pos), body.join("")) }
@@ -606,6 +610,10 @@ peg::parser!(pub grammar parser() for str {
             //Temp solution for creating empty strings
             Expr::LiteralString(CodeRef::new(pos), repstr.join("").repeat( len.parse().unwrap()))
         } //[" "; 10]
+        / _ pos:position!() "[" _  e:expression()  _ ";" _ len:$(['0'..='9']+) _ "]" _ {
+
+            Expr::LiteralArray(CodeRef::new(pos), Box::new(e), len.parse::<usize>().unwrap())
+        }
 
     rule struct_assign_field() -> StructAssignField
         = _ i:identifier() _ ":" _ e:expression() comma() _ { StructAssignField {field_name: i.into(), expr: e } }

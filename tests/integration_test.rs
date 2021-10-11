@@ -1894,17 +1894,17 @@ struct Misc3 {
     let mut jit = default_std_jit_from_code(&code)?;
     //jit.print_clif(true);
     let (data_ptr, _size) = jit.get_data("Misc::size")?;
-    let f64_size: &i64 = unsafe { mem::transmute(data_ptr) };
-    assert_eq!(mem::size_of::<Misc>(), *f64_size as usize);
+    let size: &i64 = unsafe { mem::transmute(data_ptr) };
+    assert_eq!(mem::size_of::<Misc>(), *size as usize);
     let (data_ptr, _size) = jit.get_data("Misc2::size")?;
-    let f64_size: &i64 = unsafe { mem::transmute(data_ptr) };
-    assert_eq!(mem::size_of::<Misc2>(), *f64_size as usize);
+    let size: &i64 = unsafe { mem::transmute(data_ptr) };
+    assert_eq!(mem::size_of::<Misc2>(), *size as usize);
     let (data_ptr, _size) = jit.get_data("Misc3::size")?;
-    let f64_size: &i64 = unsafe { mem::transmute(data_ptr) };
-    assert_eq!(mem::size_of::<Misc3>(), *f64_size as usize);
+    let size: &i64 = unsafe { mem::transmute(data_ptr) };
+    assert_eq!(mem::size_of::<Misc3>(), *size as usize);
     let (data_ptr, _size) = jit.get_data("f64::size")?;
-    let f64_size: &i64 = unsafe { mem::transmute(data_ptr) };
-    assert_eq!(mem::size_of::<f64>(), *f64_size as usize);
+    let size: &i64 = unsafe { mem::transmute(data_ptr) };
+    assert_eq!(mem::size_of::<f64>(), *size as usize);
     Ok(())
 }
 
@@ -2151,26 +2151,52 @@ fn process(audio: AudioSamples) -> () {
     while i < audio.len {
         sample = audio.samples[i]
         sample.left = i.f64()
-        sample.right = i.f64()  
+        sample.right = i.f64() + 0.5
 
         audio.samples[i].left = i.f64()  
-        audio.samples[i].right = i.f64() 
+        audio.samples[i].right = i.f64() + 0.5
         
         (audio.samples[i]).left = i.f64()
-        (audio.samples[i]).right = i.f64() 
+        (audio.samples[i]).right = i.f64() + 0.5
         
         i += 1
     }
     
     sample = audio.samples[1]
     sample.left.assert_eq(1.0)
-    sample.right.assert_eq(1.0)
+    sample.right.assert_eq(1.5)
     sample = audio.samples[2]
     sample.left.assert_eq(2.0)
-    sample.right.assert_eq(2.0)
+    sample.right.assert_eq(2.5)
     sample = audio.samples[3]
     sample.left.assert_eq(3.0)
-    sample.right.assert_eq(3.0)
+    sample.right.assert_eq(3.5)
+
+    s = audio.samples
+    a = s[2]
+    a.left.assert_eq(2.0)
+    a.right.assert_eq(2.5)
+
+    n = AudioPair {
+        left: 1000.0,
+        right: 1000.5,
+    }
+
+    s[5] = n
+
+    d = audio.samples[5].left
+    e = audio.samples[5].right
+
+    d.assert_eq(1000.0)
+    e.assert_eq(1000.5)
+
+
+
+    (audio.samples[6].left).assert_eq(6.0)
+    audio.samples[6].left.assert_eq(6.0)
+    (audio.samples[6].right).assert_eq(6.5)
+    audio.samples[6].right.assert_eq(6.5)
+
 }
 "#;
 
@@ -2340,5 +2366,6 @@ fn main() -> () {
     let (data_ptr, _size) = jit.get_data("f64::size")?;
     let f64_size: &i64 = unsafe { mem::transmute(data_ptr) };
     assert_eq!(*f64_size, 8);
+
     Ok(())
 }

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 
 use cranelift::frontend::FunctionBuilder;
-use cranelift::prelude::{types, InstBuilder, Value};
+use cranelift::prelude::{types, InstBuilder, StackSlotData, StackSlotKind, Value};
 use cranelift_jit::JITBuilder;
 
 use crate::frontend::{Arg, CodeRef};
@@ -237,16 +237,6 @@ pub fn append_std(prog: &mut Vec<Declaration>, jit_builder: &mut JITBuilder) {
     decl!(prog, jb, "panic",               spanic,              (address_t()),             ());
     
     prog.push(make_decl("src_line", vec![], vec![("line", i64_t())]));
-
-    //fn i64_size_fn () -> i64 {types::I64.bytes() as i64} 
-    //decl!(prog, jb, "i64::size",               i64_size_fn,              (),             (i64_t()));
-    //fn f64_size_fn () -> i64 {types::F64.bytes() as i64} 
-    //decl!(prog, jb, "f64::size",               f64_size_fn,              (),             (i64_t()));
-    //fn bool_size_fn () -> i64 {types::I8.bytes() as i64} //for extern and structs we use I8 for bool
-    //decl!(prog, jb, "bool::size",              bool_size_fn,             (),             (i64_t()));
-
-
-    
 
 }
 

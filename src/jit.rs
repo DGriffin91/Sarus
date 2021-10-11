@@ -613,6 +613,9 @@ impl<'a> FunctionTranslator<'a> {
                     .iconst::<i64>(types::I64, literal.parse().unwrap()),
             )),
             Expr::LiteralString(_code_ref, literal) => self.translate_string(literal),
+            Expr::LiteralArray(code_ref, item, len) => {
+                self.translate_array_create(code_ref, item, *len)
+            }
             Expr::Binop(_code_ref, op, lhs, rhs) => {
                 Ok(self.translate_binop(*op, lhs, rhs, false)?.0)
             }
@@ -670,10 +673,8 @@ impl<'a> FunctionTranslator<'a> {
             }
             Expr::Parentheses(_code_ref, expr) => self.translate_expr(expr),
             Expr::ArrayAccess(_code_ref, name, idx_expr) => {
-                self.translate_array_get(name.to_string(), idx_expr, false)
-            } //Expr::ArraySet(name, idx_expr, expr) => {
-              //    self.translate_array_set(name.to_string(), idx_expr, expr)
-              //}
+                self.translate_array_get_from_var(name.to_string(), idx_expr, false)
+            }
         }
     }
 
@@ -699,6 +700,35 @@ impl<'a> FunctionTranslator<'a> {
             );
         }
         Ok(SValue::Address(stack_slot_address))
+    }
+
+    fn translate_array_create(
+        &mut self,
+        _code_ref: &CodeRef,
+        _item: &Expr,
+        _len: usize,
+    ) -> anyhow::Result<SValue> {
+        todo!();
+        //let bytes = cstr.to_bytes_with_nul();
+        //let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
+        //    StackSlotKind::ExplicitSlot,
+        //    types::I8.bytes() * len as u32,
+        //));
+        //let stack_slot_address =
+        //    self.builder
+        //        .ins()
+        //        .stack_addr(self.ptr_ty, stack_slot, Offset32::new(0));
+        ////TODO Is this really how this is done?
+        //for (i, c) in bytes.iter().enumerate() {
+        //    let v = self.builder.ins().iconst::<i64>(types::I64, *c as i64);
+        //    self.builder.ins().istore8(
+        //        MemFlags::new(),
+        //        v,
+        //        stack_slot_address,
+        //        Offset32::new(i as i32),
+        //    );
+        //}
+        //Ok(SValue::Address(stack_slot_address))
     }
 
     fn translate_binop(
@@ -734,7 +764,7 @@ impl<'a> FunctionTranslator<'a> {
                                 lhs_val =
                                     Some(self.translate_call(code_ref, fn_name, args, lhs_val)?);
                             } else {
-                                let sval = if path.len() > 1 {
+                                let sval = if path.len() > 1 || lhs_val.is_some() {
                                     let spath = path
                                         .iter()
                                         .map(|lhs_i: &Expr| lhs_i.to_string())
@@ -769,6 +799,9 @@ impl<'a> FunctionTranslator<'a> {
                         Expr::LiteralString(_code_ref, _) => {
                             lhs_val = Some(self.translate_expr(expr)?)
                         }
+                        Expr::LiteralArray(_code_ref, _, _) => {
+                            lhs_val = Some(self.translate_expr(expr)?)
+                        }
                         Expr::Identifier(_code_ref, _) => path.push(expr.clone()),
                         Expr::Binop(_code_ref, op, lhs, rhs) => {
                             if let Binop::DotAccess = op {
@@ -799,7 +832,7 @@ impl<'a> FunctionTranslator<'a> {
                                 let (sval_address, struct_def) =
                                     self.get_struct_field_address(spath, lhs_val)?;
                                 struct_field_def = Some(struct_def.clone());
-                                let array_ptr = if let ExprType::Struct(_code_ref, _name) =
+                                let array_address = if let ExprType::Struct(_code_ref, _name) =
                                     struct_def.clone().expr_type
                                 {
                                     sval_address
@@ -807,75 +840,14 @@ impl<'a> FunctionTranslator<'a> {
                                     self.get_struct_field(sval_address, &struct_def)?
                                 };
 
-                                let mut base_struct = None;
-                                let mut width;
-                                let base_type = match &struct_def.expr_type {
-                                    ExprType::Array(_code_ref, ty, _len) => {
-                                        let c_ty = ty.cranelift_type(self.ptr_ty, true)?;
-                                        width = c_ty.bytes() as usize;
-                                        if let ExprType::Struct(_code_ref, name) = *ty.to_owned() {
-                                            let s = self.env.struct_map[&name.to_string()].clone();
-                                            width = s.size;
-                                            base_struct = Some(s);
-                                        }
-                                        c_ty
-                                    }
-                                    e => {
-                                        anyhow::bail!(
-                                            "{} can't index type {}",
-                                            e.get_code_ref(),
-                                            &struct_def.expr_type
-                                        )
-                                    }
-                                };
-
-                                //dbg!(&struct_def.expr_type);
-
-                                //TODO support other array types (this might be for fixed arrays actually stored in the struct)
-                                //struct_def.expr_type.width(ptr_ty, &self.env.struct_map)
-
-                                let idx_val = self.translate_expr(idx_expr).unwrap();
-                                let idx_val = match idx_val {
-                                    SValue::I64(v) => v,
-                                    _ => anyhow::bail!("only int supported for array access"),
-                                };
-
-                                let field_address_at_ids = self.get_array_address_from_ptr(
-                                    width,
-                                    array_ptr.inner("Expr::ArrayAccess")?,
-                                    idx_val,
-                                );
-
-                                if let Some(base_struct) = base_struct {
-                                    //if the items of the array are structs return struct with same start address
-                                    lhs_val = Some(SValue::Struct(
-                                        base_struct.name,
-                                        field_address_at_ids,
-                                    ));
-                                } else if get_address {
-                                    lhs_val = Some(SValue::Address(field_address_at_ids));
-                                } else {
-                                    let val = self.builder.ins().load(
-                                        base_type,
-                                        MemFlags::new(),
-                                        field_address_at_ids,
-                                        Offset32::new(0),
-                                    );
-                                    lhs_val = match &struct_def.expr_type {
-                                        ExprType::Array(_code_ref, ty, _len) => {
-                                            Some(SValue::from(ty, val)?)
-                                        }
-                                        e => {
-                                            anyhow::bail!(
-                                                "{} can't index type {}",
-                                                e.get_code_ref(),
-                                                &struct_def.expr_type
-                                            )
-                                        }
-                                    };
-                                }
+                                lhs_val = Some(self.array_get(
+                                    array_address.inner("Expr::ArrayAccess")?,
+                                    &struct_def.expr_type,
+                                    idx_expr,
+                                    get_address,
+                                )?);
                             } else {
-                                lhs_val = Some(self.translate_array_get(
+                                lhs_val = Some(self.translate_array_get_from_var(
                                     name.to_string(),
                                     idx_expr,
                                     get_address,
@@ -1185,7 +1157,7 @@ impl<'a> FunctionTranslator<'a> {
                             .def_var(var.inner(), val.inner("translate_assign")?);
                     }
                     Expr::ArrayAccess(_code_ref, name, idx_expr) => {
-                        self.translate_array_set(name.to_string(), idx_expr, &val)?;
+                        self.translate_array_set_from_var(name.to_string(), idx_expr, &val)?;
                     }
                     _ => {
                         //dbg!(to_expr);
@@ -1227,7 +1199,7 @@ impl<'a> FunctionTranslator<'a> {
         }
     }
 
-    fn translate_array_get(
+    fn translate_array_get_from_var(
         &mut self,
         name: String,
         idx_expr: &Expr,
@@ -1239,7 +1211,21 @@ impl<'a> FunctionTranslator<'a> {
             None => anyhow::bail!("variable {} not found", name),
         };
 
-        let array_ptr = self.builder.use_var(variable.inner());
+        let array_address = self.builder.use_var(variable.inner());
+
+        let array_expr_type = &variable.expr_type()?;
+
+        self.array_get(array_address, array_expr_type, idx_expr, get_address)
+    }
+
+    fn array_get(
+        &mut self,
+        array_address: Value,
+        array_expr_type: &ExprType,
+        idx_expr: &Expr,
+        get_address: bool,
+    ) -> anyhow::Result<SValue> {
+        //TODO crash if idx_val > ExprType::Array(_, len)
 
         let idx_val = self.translate_expr(idx_expr).unwrap();
         let idx_val = match idx_val {
@@ -1247,44 +1233,45 @@ impl<'a> FunctionTranslator<'a> {
             _ => anyhow::bail!("only int supported for array access"),
         };
 
-        let expr_type = &variable.expr_type()?;
-        let base_type = match expr_type {
-            ExprType::Array(_code_ref, ty, _len) => ty.cranelift_type(self.ptr_ty, true)?,
-            ExprType::Void(code_ref)
-            | ExprType::Bool(code_ref)
-            | ExprType::F64(code_ref)
-            | ExprType::I64(code_ref)
-            | ExprType::Address(code_ref)
-            | ExprType::Tuple(code_ref, _)
-            | ExprType::Struct(code_ref, _) => {
-                anyhow::bail!("{} can't index type {}", code_ref, &expr_type)
-            } //TODO get struct width
+        let mut base_struct = None;
+        let mut width;
+        let base_type = match &array_expr_type {
+            ExprType::Array(_code_ref, ty, _len) => {
+                let c_ty = ty.cranelift_type(self.ptr_ty, true)?;
+                width = c_ty.bytes() as usize;
+                if let ExprType::Struct(_code_ref, name) = *ty.to_owned() {
+                    let s = self.env.struct_map[&name.to_string()].clone();
+                    width = s.size;
+                    base_struct = Some(s);
+                }
+                c_ty
+            }
+            e => {
+                anyhow::bail!("{} can't index type {}", e.get_code_ref(), &array_expr_type)
+            }
         };
 
-        let idx_ptr =
-            self.get_array_address_from_ptr(base_type.bytes() as usize, array_ptr, idx_val);
+        let array_address_at_idx_ptr =
+            self.get_array_address_from_ptr(width, array_address, idx_val);
 
-        let val = self
-            .builder
-            .ins()
-            .load(base_type, MemFlags::new(), idx_ptr, Offset32::new(0));
-
-        if get_address {
-            Ok(SValue::Address(val))
+        if let Some(base_struct) = base_struct {
+            //if the items of the array are structs return struct with same start address
+            Ok(SValue::Struct(base_struct.name, array_address_at_idx_ptr))
+        } else if get_address {
+            Ok(SValue::Address(array_address_at_idx_ptr))
         } else {
-            let sval = match &expr_type {
-                ExprType::Array(_code_ref, ty, _len) => SValue::from(ty, val)?,
-                ExprType::Void(code_ref)
-                | ExprType::Bool(code_ref)
-                | ExprType::F64(code_ref)
-                | ExprType::I64(code_ref)
-                | ExprType::Address(code_ref)
-                | ExprType::Tuple(code_ref, _)
-                | ExprType::Struct(code_ref, _) => {
-                    anyhow::bail!("{} can't index type {}", code_ref, &expr_type)
+            let val = self.builder.ins().load(
+                base_type,
+                MemFlags::new(),
+                array_address_at_idx_ptr,
+                Offset32::new(0),
+            );
+            match &array_expr_type {
+                ExprType::Array(_code_ref, ty, _len) => Ok(SValue::from(ty, val)?),
+                e => {
+                    anyhow::bail!("{} can't index type {}", e.get_code_ref(), &array_expr_type)
                 }
-            };
-            Ok(sval)
+            }
         }
     }
 
@@ -1301,45 +1288,65 @@ impl<'a> FunctionTranslator<'a> {
         idx_ptr
     }
 
-    fn translate_array_set(
+    fn translate_array_set_from_var(
         &mut self,
         name: String,
         idx_expr: &Expr,
         val: &SValue,
     ) -> anyhow::Result<SValue> {
-        let variable = self.env.variables.get(&name).unwrap();
-
-        let base_type = match variable {
-            SVariable::Unknown(_, _) => self.ptr_ty,
-            SVariable::Array(ty, _len) => ty.expr_type()?.cranelift_type(self.ptr_ty, true)?,
-            SVariable::Address(_, _) => self.ptr_ty,
-            SVariable::Struct(_, _, _, _)
-            | SVariable::I64(_, _)
-            | SVariable::F64(_, _)
-            | SVariable::Bool(_, _) => anyhow::bail!("can't index type {}", &variable),
+        //TODO crash if idx_val > ExprType::Array(_, len)
+        let variable = match self.env.variables.get(&name) {
+            Some(v) => v.clone(),
+            None => anyhow::bail!("variable {} not found", name),
         };
 
-        let array_ptr = self.builder.use_var(variable.inner());
+        let array_address = self.builder.use_var(variable.inner());
 
-        let idx_val = self.translate_expr(idx_expr)?;
-        let idx_val = match idx_val {
-            SValue::I64(v) => v,
-            _ => anyhow::bail!("only int supported for array access"),
-        };
-        let mult_n = self
-            .builder
-            .ins()
-            .iconst(self.ptr_ty, base_type.bytes() as i64);
-        let idx_val = self.builder.ins().imul(mult_n, idx_val);
-        let idx_ptr = self.builder.ins().iadd(idx_val, array_ptr);
+        let array_expr_type = &variable.expr_type()?;
 
-        self.builder.ins().store(
-            MemFlags::new(),
-            val.inner("array set")?,
-            idx_ptr,
-            Offset32::new(0),
-        );
+        self.array_set(val, &array_address, array_expr_type, idx_expr)?;
+
         Ok(SValue::Void)
+    }
+
+    fn array_set(
+        &mut self,
+        from_val: &SValue,
+        array_address: &Value,
+        array_expr_type: &ExprType,
+        idx_expr: &Expr,
+    ) -> anyhow::Result<()> {
+        let array_address_at_idx_ptr =
+            self.array_get(*array_address, array_expr_type, idx_expr, true)?;
+
+        match array_address_at_idx_ptr {
+            SValue::Void => todo!(),
+            SValue::Unknown(_) => todo!(),
+            SValue::Bool(_) => todo!(),
+            SValue::F64(_) => {}
+            SValue::I64(_) => todo!(),
+            SValue::Array(_, _) => todo!(),
+            SValue::Tuple(_) => todo!(),
+            SValue::Address(address) => {
+                self.builder.ins().store(
+                    MemFlags::new(),
+                    from_val.inner("array_set")?,
+                    address,
+                    Offset32::new(0),
+                );
+            }
+            SValue::Struct(struct_name, struct_address) => {
+                copy_to_stack_slot(
+                    self.module.target_config(),
+                    &mut self.builder,
+                    self.env.struct_map[&struct_name].size,
+                    from_val.inner("array_set")?,
+                    struct_address,
+                    0,
+                )?;
+            }
+        }
+        Ok(())
     }
 
     fn translate_if_then(
