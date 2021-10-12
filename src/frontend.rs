@@ -124,7 +124,32 @@ pub enum Expr {
 }
 
 impl Expr {
-    pub fn get_code_ref(&mut self) -> &mut CodeRef {
+    pub fn get_code_ref(&self) -> &CodeRef {
+        match self {
+            Expr::LiteralFloat(code_ref, ..) => code_ref,
+            Expr::LiteralInt(code_ref, ..) => code_ref,
+            Expr::LiteralBool(code_ref, ..) => code_ref,
+            Expr::LiteralString(code_ref, ..) => code_ref,
+            Expr::LiteralArray(code_ref, ..) => code_ref,
+            Expr::Identifier(code_ref, ..) => code_ref,
+            Expr::Binop(code_ref, ..) => code_ref,
+            Expr::Unaryop(code_ref, ..) => code_ref,
+            Expr::Compare(code_ref, ..) => code_ref,
+            Expr::IfThen(code_ref, ..) => code_ref,
+            Expr::IfElse(code_ref, ..) => code_ref,
+            Expr::Assign(code_ref, ..) => code_ref,
+            Expr::AssignOp(code_ref, ..) => code_ref,
+            Expr::NewStruct(code_ref, ..) => code_ref,
+            Expr::WhileLoop(code_ref, ..) => code_ref,
+            Expr::Block(code_ref, ..) => code_ref,
+            Expr::Call(code_ref, ..) => code_ref,
+            Expr::GlobalDataAddr(code_ref, ..) => code_ref,
+            Expr::Parentheses(code_ref, ..) => code_ref,
+            Expr::ArrayAccess(code_ref, ..) => code_ref,
+        }
+    }
+
+    pub fn get_code_ref_mut(&mut self) -> &mut CodeRef {
         match self {
             Expr::LiteralFloat(code_ref, ..) => code_ref,
             Expr::LiteralInt(code_ref, ..) => code_ref,
@@ -151,7 +176,7 @@ impl Expr {
 
     pub fn setup_ref(&mut self, src_code: &String) {
         //Walk the AST and Set line numbers, etc.. in code ref
-        self.get_code_ref().setup(src_code);
+        self.get_code_ref_mut().setup(src_code);
         match self {
             Expr::LiteralFloat(_, _) => (),
             Expr::LiteralInt(_, _) => (),
@@ -196,7 +221,11 @@ impl Expr {
             Expr::AssignOp(_, _, _, a) => {
                 a.setup_ref(src_code);
             }
-            Expr::NewStruct(_, _, _) => (),
+            Expr::NewStruct(_, _, fields) => {
+                for field in fields {
+                    field.expr.setup_ref(src_code);
+                }
+            }
             Expr::WhileLoop(_, a, bv) => {
                 a.setup_ref(src_code);
                 for b in bv {
@@ -513,6 +542,9 @@ peg::parser!(pub grammar parser() for str {
         / _ pos:position!() "&" _ { ExprType::Address(CodeRef::new(pos)) }
         / _ pos:position!() "bool" _ { ExprType::Bool(CodeRef::new(pos)) }
         / _ pos:position!() n:identifier() _ { ExprType::Struct(CodeRef::new(pos), Box::new(n)) }
+        / _ pos:position!() "[" _  ty:type_label()  _ ";" _ len:$(['0'..='9']+) _ "]" _ {
+            ExprType::Array(CodeRef::new(pos), Box::new(ty), Some(len.parse::<usize>().unwrap()))
+        }
 
     rule block() -> Vec<Expr>
         = _ "{" _ b:(statement() ** _) _ "}" { b }

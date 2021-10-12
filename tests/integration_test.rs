@@ -2370,27 +2370,112 @@ fn main() -> () {
     Ok(())
 }
 
-//#[test]
-//fn fixed_array_size() -> anyhow::Result<()> {
-//    let code = r#"
-//struct A {
-//    a: f64,
-//}
-//
-//fn main() -> () {
-//    s = A {
-//        a: 1.0,
-//    }
-//    n = [s; 10]
-//    n[0].a.println()
-//    n1 = [1; 10]
-//    n2 = [1.0; 10]
-//}
-//"#;
-//    let mut jit = default_std_jit_from_code(&code)?;
-//    let func_ptr = jit.get_func("main")?;
-//    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-//    func();
-//
-//    Ok(())
-//}
+#[test]
+fn fixed_arrays() -> anyhow::Result<()> {
+    let code = r#"
+struct A {
+    a: f64,
+    b: f64,
+    c: bool,
+    d: i64,
+}
+
+fn main() -> () {
+    s = A {
+        a: 1.0,
+        b: 2.0,
+        c: true,
+        d: 3,
+    }
+    n = [s; 10]
+    n[0].a.assert_eq(1.0)
+    n[0].b.assert_eq(2.0)
+    n[0].c.assert_eq(true)
+    n[0].d.assert_eq(3)
+    n[9].a.assert_eq(1.0)
+    n[9].b.assert_eq(2.0)
+    n[9].c.assert_eq(true)
+    n[9].d.assert_eq(3)
+    n1 = [1; 3]
+    n2 = [1.0; 3]
+    n1[0].assert_eq(1)
+    n2[0].assert_eq(1.0)
+    n1[1].assert_eq(1)
+    n2[1].assert_eq(1.0)
+
+    i = 0
+    while i < 10 {
+        n[i] = A {
+            a: i.f64(),
+            b: i.f64() + 0.5,
+            c: i.f64().rem_euclid(2.0) == 0.0,
+            d: i * i,
+        }
+        i += 1
+    }
+    i = 0
+    while i < 10 {
+        n[i].a.assert_eq(i.f64())
+        n[i].b.assert_eq(i.f64() + 0.5)
+        n[i].c.assert_eq(i.f64().rem_euclid(2.0) == 0.0)
+        n[i].d.assert_eq(i * i)
+        i += 1
+    }
+    //TODO n.len()
+}
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn fixed_arrays_func() -> anyhow::Result<()> {
+    let code = r#"
+fn takes_an_array(n: [A; 10]) -> () {
+    i = 0
+    while i < 10 {
+        n[i].a.assert_eq(i.f64())
+        n[i].b.assert_eq(i.f64() + 0.5)
+        n[i].c.assert_eq(i.f64().rem_euclid(2.0) == 0.0)
+        n[i].d.assert_eq(i * i)
+        i += 1
+    }
+}
+
+struct A {
+    a: f64,
+    b: f64,
+    c: bool,
+    d: i64,
+}
+
+fn main() -> () {
+    i = 0
+    s = A {
+        a: 1.0,
+        b: 2.0,
+        c: true,
+        d: 3,
+    }
+    n = [s; 10]
+    while i < 10 {
+        n[i] = A {
+            a: i.f64(),
+            b: i.f64() + 0.5,
+            c: i.f64().rem_euclid(2.0) == 0.0,
+            d: i * i,
+        }
+        i += 1
+    }
+    takes_an_array(n)
+}
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}

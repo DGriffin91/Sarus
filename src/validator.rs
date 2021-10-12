@@ -146,12 +146,12 @@ fn get_struct_field_type(
     env: &Env,
     parts: Vec<String>,
     lhs_val: &Option<ExprType>,
-    code_ref: CodeRef,
+    code_ref: &CodeRef,
 ) -> Result<ExprType, TypeError> {
     let (lhs_val, start) = if let Some(lhs_val) = lhs_val {
         (lhs_val.clone(), 0)
     } else {
-        (env.variables[&parts[0]].expr_type().unwrap(), 1)
+        (env.variables[&parts[0]].expr_type(code_ref).unwrap(), 1)
     };
     match lhs_val {
         ExprType::Struct(_code_ref, struct_name) => {
@@ -162,7 +162,7 @@ fn get_struct_field_type(
                 parent_struct_field
             } else {
                 return Err(TypeError::UnknownField(
-                    code_ref,
+                    *code_ref,
                     struct_name,
                     parts[start].to_string(),
                 ));
@@ -256,7 +256,7 @@ impl ExprType {
         let res = match expr {
             Expr::Identifier(code_ref, id_name) => {
                 if env.variables.contains_key(id_name) {
-                    env.variables[id_name].expr_type().unwrap()
+                    env.variables[id_name].expr_type(&code_ref).unwrap()
                 } else if let Some(v) = env.constant_vars.get(id_name) {
                     v.expr_type(Some(*code_ref)) //Constants like PI, TAU...
                 } else {
@@ -301,7 +301,7 @@ impl ExprType {
                                                 .iter()
                                                 .map(|lhs_i: &Expr| lhs_i.to_string())
                                                 .collect::<Vec<String>>();
-                                            get_struct_field_type(&env, spath, &lhs_val, code_ref)?
+                                            get_struct_field_type(&env, spath, &lhs_val, &code_ref)?
                                         } else {
                                             ExprType::of(&path[0], env)?
                                         };
@@ -404,7 +404,7 @@ impl ExprType {
                                             spath.push(name.to_string());
                                             if let ExprType::Array(_code_ref, ty, _len) =
                                                 get_struct_field_type(
-                                                    &env, spath, &lhs_val, code_ref,
+                                                    &env, spath, &lhs_val, &code_ref,
                                                 )?
                                             {
                                                 lhs_val = Some(*ty.to_owned());
@@ -429,7 +429,7 @@ impl ExprType {
                             &env,
                             spath,
                             &lhs_val,
-                            *binop_code_ref,
+                            binop_code_ref,
                         )?);
                     }
 
@@ -623,7 +623,7 @@ impl ExprType {
                 };
                 if env.variables.contains_key(id_name) {
                     match &env.variables[id_name] {
-                        SVariable::Array(ty, _len) => Ok(ty.expr_type().unwrap()),
+                        SVariable::Array(ty, _len) => Ok(ty.expr_type(code_ref).unwrap()),
                         _ => Err(TypeError::TypeMismatchSpecific {
                             c: *code_ref,
                             s: format!("{} is not an array", id_name),

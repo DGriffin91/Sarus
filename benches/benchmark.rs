@@ -54,12 +54,12 @@ fn test_static_filter_benchmark_1(b: &mut Bencher) {
 fn get_eq_jit() -> jit::JIT {
     let code = r#"
     fn rand(x) -> (y) { // Crappy noise
-        y = fract(sin(x * 12000000.9898) * 43758.5453)
+        y = ((x * 12000000.9898).sin() * 43758.5453).fract()
     }
     fn highpass(cutoff_hz, q_value, sample_rate_hz) -> (a1, a2, a3, m0, m1, m2) {
-        cutoff_hz = min(cutoff_hz, sample_rate_hz * 0.5)
+        cutoff_hz = cutoff_hz.min(sample_rate_hz * 0.5)
         a = 1.0
-        g = tan(PI * cutoff_hz / sample_rate_hz)
+        g = (PI * cutoff_hz / sample_rate_hz).tan()
         k = 1.0 / q_value
         a1 = 1.0 / (1.0 + g * (g + k))
         a2 = g * a1
@@ -69,9 +69,9 @@ fn get_eq_jit() -> jit::JIT {
         m2 = -1.0
     }
     fn lowpass(cutoff_hz, q_value, sample_rate_hz) -> (a1, a2, a3, m0, m1, m2) {
-        cutoff_hz = min(cutoff_hz, sample_rate_hz * 0.5)
+        cutoff_hz = cutoff_hz.min(sample_rate_hz * 0.5)
         a = 1.0
-        g = tan(PI * cutoff_hz / sample_rate_hz)
+        g = (PI * cutoff_hz / sample_rate_hz).tan()
         k = 1.0 / q_value
         a1 = 1.0 / (1.0 + g * (g + k))
         a2 = g * a1
@@ -81,9 +81,9 @@ fn get_eq_jit() -> jit::JIT {
         m2 = 1.0
     }
     fn highshelf(cutoff_hz, gain_db, q_value, sample_rate_hz) -> (a1, a2, a3, m0, m1, m2) {
-        cutoff_hz = min(cutoff_hz, sample_rate_hz * 0.5)
-        a = pow(10.0, gain_db / 40.0)
-        g = tan(PI * cutoff_hz / sample_rate_hz) * sqrt(a)
+        cutoff_hz = cutoff_hz.min(sample_rate_hz * 0.5)
+        a = (10.0).powf(gain_db / 40.0)
+        g = (PI * cutoff_hz / sample_rate_hz).tan() * a.sqrt()
         k = 1.0 / q_value
         a1 = 1.0 / (1.0 + g * (g + k))
         a2 = g * a1
@@ -100,7 +100,7 @@ fn get_eq_jit() -> jit::JIT {
         n_ic2eq = 2.0 * v2 - ic2eq
         n_x = m0 * x + m1 * v1 + m2 * v2
     }
-    fn main(iterations: i64, output_arr: &[f64]) -> (sum) {
+    fn main(iterations: i64, output_arr: [f64; 48000]) -> (sum) {
         fs = 48000.0
         f1_a1, f1_a2, f1_a3, f1_m0, f1_m1, f1_m2 = highpass(100.0, 1.0, fs)
         f2_a1, f2_a2, f2_a3, f2_m0, f2_m1, f2_m2 = lowpass(5000.0, 1.0, fs)
@@ -112,11 +112,11 @@ fn get_eq_jit() -> jit::JIT {
         i = 0
         f_i = 0.0
         while i < iterations {
-            n = sin(f_i*0.01)        
+            n = (f_i*0.01).sin()   
             f1_a1, f1_a2, f1_a3, f1_m0, f1_m1, f1_m2 = highpass(n * 100.0 + 200.0, 1.0, fs)
             f2_a1, f2_a2, f2_a3, f2_m0, f2_m1, f2_m2 = lowpass(n * 100.0 + 2000.0, 1.0, fs)
             f3_a1, f3_a2, f3_a3, f3_m0, f3_m1, f3_m2 = highshelf(n * 100.0 + 1000.0, 6.0, 1.0, fs)
-            sample = floor(rand(f_i) * 100000.0) * 0.00001
+            sample = (rand(f_i) * 100000.0).floor() * 0.00001
             sample, f1_ic1eq, f1_ic2eq = process(sample, f1_ic1eq, f1_ic2eq, f1_a1, f1_a2, f1_a3, f1_m0, f1_m1, f1_m2)
             sample, f2_ic1eq, f2_ic2eq = process(sample, f2_ic1eq, f2_ic2eq, f2_a1, f2_a2, f2_a3, f2_m0, f2_m1, f2_m2)
             sample, f3_ic1eq, f3_ic2eq = process(sample, f3_ic1eq, f3_ic2eq, f3_a1, f3_a2, f3_a3, f3_m0, f3_m1, f3_m2)    

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 
 use cranelift::frontend::FunctionBuilder;
-use cranelift::prelude::{types, InstBuilder, StackSlotData, StackSlotKind, Value};
+use cranelift::prelude::{types, InstBuilder, Value};
 use cranelift_jit::JITBuilder;
 
 use crate::frontend::{Arg, CodeRef};
