@@ -46,13 +46,13 @@ fn benchmark(b: &mut Bencher) {
     let mut output_arr = [[0.0f64; STEP_SIZE]; STEPS];
 
     //test::black_box({
-        //move this into iter for exactly correct output_arr result
-        let (mut nodes, mut connections) = build_graph();
-        b.iter(|| {
-            for i in 0..STEPS {
-                output_arr[i] = process_graph_step(&mut nodes, &mut connections);
-            }
-        });
+    //move this into iter for exactly correct output_arr result
+    let (mut nodes, mut connections) = build_graph();
+    b.iter(|| {
+        for i in 0..STEPS {
+            output_arr[i] = process_graph_step(&mut nodes, &mut connections);
+        }
+    });
     //});
     let flat = output_arr
         .iter()
