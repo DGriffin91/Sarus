@@ -21,7 +21,7 @@ serde = {version = "1.0.130", features = ["derive"] }
 
 
 [dev-dependencies]
-basic-audio-filters = {git = "https://github.com/DGriffin91/rust-basic-audio-filters", branch = "f64"}
+basic-audio-filters = {git = "https://github.com/DGriffin91/rust-basic-audio-filters"}
 hound = "3.4.0"
 mitosis = "0.1.1"
 

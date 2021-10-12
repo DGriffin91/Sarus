@@ -47,8 +47,8 @@ fn main(a, b) -> (c) {
     mitosis::init();
 
     // Spawn separate process that will jit compile code, returning result
-    let runner: JoinHandle<Result<f64, String>> =
-        mitosis::spawn((code.to_string(), (100.0f64, 200.0f64)), subprocess_code);
+    let runner: JoinHandle<Result<f32, String>> =
+        mitosis::spawn((code.to_string(), (100.0f32, 200.0f32)), subprocess_code);
 
     // Wait for the child process to return a result
     match runner.join() {

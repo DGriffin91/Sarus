@@ -14,7 +14,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Node {
     pub func_name: String,
-    pub port_defaults: HashMap<String, f64>,
+    pub port_defaults: HashMap<String, f32>,
 }
 
 #[derive(Debug, Clone)]
@@ -252,7 +252,7 @@ fn build_graph_func(
             Box::new(Expr::Identifier(CodeRef::z(), "i".to_string())),
             Box::new(Expr::LiteralInt(
                 CodeRef::z(),
-                format!("{}", (block_size - 1) as f64),
+                format!("{}", (block_size - 1) as f32),
             )),
         )),
         body,
@@ -262,7 +262,7 @@ fn build_graph_func(
         name: "graph".to_string(),
         params: vec![Arg {
             name: "audio".into(),
-            expr_type: ExprType::Array(CodeRef::z(), Box::new(ExprType::F64(CodeRef::z())), None),
+            expr_type: ExprType::Array(CodeRef::z(), Box::new(ExprType::F32(CodeRef::z())), None),
             default_to_float: false,
         }],
         returns: vec![],

@@ -23,9 +23,9 @@ fn main() -> anyhow::Result<()> {
     // Cast the raw pointer to a typed function pointer. This is unsafe, because
     // this is the critical point where you have to trust that the generated code
     // is safe to be called.
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
 
-    println!("the answer is: {}", func(3.0f64, 5.0f64));
+    println!("the answer is: {}", func(3.0f32, 5.0f32));
 
     let code = r#"
     fn mult(a, b) -> (c) {
@@ -38,8 +38,8 @@ fn main() -> anyhow::Result<()> {
 
     jit.translate(ast, code.to_string())?;
     let func_ptr = jit.get_func("mult")?;
-    let func = unsafe { mem::transmute::<_, fn(f64, f64) -> f64>(func_ptr) };
-    println!("the answer is: {}", func(3.0f64, 5.0f64));
+    let func = unsafe { mem::transmute::<_, fn(f32, f32) -> f32>(func_ptr) };
+    println!("the answer is: {}", func(3.0f32, 5.0f32));
 
     // TODO allow validator to look at previously compiled strings to allow this:
     /*

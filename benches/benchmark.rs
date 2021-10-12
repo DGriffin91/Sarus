@@ -8,19 +8,19 @@ use mitosis::JoinHandle;
 use sarus::*;
 use test::Bencher;
 
-fn rand64(x: f64) -> f64 {
+fn rand64(x: f32) -> f32 {
     // Crappy noise
     ((x * 12000000.9898).sin() * 43758.5453).fract()
 }
 
-fn filter_benchmark_1(iterations: usize, output_array: &mut [f64]) -> f64 {
+fn filter_benchmark_1(iterations: usize, output_array: &mut [f32]) -> f32 {
     let fs = 48000.0;
     let mut filter1 = IIR2::from(IIR2Coefficients::highpass(100.0, 0.0, 1.0, fs));
     let mut filter2 = IIR2::from(IIR2Coefficients::lowpass(5000.0, 0.0, 1.0, fs));
     let mut filter3 = IIR2::from(IIR2Coefficients::highshelf(2000.0, 6.0, 1.0, fs));
     let mut sum = 0.0;
     let mut i = 0usize;
-    let mut f_i = 0.0f64;
+    let mut f_i = 0.0f32;
     while i < iterations {
         let n = (f_i * 0.01).sin();
         filter1.coeffs = IIR2Coefficients::highpass(n * 100.0 + 200.0, 0.0, 1.0, fs);
@@ -42,13 +42,13 @@ fn filter_benchmark_1(iterations: usize, output_array: &mut [f64]) -> f64 {
 #[bench]
 fn test_static_filter_benchmark_1(b: &mut Bencher) {
     let mut result = 0.0;
-    let mut output_arr = [0.0f64; 48000];
+    let mut output_arr = [0.0f32; 48000];
     b.iter(|| {
         //test::black_box({
         result = filter_benchmark_1(48000usize, &mut output_arr);
         //});
     });
-    dbg!((result, output_arr.iter().sum::<f64>()));
+    dbg!((result, output_arr.iter().sum::<f32>()));
 }
 
 fn get_eq_jit() -> jit::JIT {
@@ -100,7 +100,7 @@ fn get_eq_jit() -> jit::JIT {
         n_ic2eq = 2.0 * v2 - ic2eq
         n_x = m0 * x + m1 * v1 + m2 * v2
     }
-    fn main(iterations: i64, output_arr: [f64; 48000]) -> (sum) {
+    fn main(iterations: i64, output_arr: [f32; 48000]) -> (sum) {
         fs = 48000.0
         f1_a1, f1_a2, f1_a3, f1_m0, f1_m1, f1_m2 = highpass(100.0, 1.0, fs)
         f2_a1, f2_a2, f2_a3, f2_m0, f2_m1, f2_m2 = lowpass(5000.0, 1.0, fs)
@@ -189,7 +189,7 @@ fn get_eq_jit_libc() -> jit::JIT {
         n_ic2eq = 2.0 * v2 - ic2eq
         n_x = m0 * x + m1 * v1 + m2 * v2
     }
-    fn main(iterations: i64, output_arr: [f64; 48000]) -> (sum) {
+    fn main(iterations: i64, output_arr: [f32; 48000]) -> (sum) {
         fs = 48000.0
         f1_a1, f1_a2, f1_a3, f1_m0, f1_m1, f1_m2 = highpass(100.0, 1.0, fs)
         f2_a1, f2_a2, f2_a3, f2_m0, f2_m1, f2_m2 = lowpass(5000.0, 1.0, fs)
@@ -235,11 +235,11 @@ fn eq_compile(b: &mut Bencher) {
     b.iter(|| {
         test::black_box({
             let mut jit = get_eq_jit();
-            let mut output_arr = [0.0f64; 128];
+            let mut output_arr = [0.0f32; 128];
 
             let func_ptr = jit.get_func("main").unwrap();
             let func =
-                unsafe { mem::transmute::<_, extern "C" fn(i64, *mut f64) -> f64>(func_ptr) };
+                unsafe { mem::transmute::<_, extern "C" fn(i64, *mut f32) -> f32>(func_ptr) };
 
             sum += func(output_arr.len() as i64, output_arr.as_mut_ptr());
         });
@@ -251,28 +251,28 @@ fn eq_compile(b: &mut Bencher) {
 fn eq(b: &mut Bencher) {
     let mut jit = get_eq_jit();
     let mut result = 0.0;
-    let mut output_arr = [0.0f64; 48000];
+    let mut output_arr = [0.0f32; 48000];
     b.iter(|| {
         test::black_box({
             let func_ptr = jit.get_func("main").unwrap();
             let func =
-                unsafe { mem::transmute::<_, extern "C" fn(i64, *mut f64) -> f64>(func_ptr) };
+                unsafe { mem::transmute::<_, extern "C" fn(i64, *mut f32) -> f32>(func_ptr) };
             result = func(output_arr.len() as i64, output_arr.as_mut_ptr())
         });
     });
-    dbg!((result, output_arr.iter().sum::<f64>()));
+    dbg!((result, output_arr.iter().sum::<f32>()));
 }
 
 #[test]
 fn compare_eq() {
     let iterations = 48000;
-    let mut output_arr = [0.0f64; 48000];
+    let mut output_arr = [0.0f32; 48000];
     let mut jit = get_eq_jit();
     let func_ptr = jit.get_func("main").unwrap();
-    let func = unsafe { mem::transmute::<_, extern "C" fn(i64, *mut f64) -> f64>(func_ptr) };
-    let result: f64 = func(output_arr.len() as i64, output_arr.as_mut_ptr());
+    let func = unsafe { mem::transmute::<_, extern "C" fn(i64, *mut f32) -> f32>(func_ptr) };
+    let result: f32 = func(output_arr.len() as i64, output_arr.as_mut_ptr());
     //println!("{:?}", &output_arr[0..10]);
-    let mut output_arr2 = [0.0f64; 48000];
+    let mut output_arr2 = [0.0f32; 48000];
     let result2 = filter_benchmark_1(iterations as usize, &mut output_arr2);
     println!("{} {}", result, result2);
     //println!("{:?}", output_arr2);
@@ -280,7 +280,7 @@ fn compare_eq() {
     write_wav(&output_arr2, "ru.wav");
 }
 
-fn write_wav(samples: &[f64], path: &str) {
+fn write_wav(samples: &[f32], path: &str) {
     let spec = hound::WavSpec {
         channels: 1,
         sample_rate: 48000,
@@ -297,20 +297,20 @@ fn write_wav(samples: &[f64], path: &str) {
 // NOTE: this method won't work in a VST plugin.
 // It will try to open the whole DAW in a second instance
 
-fn subprocess_code(_: Option<()>) -> Result<f64, String> {
+fn subprocess_code(_: Option<()>) -> Result<f32, String> {
     //let mut jit = jit::JIT::default();
     //// Pass the AST to the JIT to compile
     //jit.translate(ast)
     //    .map_err(|e| format!("jit translate failed: {}", e))?;
     let mut jit = get_eq_jit();
-    let mut output_arr = [0.0f64; 128];
+    let mut output_arr = [0.0f32; 128];
 
     // Run compiled code
 
     let func_ptr = jit
         .get_func("main")
         .map_err(|e| format!("get_func main failed: {}", e))?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(i64, *mut f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(i64, *mut f32) -> f32>(func_ptr) };
     Ok(func(output_arr.len() as i64, output_arr.as_mut_ptr()))
 }
 
@@ -321,7 +321,7 @@ fn subprocess_eq_compile(b: &mut Bencher) {
         test::black_box({
             mitosis::init();
             // Spawn separate process that will jit compile code, returning result
-            let runner: JoinHandle<Result<f64, String>> = mitosis::spawn(None, subprocess_code);
+            let runner: JoinHandle<Result<f32, String>> = mitosis::spawn(None, subprocess_code);
             sum += runner.join().unwrap().unwrap()
         });
     });

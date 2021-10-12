@@ -4,7 +4,7 @@ use serde::Deserialize;
 use std::{
     alloc::{alloc, dealloc, Layout},
     collections::HashMap,
-    f64::consts::*,
+    f32::consts::*,
     ffi::CStr,
     mem,
 };
@@ -19,85 +19,12 @@ fn main(a, b) -> (c) {
 }
 "#;
 
-    let a = 100.0f64;
-    let b = 200.0f64;
+    let a = 100.0f32;
+    let b = 200.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
     assert_eq!(a * (a - b) * (a * (2.0 + b)), func(a, b));
-    Ok(())
-}
-
-#[test]
-fn libc_math() -> anyhow::Result<()> {
-    let code = r#"
-fn main(a, b) -> (c) {
-    c = b
-    c = sin(c)
-    c = cos(c)
-    c = tan(c)
-    c = asin(c)
-    c = acos(c)
-    c = atan(c)
-    c = exp(c)
-    c = log(c)
-    c = log10(c)
-    c = sqrt(c + 10.0)
-    c = sinh(c)
-    c = cosh(c)
-    c = tanh(c * 0.00001)
-    c = atan2(c, a)
-    c = pow(c, a * 0.001)
-    c *= nums()
-}
-fn nums() -> (r) {
-    r = E + FRAC_1_PI + FRAC_1_SQRT_2 + FRAC_2_SQRT_PI + FRAC_PI_2 + FRAC_PI_3 + FRAC_PI_4 + FRAC_PI_6 + FRAC_PI_8 + LN_2 + LN_10 + LOG2_10 + LOG2_E + LOG10_2 + LOG10_E + PI + SQRT_2 + TAU
-}
-"#;
-
-    let a = 100.0f64;
-    let b = 200.0f64;
-    let mut c = b;
-    c = c.sin();
-    c = c.cos();
-    c = c.tan();
-    c = c.asin();
-    c = c.acos();
-    c = c.atan();
-    c = c.exp();
-    c = c.log(E);
-    c = c.log10();
-    c = (c + 10.0).sqrt();
-    c = c.sinh();
-    c = c.cosh();
-    c = (c * 0.00001).tanh();
-    c = c.atan2(a);
-    c = c.powf(a * 0.001);
-    c *= E
-        + FRAC_1_PI
-        + FRAC_1_SQRT_2
-        + FRAC_2_SQRT_PI
-        + FRAC_PI_2
-        + FRAC_PI_3
-        + FRAC_PI_4
-        + FRAC_PI_6
-        + FRAC_PI_8
-        + LN_2
-        + LN_10
-        + LOG2_10
-        + LOG2_E
-        + LOG10_2
-        + LOG10_E
-        + PI
-        + SQRT_2
-        + TAU;
-
-    let epsilon = 0.00000000000001;
-    let mut jit = default_std_jit_from_code(&code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
-    let result = func(a, b);
-    assert!(result >= c - epsilon && result <= c + epsilon);
     Ok(())
 }
 
@@ -128,8 +55,8 @@ fn nums() -> (r) {
 }
 "#;
 
-    let a = 100.0f64;
-    let b = 200.0f64;
+    let a = 100.0f32;
+    let b = 200.0f32;
     let mut c = b;
     c = c.sin();
     c = c.cos();
@@ -165,10 +92,10 @@ fn nums() -> (r) {
         + SQRT_2
         + TAU;
 
-    let epsilon = 0.00000000000001;
+    let epsilon = 0.00001;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
     let result = func(a, b);
     assert!(result >= c - epsilon && result <= c + epsilon);
     Ok(())
@@ -183,13 +110,13 @@ fn main(a, b) -> (c) {
 }
 "#;
 
-    let a = 100.0f64;
-    let b = 200.0f64;
+    let a = 100.1f32;
+    let b = 200.2f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
     assert_eq!(
-        a.ceil() * b.floor() * a.trunc() * (a * b * -1.234).fract() * 1.5f64.round(),
+        a.ceil() * b.floor() * a.trunc() * (a * b * -1.234).fract() * 1.5f32.round(),
         func(a, b)
     );
     Ok(())
@@ -202,11 +129,11 @@ fn minmax() -> anyhow::Result<()> {
         c = a.min(b)
     }
     "#;
-    let a = 100.0f64;
-    let b = 200.0f64;
+    let a = 100.0f32;
+    let b = 200.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
     assert_eq!(a, func(a, b));
 
     let code = r#"
@@ -214,11 +141,11 @@ fn minmax() -> anyhow::Result<()> {
         c = a.max(b)
     }
     "#;
-    let a = 100.0f64;
-    let b = 200.0f64;
+    let a = 100.0f32;
+    let b = 200.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
     assert_eq!(b, func(a, b));
 
     Ok(())
@@ -258,11 +185,11 @@ fn foodd(a, b) -> (c) {
     
 "#;
 
-    let a = 100.0f64;
-    let b = 200.0f64;
+    let a = 100.0f32;
+    let b = 200.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
     assert_eq!(601.0, func(a, b));
     Ok(())
 }
@@ -301,11 +228,11 @@ fn multiple_returns() -> anyhow::Result<()> {
     }
 "#;
 
-    let a = 100.0f64;
-    let b = 200.0f64;
+    let a = 100.0f32;
+    let b = 200.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
     assert_eq!(6893909.333333333, func(a, b));
     Ok(())
 }
@@ -324,11 +251,11 @@ fn bools() -> anyhow::Result<()> {
         }
     }
 "#;
-    let a = 100.0f64;
-    let b = 200.0f64;
+    let a = 100.0f32;
+    let b = 200.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
     assert_eq!(20000.0, func(a, b));
     Ok(())
 }
@@ -344,11 +271,11 @@ fn ifelse_assign() -> anyhow::Result<()> {
         }
     }
 "#;
-    let a = 100.0f64;
-    let b = 200.0f64;
+    let a = 100.0f32;
+    let b = 200.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
     assert_eq!(20000.0, func(a, b));
     Ok(())
 }
@@ -360,11 +287,11 @@ fn order() -> anyhow::Result<()> {
         c = a
     }
 "#;
-    let a = 100.0f64;
-    let b = 200.0f64;
+    let a = 100.0f32;
+    let b = 200.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
     assert_eq!(100.0, func(a, b));
     Ok(())
 }
@@ -372,7 +299,7 @@ fn order() -> anyhow::Result<()> {
 #[test]
 fn array_read_write() -> anyhow::Result<()> {
     let code = r#"
-fn main(arr: &[f64], b) -> () {
+fn main(arr: &[f32], b) -> () {
     arr[0] = arr[0] * b
     arr[1] = arr[1] * b
     arr[2] = arr[2] * b
@@ -381,10 +308,10 @@ fn main(arr: &[f64], b) -> () {
 "#;
 
     let mut arr = [1.0, 2.0, 3.0, 4.0];
-    let b = 200.0f64;
+    let b = 200.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(*mut f64, f64)>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(*mut f32, f32)>(func_ptr) };
     func(arr.as_mut_ptr(), b);
     assert_eq!([200.0, 400.0, 600.0, 800.0], arr);
     Ok(())
@@ -397,10 +324,10 @@ fn negative() -> anyhow::Result<()> {
         c = -1.0 + a
     }
 "#;
-    let a = -100.0f64;
+    let a = -100.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32) -> f32>(func_ptr) };
     assert_eq!(-101.0, func(a));
     Ok(())
 }
@@ -420,10 +347,10 @@ fn negative() -> anyhow::Result<()> {
 //        h.assert_eq(true)
 //    }
 //"#;
-//    let a = -100.0f64;
+//    let a = -100.0f32;
 //    let mut jit = default_std_jit_from_code(&code)?;
 //    let func_ptr = jit.get_func("main")?;
-//    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
+//    let func = unsafe { mem::transmute::<_, extern "C" fn(f32) -> f32>(func_ptr) };
 //    assert_eq!(-101.0, func(a));
 //    Ok(())
 //}
@@ -440,10 +367,10 @@ fn compiled_graph() -> anyhow::Result<()> {
     }
         
     fn sin_node (a) -> (c) {
-        c = sin(a)
+        c = a.sin()
     }
         
-    fn graph (audio: &[f64]) -> () {
+    fn graph (audio: &[f32]) -> () {
         i = 0
         while i <= 7 {
             vINPUT_0 = audio[i]
@@ -461,7 +388,7 @@ fn compiled_graph() -> anyhow::Result<()> {
     let mut audio = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("graph")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [f64; 8])>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [f32; 8])>(func_ptr) };
     dbg!(func(&mut audio));
     Ok(())
 }
@@ -474,9 +401,9 @@ struct Metadata {
 
 #[derive(Deserialize, Debug)]
 struct MetadataInput {
-    default: Option<f64>,
-    min: Option<f64>,
-    max: Option<f64>,
+    default: Option<f32>,
+    min: Option<f32>,
+    max: Option<f32>,
     description: Option<String>,
     label: Option<String>,
     unit: Option<String>,
@@ -503,10 +430,10 @@ fn metadata() -> anyhow::Result<()> {
     }
         
     fn sin_node (a) -> (c) {
-        c = sin(a)
+        c = a.sin()
     }
         
-    fn graph (audio: &[f64]) -> () {
+    fn graph (audio: &[f32]) -> () {
         i = 0
         while i <= 7 {
             vINPUT_0 = audio[i]
@@ -542,7 +469,7 @@ fn metadata() -> anyhow::Result<()> {
 
     let mut audio = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
     let func_ptr = jit.get_func("graph")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [f64; 8])>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [f32; 8])>(func_ptr) };
     dbg!(func(&mut audio));
     //assert_eq!([200.0, 400.0, 600.0, 800.0], arr);
     Ok(())
@@ -561,11 +488,11 @@ fn int_while_loop() -> anyhow::Result<()> {
     }
 "#;
 
-    let a = 100.0f64;
-    let b = 200.0f64;
+    let a = 100.0f32;
+    let b = 200.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
     assert_eq!(2048.0, func(a, b));
     Ok(())
 }
@@ -575,15 +502,15 @@ fn int_to_float() -> anyhow::Result<()> {
     let code = r#"
     fn main(a, b) -> (e) {
         i = 2
-        e = i.f64() * a * b * (2).f64() * 2.0 * (2).f64()
+        e = i.f32() * a * b * (2).f32() * 2.0 * (2).f32()
     }
 "#;
 
-    let a = 100.0f64;
-    let b = 200.0f64;
+    let a = 100.0f32;
+    let b = 200.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
     assert_eq!(320000.0, func(a, b));
     Ok(())
 }
@@ -594,17 +521,17 @@ fn float_conversion() -> anyhow::Result<()> {
     fn main(a, b) -> (e) {
         i_a = a.i64()
         e = if i_a < b.i64() {
-            i_a.f64().i64().f64() //TODO chaining not working
+            i_a.f32().i64().f32() //TODO chaining not working
         } else {
             2.0
         }
     }
 "#;
-    let a = 100.0f64;
-    let b = 200.0f64;
+    let a = 100.0f32;
+    let b = 200.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
     assert_eq!(100.0, func(a, b));
     Ok(())
 }
@@ -619,14 +546,14 @@ fn float_as_bool_error() -> anyhow::Result<()> {
         } else {
             2
         }
-        e = e_i.f64()
+        e = e_i.f32()
     }
 "#;
-    let a = 100.0f64;
-    let b = 200.0f64;
+    let a = 100.0f32;
+    let b = 200.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
     assert_eq!(1.0, func(a, b));
     Ok(())
 }
@@ -634,7 +561,7 @@ fn float_as_bool_error() -> anyhow::Result<()> {
 #[test]
 fn array_return_from_if() -> anyhow::Result<()> {
     let code = r#"
-fn main(arr1: &[f64], arr2: &[f64], b) -> () {
+fn main(arr1: &[f32], arr2: &[f32], b) -> () {
     arr3 = if b < 100.0 {
         arr1
     } else {
@@ -646,10 +573,10 @@ fn main(arr1: &[f64], arr2: &[f64], b) -> () {
 
     let mut arr1 = [1.0, 2.0, 3.0, 4.0];
     let mut arr2 = [10.0, 20.0, 30.0, 40.0];
-    let b = 200.0f64;
+    let b = 200.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(*mut f64, *mut f64, f64)>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(*mut f32, *mut f32, f32)>(func_ptr) };
     func(arr1.as_mut_ptr(), arr2.as_mut_ptr(), b);
     assert_eq!(200.0, arr2[0]);
     Ok(())
@@ -663,14 +590,14 @@ fn var_type_consistency() -> anyhow::Result<()> {
         n1 = n
         n2 = n1
         n3 = n2
-        e = n3.f64()
+        e = n3.f32()
     }
 "#;
-    let a = 100.0f64;
-    let b = 200.0f64;
+    let a = 100.0f32;
+    let b = 200.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
     assert_eq!(1.0, func(a, b));
     Ok(())
 }
@@ -683,12 +610,12 @@ fn three_inputs() -> anyhow::Result<()> {
     }
 "#;
 
-    let a = 100.0f64;
-    let b = 200.0f64;
-    let c = 300.0f64;
+    let a = 100.0f32;
+    let b = 200.0f32;
+    let c = 300.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32, f32) -> f32>(func_ptr) };
     assert_eq!(600.0, func(a, b, c));
     Ok(())
 }
@@ -696,15 +623,15 @@ fn three_inputs() -> anyhow::Result<()> {
 #[test]
 fn manual_types() -> anyhow::Result<()> {
     let code = r#"
-fn main(a: f64, b: f64) -> (c: f64) {
+fn main(a: f32, b: f32) -> (c: f32) {
     c = a * (a - b) * (a * (2.0 + b))
 }
 "#;
-    let a = 100.0f64;
-    let b = 200.0f64;
+    let a = 100.0f32;
+    let b = 200.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
     assert_eq!(a * (a - b) * (a * (2.0 + b)), func(a, b));
     Ok(())
 }
@@ -712,16 +639,16 @@ fn main(a: f64, b: f64) -> (c: f64) {
 #[test]
 fn i64_params() -> anyhow::Result<()> {
     let code = r#"
-fn main(a: f64, b: i64) -> (c: i64) {
-    e = a * (a - b.f64()) * (a * (2.0 + b.f64()))
+fn main(a: f32, b: i64) -> (c: i64) {
+    e = a * (a - b.f32()) * (a * (2.0 + b.f32()))
     c = e.i64()
 }
 "#;
-    let a = 100.0f64;
-    let b = 200.0f64;
+    let a = 100.0f32;
+    let b = 200.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, i64) -> i64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, i64) -> i64>(func_ptr) };
     assert_eq!((a * (a - b) * (a * (2.0 + b))) as i64, func(a, b as i64));
     Ok(())
 }
@@ -730,18 +657,18 @@ fn main(a: f64, b: i64) -> (c: i64) {
 fn i64_params_multifunc() -> anyhow::Result<()> {
     //Not currently working, see BLOCKERs in jit.rs
     let code = r#"
-fn main(a: f64, b: i64) -> (c: i64) {
+fn main(a: f32, b: i64) -> (c: i64) {
     c = foo(a, b, 2)
 }
-fn foo(a: f64, b: i64, c: i64) -> (d: i64) {
+fn foo(a: f32, b: i64, c: i64) -> (d: i64) {
     d = a.i64() + b + c
 }
 "#;
-    let a = 100.0f64;
-    let b = 200.0f64;
+    let a = 100.0f32;
+    let b = 200.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, i64) -> i64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, i64) -> i64>(func_ptr) };
     assert_eq!(302, func(a, b as i64));
     Ok(())
 }
@@ -749,7 +676,7 @@ fn foo(a: f64, b: i64, c: i64) -> (d: i64) {
 #[test]
 fn bool_params() -> anyhow::Result<()> {
     let code = r#"
-fn main(a: f64, b: bool) -> (c: f64) {
+fn main(a: f32, b: bool) -> (c: f32) {
     c = if b {
         a
     } else {
@@ -757,10 +684,10 @@ fn main(a: f64, b: bool) -> (c: f64) {
     }
 }
 "#;
-    let a = 100.0f64;
+    let a = 100.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, bool) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, bool) -> f32>(func_ptr) };
     assert_eq!(a, func(a, true));
     assert_eq!(-a, func(a, false));
     Ok(())
@@ -936,33 +863,33 @@ fn parenassign() -> (c: bool) {
     Ok(())
 }
 
-extern "C" fn mult(a: f64, b: f64) -> f64 {
+extern "C" fn mult(a: f32, b: f32) -> f32 {
     a * b
 }
 
-extern "C" fn dbg(a: f64) {
+extern "C" fn dbg(a: f32) {
     dbg!(a);
 }
 
 #[test]
 fn extern_func() -> anyhow::Result<()> {
     let code = r#"
-extern fn mult(a: f64, b: f64) -> (c: f64) {}
-extern fn dbg(a: f64) -> () {}
+extern fn mult(a: f32, b: f32) -> (c: f32) {}
+extern fn dbg(a: f32) -> () {}
 
-fn main(a: f64, b: f64) -> (c: f64) {
+fn main(a: f32, b: f32) -> (c: f32) {
     c = mult(a, b)
     dbg(a)
 }
 "#;
-    let a = 100.0f64;
-    let b = 100.0f64;
+    let a = 100.0f32;
+    let b = 100.0f32;
     let mut jit = default_std_jit_from_code_with_importer(&code, |_ast, jit_builder| {
         jit_builder.symbols([("mult", mult as *const u8), ("dbg", dbg as *const u8)]);
     })?;
 
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
     assert_eq!(mult(a, b), func(a, b));
     Ok(())
 }
@@ -976,7 +903,7 @@ extern "C" fn prt2(s: *const i8) {
 #[test]
 fn create_string() -> anyhow::Result<()> {
     let code = r#"
-fn main(a: f64, b: f64) -> (c: f64) {
+fn main(a: f32, b: f32) -> (c: f32) {
     print("HELLO\n")
     print(["-"; 5])
     print("WORLD\n")
@@ -985,13 +912,13 @@ fn main(a: f64, b: f64) -> (c: f64) {
 
 extern fn print(s: &) -> () {}
 "#;
-    let a = 100.0f64;
-    let b = 100.0f64;
+    let a = 100.0f32;
+    let b = 100.0f32;
     let mut jit = default_std_jit_from_code_with_importer(&code, |_ast, jit_builder| {
         jit_builder.symbols([("print", prt2 as *const u8)]);
     })?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
     func(a, b);
 
     Ok(())
@@ -1001,11 +928,11 @@ extern fn print(s: &) -> () {}
 fn struct_access() -> anyhow::Result<()> {
     let code = r#"
 struct Point {
-    x: f64,
-    y: f64,
-    z: f64,
+    x: f32,
+    y: f32,
+    z: f32,
 }
-fn main(a: f64) -> (c: f64) {
+fn main(a: f32) -> (c: f32) {
     p = Point {
         x: a,
         y: 200.0,
@@ -1020,11 +947,11 @@ fn main(a: f64) -> (c: f64) {
     p.z.println()
 }
 "#;
-    let a = 100.0f64;
+    let a = 100.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     //jit.print_clif(true);
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32) -> f32>(func_ptr) };
     dbg!(600.0, func(a));
     Ok(())
 }
@@ -1033,14 +960,14 @@ fn main(a: f64) -> (c: f64) {
 fn struct_impl() -> anyhow::Result<()> {
     let code = r#"
 struct Point {
-    x: f64,
-    y: f64,
-    z: f64,
+    x: f32,
+    y: f32,
+    z: f32,
 }
-fn length(self: Point) -> (r: f64) {
-    r = sqrt(pow(self.x, 2.0) + pow(self.y, 2.0) + pow(self.z, 2.0))
+fn length(self: Point) -> (r: f32) {
+    r = (self.x.powf(2.0) + self.y.powf(2.0) + self.z.powf(2.0)).sqrt()
 }
-fn main(a: f64) -> (c: f64) {
+fn main(a: f32) -> (c: f32) {
     p = Point {
         x: a,
         y: 200.0,
@@ -1049,10 +976,10 @@ fn main(a: f64) -> (c: f64) {
     c = p.length()
 }
 "#;
-    let a = 100.0f64;
+    let a = 100.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32) -> f32>(func_ptr) };
     assert_eq!(374.16573867739413, func(a));
     Ok(())
 }
@@ -1062,7 +989,7 @@ extern "C" fn dbgi(s: *const i8, a: i64) {
         println!("{} {}", CStr::from_ptr(s).to_str().unwrap(), a);
     }
 }
-extern "C" fn dbgf(s: *const i8, a: f64) {
+extern "C" fn dbgf(s: *const i8, a: f32) {
     unsafe {
         println!("{} {}", CStr::from_ptr(s).to_str().unwrap(), a);
     }
@@ -1071,7 +998,7 @@ extern "C" fn dbgf(s: *const i8, a: f64) {
 #[test]
 fn struct_impl_nested() -> anyhow::Result<()> {
     let code = r#"
-extern fn dbgf(s: &, a: f64) -> () {}
+extern fn dbgf(s: &, a: f32) -> () {}
 extern fn dbgi(s: &, a: i64) -> () {}
 struct Line {
     a: Point,
@@ -1085,16 +1012,16 @@ fn print(self: Line) -> () {
     "}".println()
 }
 
-fn length(self: Line) -> (r: f64) {
-    r = sqrt(pow(self.a.x - self.b.x, 2.0) + 
-             pow(self.a.y - self.b.y, 2.0) + 
-             pow(self.a.z - self.b.z, 2.0))
+fn length(self: Line) -> (r: f32) {
+    r = ((self.a.x - self.b.x).powf(2.0) + 
+         (self.a.y - self.b.y).powf(2.0) + 
+         (self.a.z - self.b.z).powf(2.0)).sqrt()
 }
 
 struct Point {
-    x: f64,
-    y: f64,
-    z: f64,
+    x: f32,
+    y: f32,
+    z: f32,
 }
 
 fn print(self: Point) -> () {
@@ -1105,11 +1032,11 @@ fn print(self: Point) -> () {
     "}".println()
 }
 
-fn length(self: Point) -> (r: f64) {
-    r = sqrt(pow(self.x, 2.0) + pow(self.y, 2.0) + pow(self.z, 2.0))
+fn length(self: Point) -> (r: f32) {
+    r = (self.x.powf(2.0) + self.y.powf(2.0) + self.z.powf(2.0)).sqrt()
 }
 
-fn main(n: f64) -> (c: f64) {
+fn main(n: f32) -> (c: f32) {
     p1 = Point {
         x: n,
         y: 200.0,
@@ -1130,7 +1057,7 @@ fn main(n: f64) -> (c: f64) {
     p2.print()
     l1.print()
     d = l1.a //struct is copied
-    e = d.x + l1.a.x //f64's are copied
+    e = d.x + l1.a.x //f32's are copied
     d.print() //TODO This should work
     
     p1.y = e * d.z
@@ -1173,12 +1100,12 @@ fn main(n: f64) -> (c: f64) {
     
 }
 "#;
-    let a = 100.0f64;
+    let a = 100.0f32;
     let mut jit = default_std_jit_from_code_with_importer(&code, |_ast, jit_builder| {
         jit_builder.symbols([("dbgf", dbgf as *const u8), ("dbgi", dbgi as *const u8)]);
     })?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32) -> f32>(func_ptr) };
     dbg!(func(a));
     //assert_eq!(200.0, func(a));
     //jit.print_clif(true);
@@ -1194,12 +1121,12 @@ struct Line {
 }
 
 struct Point {
-    x: f64,
-    y: f64,
-    z: f64,
+    x: f32,
+    y: f32,
+    z: f32,
 }
 
-fn main(n: f64) -> (c: f64) {
+fn main(n: f32) -> (c: f32) {
     p1 = Point {
         x: n,
         y: 200.0,
@@ -1224,10 +1151,10 @@ fn main(n: f64) -> (c: f64) {
 
     let ast = parser::program(&code)?;
     dbg!(&ast);
-    let a = 100.0f64;
+    let a = 100.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32) -> f32>(func_ptr) };
     dbg!(func(a));
     //assert_eq!(200.0, func(a));
     //jit.print_clif(true);
@@ -1237,7 +1164,7 @@ fn main(n: f64) -> (c: f64) {
 #[test]
 fn struct_impl_nested_short() -> anyhow::Result<()> {
     let code = r#"
-extern fn dbgf(s: &, a: f64) -> () {}
+extern fn dbgf(s: &, a: f32) -> () {}
 extern fn dbgi(s: &, a: i64) -> () {}
 struct Foo {
     a: Bar,
@@ -1252,7 +1179,7 @@ fn print(self: Foo) -> () {
 }
 
 struct Bar {
-    x: f64,
+    x: f32,
 }
 
 fn print(self: Bar) -> () {
@@ -1261,7 +1188,7 @@ fn print(self: Bar) -> () {
     "}".println()
 }
 
-fn main(n: f64) -> (c: f64) {
+fn main(n: f32) -> (c: f32) {
     pe = Bar {
         x: n,
     }
@@ -1278,12 +1205,12 @@ fn main(n: f64) -> (c: f64) {
     l1.print()
 }
 "#;
-    let a = 100.0f64;
+    let a = 100.0f32;
     let mut jit = default_std_jit_from_code_with_importer(&code, |_ast, jit_builder| {
         jit_builder.symbols([("dbgf", dbgf as *const u8), ("dbgi", dbgi as *const u8)]);
     })?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32) -> f32>(func_ptr) };
     dbg!(func(a));
     //assert_eq!(200.0, func(a));
     //jit.print_clif(false);
@@ -1292,21 +1219,21 @@ fn main(n: f64) -> (c: f64) {
 #[test]
 fn type_impl() -> anyhow::Result<()> {
     let code = r#"
-fn square(self: f64) -> (r: f64) {
+fn square(self: f32) -> (r: f32) {
     r = self * self
 }
 fn square(self: i64) -> (r: i64) {
     r = self * self
 }
-fn main(a: f64, b: i64) -> (c: f64) {
-    c = a.square() + b.square().f64()
+fn main(a: f32, b: i64) -> (c: f32) {
+    c = a.square() + b.square().f32()
 }
 "#;
-    let a = 100.0f64;
+    let a = 100.0f32;
     let b = 100i64;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, i64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, i64) -> f32>(func_ptr) };
     assert_eq!(20000.0, func(a, b));
     Ok(())
 }
@@ -1314,16 +1241,16 @@ fn main(a: f64, b: i64) -> (c: f64) {
 #[test]
 fn stacked_paren() -> anyhow::Result<()> {
     let code = r#"
-fn main(a: f64) -> (c: bool) {
-    d = a.i64().f64().i64().f64()
-    e = ((((d).i64()).f64()).i64()).f64()
+fn main(a: f32) -> (c: bool) {
+    d = a.i64().f32().i64().f32()
+    e = ((((d).i64()).f32()).i64()).f32()
     c = d == e
 }
 "#;
-    let a = 100.0f64;
+    let a = 100.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> bool>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32) -> bool>(func_ptr) };
     assert_eq!(true, func(a));
     Ok(())
 }
@@ -1340,14 +1267,14 @@ fn main(a: f64) -> (c: bool) {
 //        e = float(c)
 //    }
 //"#;
-//    let a = 100.0f64;
-//    let b = 100.0f64;
+//    let a = 100.0f32;
+//    let b = 100.0f32;
 //    let mut jit = jit::JIT::new(&[("print", prt2 as *const u8)]);
 //    let ast = parser::program(&code)?;
 //    let ast = sarus_std_lib::append_std_funcs( ast);
 //    jit.translate(ast.clone())?;
 //    let func_ptr = jit.get_func("main")?;
-//    let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+//    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
 //    func(a, b);
 //    Ok(())
 //}
@@ -1360,23 +1287,23 @@ struct Line {
     b: Point,
 }
 
-fn length(self: Line) -> (r: f64) {
+fn length(self: Line) -> (r: f32) {
     r = ((self.a.x - self.b.x).powf(2.0) + 
          (self.a.y - self.b.y).powf(2.0) + 
          (self.a.z - self.b.z).powf(2.0)).sqrt()
 }
 
 struct Point {
-    x: f64,
-    y: f64,
-    z: f64,
+    x: f32,
+    y: f32,
+    z: f32,
 }
 
-fn length(self: Point) -> (r: f64) {
+fn length(self: Point) -> (r: f32) {
     r = (self.x.powf(2.0) + self.y.powf(2.0) + self.z.powf(2.0)).sqrt()
 }
 
-fn main(n: f64) -> (c: f64) {
+fn main(n: f32) -> (c: f32) {
     p1 = Point {
         x: n,
         y: 200.0,
@@ -1401,10 +1328,10 @@ fn main(n: f64) -> (c: f64) {
     c = l1.length()
 }
 "#;
-    let a = 100.0f64;
+    let a = 100.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32) -> f32>(func_ptr) };
     dbg!(func(a));
     //assert_eq!(200.0, func(a));
     //jit.print_clif(true);
@@ -1420,9 +1347,9 @@ struct Line {
 }
 
 struct Point {
-    x: f64,
-    y: f64,
-    z: f64,
+    x: f32,
+    y: f32,
+    z: f32,
 }
 
 //TODO set_to_0(point: &Point)
@@ -1432,7 +1359,7 @@ fn set_to_0(point: Point) -> () {
     point.z = 0.0
 }
 
-fn main(n: f64) -> (c: f64) {
+fn main(n: f32) -> (c: f32) {
     p1 = Point {
         x: n,
         y: 200.0,
@@ -1461,33 +1388,33 @@ fn main(n: f64) -> (c: f64) {
     p1a.z.println()
 }
 "#;
-    let a = 100.0f64;
+    let a = 100.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32) -> f32>(func_ptr) };
     dbg!(func(a));
     //assert_eq!(200.0, func(a));
     //jit.print_clif(true);
     Ok(())
 }
 
-#[repr(C, align(8))]
+#[repr(C)]
 #[derive(Copy, Clone)]
 struct Line {
     a: Point,
     b: Point,
 }
 
-#[repr(C, align(8))]
+#[repr(C)]
 #[derive(Copy, Clone)]
 struct Point {
-    x: f64,
-    y: f64,
-    z: f64,
+    x: f32,
+    y: f32,
+    z: f32,
 }
 
 impl Line {
-    fn length(self: Line) -> f64 {
+    fn length(self: Line) -> f32 {
         ((self.a.x - self.b.x).powf(2.0)
             + (self.a.y - self.b.y).powf(2.0)
             + (self.a.z - self.b.z).powf(2.0))
@@ -1504,24 +1431,24 @@ struct Line {
 }
 
 struct Point {
-    x: f64,
-    y: f64,
-    z: f64,
+    x: f32,
+    y: f32,
+    z: f32,
 }
 
-fn length(self: Line) -> (r: f64) {
+fn length(self: Line) -> (r: f32) {
     r = ((self.a.x - self.b.x).powf(2.0) + 
          (self.a.y - self.b.y).powf(2.0) + 
          (self.a.z - self.b.z).powf(2.0)).sqrt()
 }
 
-fn main(l1: Line) -> (c: f64) {
+fn main(l1: Line) -> (c: f32) {
     c = l1.length()
 }
 "#;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(Line) -> f64>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(Line) -> f32>(func_ptr) };
 
     let p1 = Point {
         x: 100.0,
@@ -1545,7 +1472,7 @@ fn main(l1: Line) -> (c: f64) {
 pub struct Misc {
     b1: bool,
     b2: bool,
-    f1: f64,
+    f1: f32,
     b3: bool,
     i1: i64,
     b4: bool,
@@ -1558,7 +1485,7 @@ fn repr_alignment() -> anyhow::Result<()> {
 struct Misc {
     b1: bool,
     b2: bool,
-    f1: f64,
+    f1: f32,
     b3: bool,
     i1: i64,
     b4: bool,
@@ -1616,7 +1543,7 @@ fn repr_alignment_nested() -> anyhow::Result<()> {
 struct Misc {
     b1: bool,
     b2: bool,
-    f1: f64,
+    f1: f32,
     b3: bool,
     i1: i64,
     b4: bool,
@@ -1674,7 +1601,7 @@ fn main(m2: Misc2) -> () {
 struct Misc3 {
     b1: bool,
     m2: Misc2,
-    f1: f64,
+    f1: f32,
     b3: bool,
 }
 
@@ -1684,7 +1611,7 @@ fn repr_alignment_nested2() -> anyhow::Result<()> {
 struct Misc {
     b1: bool,
     b2: bool,
-    f1: f64,
+    f1: f32,
     b3: bool,
     i1: i64,
     b4: bool,
@@ -1701,7 +1628,7 @@ struct Misc2 {
 struct Misc3 {
     b1: bool,
     m2: Misc2,
-    f1: f64,
+    f1: f32,
     b3: bool,
 }
 
@@ -1758,13 +1685,13 @@ fn main(m3: Misc3) -> () {
 #[derive(Debug, PartialEq)]
 struct Stuff {
     w: bool,
-    x: f64,
-    y: f64,
-    z: f64,
+    x: f32,
+    y: f32,
+    z: f32,
     i: i64,
 }
 
-extern "C" fn returns_a_stuff(a: f64) -> Stuff {
+extern "C" fn returns_a_stuff(a: f32) -> Stuff {
     Stuff {
         w: true,
         x: a,
@@ -1777,16 +1704,16 @@ extern "C" fn returns_a_stuff(a: f64) -> Stuff {
 #[test]
 fn return_struct() -> anyhow::Result<()> {
     let code = r#"
-extern fn returns_a_stuff(a: f64) -> (c: Stuff) {}
+extern fn returns_a_stuff(a: f32) -> (c: Stuff) {}
 
 struct Stuff {
     w: bool,
-    x: f64,
-    y: f64,
-    z: f64,
+    x: f32,
+    y: f32,
+    z: f32,
     i: i64,
 }
-fn main(a: f64) -> (c: Stuff) {
+fn main(a: f32) -> (c: Stuff) {
     c = Stuff {
         w: true,
         x: a,
@@ -1795,7 +1722,7 @@ fn main(a: f64) -> (c: Stuff) {
         i: 123,
     }
 }
-fn main2(a: f64) -> (c: Stuff) {
+fn main2(a: f32) -> (c: Stuff) {
     s = Stuff {
         w: true,
         x: a,
@@ -1805,15 +1732,15 @@ fn main2(a: f64) -> (c: Stuff) {
     }
     c = s
 }
-fn main3(a: f64) -> (c: Stuff) {
+fn main3(a: f32) -> (c: Stuff) {
     s = main2(a)
     c = s
 }
-fn main4(a: f64) -> (c: Stuff) {
+fn main4(a: f32) -> (c: Stuff) {
     s = returns_a_stuff(a)
     c = s
 }
-fn main5(a: f64) -> (c: Stuff) {
+fn main5(a: f32) -> (c: Stuff) {
     s = returns_a_stuff(a)
     s.w = !s.w
     s.x *= s.x
@@ -1823,7 +1750,7 @@ fn main5(a: f64) -> (c: Stuff) {
     c = s
 }
 "#;
-    let a = 100.0f64;
+    let a = 100.0f32;
     let correct_stuff = Stuff {
         w: true,
         x: a,
@@ -1837,19 +1764,19 @@ fn main5(a: f64) -> (c: Stuff) {
     })?;
 
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> Stuff>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32) -> Stuff>(func_ptr) };
     assert_eq!(correct_stuff, func(a));
     let func_ptr = jit.get_func("main2")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> Stuff>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32) -> Stuff>(func_ptr) };
     assert_eq!(correct_stuff, func(a));
     let func_ptr = jit.get_func("main3")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> Stuff>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32) -> Stuff>(func_ptr) };
     assert_eq!(correct_stuff, func(a));
     let func_ptr = jit.get_func("main4")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> Stuff>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32) -> Stuff>(func_ptr) };
     assert_eq!(correct_stuff, func(a));
     let func_ptr = jit.get_func("main5")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f64) -> Stuff>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32) -> Stuff>(func_ptr) };
     assert_eq!(
         Stuff {
             w: false,
@@ -1870,7 +1797,7 @@ fn struct_size() -> anyhow::Result<()> {
 struct Misc {
     b1: bool,
     b2: bool,
-    f1: f64,
+    f1: f32,
     b3: bool,
     i1: i64,
     b4: bool,
@@ -1887,7 +1814,7 @@ struct Misc2 {
 struct Misc3 {
     b1: bool,
     m2: Misc2,
-    f1: f64,
+    f1: f32,
     b3: bool,
 }
 "#;
@@ -1902,9 +1829,9 @@ struct Misc3 {
     let (data_ptr, _size) = jit.get_data("Misc3::size")?;
     let size: &i64 = unsafe { mem::transmute(data_ptr) };
     assert_eq!(mem::size_of::<Misc3>(), *size as usize);
-    let (data_ptr, _size) = jit.get_data("f64::size")?;
+    let (data_ptr, _size) = jit.get_data("f32::size")?;
     let size: &i64 = unsafe { mem::transmute(data_ptr) };
-    assert_eq!(mem::size_of::<f64>(), *size as usize);
+    assert_eq!(mem::size_of::<f32>(), *size as usize);
     Ok(())
 }
 
@@ -1933,9 +1860,9 @@ fn anonymous_struct_on_a_heap() -> anyhow::Result<()> {
     let code = r#"
 struct Stuff {
     w: bool,
-    x: f64,
-    y: f64,
-    z: f64,
+    x: f32,
+    y: f32,
+    z: f32,
     i: i64,
 }
 fn puts_a_stuff_there(there: Stuff) -> () {
@@ -1979,8 +1906,8 @@ fn size_of_stuff() -> (size: i64) {
 
 #[repr(C)]
 struct AudioData {
-    left: *const f64,
-    right: *const f64,
+    left: *const f32,
+    right: *const f32,
     len: i64,
 }
 
@@ -1989,8 +1916,8 @@ struct AudioData {
 fn struct_of_slices_of_numbers() -> anyhow::Result<()> {
     let code = r#"
 struct AudioData {
-    left: &[f64],
-    right: &[f64],
+    left: &[f32],
+    right: &[f32],
     len: i64,
 }
 
@@ -2000,8 +1927,8 @@ fn process(audio: AudioData) -> () {
         left = audio.left
         //left[i] = (audio.left[i] * 10.0).tanh() * 0.1
         //right[i] = (audio.right[i] * 10.0).tanh() * 0.1
-        left[i] = i.f64() //TODO does not check type
-        audio.right[i] = i.f64()  
+        left[i] = i.f32() //TODO does not check type
+        audio.right[i] = i.f32()  
         i += 1
     }
     audio.left[1].assert_eq(1.0)
@@ -2018,8 +1945,8 @@ fn process(audio: AudioData) -> () {
     let func_ptr = jit.get_func("process")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(&mut AudioData) -> ()>(func_ptr) };
 
-    let left = vec![0.0f64; 4096];
-    let right = vec![0.0f64; 4096];
+    let left = vec![0.0f32; 4096];
+    let right = vec![0.0f32; 4096];
 
     let mut audio_data = AudioData {
         left: left.as_ptr(),
@@ -2036,15 +1963,15 @@ fn process(audio: AudioData) -> () {
 fn struct_of_slices_of_numbers2() -> anyhow::Result<()> {
     let code = r#"
 struct AudioData {
-    left: &[f64],
-    right: &[f64],
+    left: &[f32],
+    right: &[f32],
     len: i64,
 }
 
 fn process(audio: AudioData) -> () {
     i = 0
     while i < audio.len {
-        audio.right[i] = i.f64()  
+        audio.right[i] = i.f32()  
         i += 1
     }
     audio.right[1].assert_eq(1.0)
@@ -2056,8 +1983,8 @@ fn process(audio: AudioData) -> () {
     let func_ptr = jit.get_func("process")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(&mut AudioData) -> ()>(func_ptr) };
 
-    let left = vec![0.0f64; 4096];
-    let right = vec![0.0f64; 4096];
+    let left = vec![0.0f32; 4096];
+    let right = vec![0.0f32; 4096];
 
     let mut audio_data = AudioData {
         left: left.as_ptr(),
@@ -2089,7 +2016,7 @@ struct BoolData {
 fn process(audio: BoolData) -> () {
     i = 0
     while i < audio.len {
-        audio.right[i] = (i.f64()).rem_euclid(2.0) == 1.0
+        audio.right[i] = (i.f32()).rem_euclid(2.0) == 1.0
         i += 1
     }
     (audio.right[0]).assert_eq(false)
@@ -2123,8 +2050,8 @@ fn process(audio: BoolData) -> () {
 #[derive(Clone, Copy)]
 #[repr(C)]
 struct AudioPair {
-    left: f64,
-    right: f64,
+    left: f32,
+    right: f32,
 }
 
 #[repr(C)]
@@ -2137,8 +2064,8 @@ struct AudioSamples {
 fn struct_of_slices_of_structs() -> anyhow::Result<()> {
     let code = r#"
 struct AudioPair {
-    left: f64,
-    right: f64,
+    left: f32,
+    right: f32,
 }
 
 struct AudioSamples {
@@ -2150,14 +2077,14 @@ fn process(audio: AudioSamples) -> () {
     i = 0
     while i < audio.len {
         sample = audio.samples[i]
-        sample.left = i.f64()
-        sample.right = i.f64() + 0.5
+        sample.left = i.f32()
+        sample.right = i.f32() + 0.5
 
-        audio.samples[i].left = i.f64()  
-        audio.samples[i].right = i.f64() + 0.5
+        audio.samples[i].left = i.f32()  
+        audio.samples[i].right = i.f32() + 0.5
         
-        (audio.samples[i]).left = i.f64()
-        (audio.samples[i]).right = i.f64() + 0.5
+        (audio.samples[i]).left = i.f32()
+        (audio.samples[i]).right = i.f32() + 0.5
         
         i += 1
     }
@@ -2233,8 +2160,8 @@ fn process(audio: AudioSamples) -> () {
 fn lowshelf() -> anyhow::Result<()> {
     let code = r#"
 struct AudioData {
-    left: &[f64],
-    right: &[f64],
+    left: &[f32],
+    right: &[f32],
     len: i64,
 }
 
@@ -2274,8 +2201,8 @@ struct FilterParams { a1, a2, a3, m0, m1, m2, }
     let func_ptr = jit.get_func("process")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn(&mut AudioData) -> ()>(func_ptr) };
 
-    let left = vec![0.0f64; 4096];
-    let right = vec![0.0f64; 4096];
+    let left = vec![0.0f32; 4096];
+    let right = vec![0.0f32; 4096];
 
     let mut audio_data = AudioData {
         left: left.as_ptr(),
@@ -2356,16 +2283,16 @@ fn main() -> () {
 fn const_size() -> anyhow::Result<()> {
     let code = r#"
 fn main() -> () {
-    f64::size.println()
+    f32::size.println()
 }
 "#;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
     func();
-    let (data_ptr, _size) = jit.get_data("f64::size")?;
-    let f64_size: &i64 = unsafe { mem::transmute(data_ptr) };
-    assert_eq!(*f64_size, 8);
+    let (data_ptr, _size) = jit.get_data("f32::size")?;
+    let f32_size: &i64 = unsafe { mem::transmute(data_ptr) };
+    assert_eq!(*f32_size, 4);
 
     Ok(())
 }
@@ -2374,8 +2301,8 @@ fn main() -> () {
 fn fixed_arrays() -> anyhow::Result<()> {
     let code = r#"
 struct A {
-    a: f64,
-    b: f64,
+    a: f32,
+    b: f32,
     c: bool,
     d: i64,
 }
@@ -2406,18 +2333,18 @@ fn main() -> () {
     i = 0
     while i < 10 {
         n[i] = A {
-            a: i.f64(),
-            b: i.f64() + 0.5,
-            c: i.f64().rem_euclid(2.0) == 0.0,
+            a: i.f32(),
+            b: i.f32() + 0.5,
+            c: i.f32().rem_euclid(2.0) == 0.0,
             d: i * i,
         }
         i += 1
     }
     i = 0
     while i < 10 {
-        n[i].a.assert_eq(i.f64())
-        n[i].b.assert_eq(i.f64() + 0.5)
-        n[i].c.assert_eq(i.f64().rem_euclid(2.0) == 0.0)
+        n[i].a.assert_eq(i.f32())
+        n[i].b.assert_eq(i.f32() + 0.5)
+        n[i].c.assert_eq(i.f32().rem_euclid(2.0) == 0.0)
         n[i].d.assert_eq(i * i)
         i += 1
     }
@@ -2437,17 +2364,17 @@ fn fixed_arrays_func() -> anyhow::Result<()> {
 fn takes_an_array(n: [A; 10]) -> () {
     i = 0
     while i < 10 {
-        n[i].a.assert_eq(i.f64())
-        n[i].b.assert_eq(i.f64() + 0.5)
-        n[i].c.assert_eq(i.f64().rem_euclid(2.0) == 0.0)
+        n[i].a.assert_eq(i.f32())
+        n[i].b.assert_eq(i.f32() + 0.5)
+        n[i].c.assert_eq(i.f32().rem_euclid(2.0) == 0.0)
         n[i].d.assert_eq(i * i)
         i += 1
     }
 }
 
 struct A {
-    a: f64,
-    b: f64,
+    a: f32,
+    b: f32,
     c: bool,
     d: i64,
 }
@@ -2463,9 +2390,9 @@ fn main() -> () {
     n = [s; 10]
     while i < 10 {
         n[i] = A {
-            a: i.f64(),
-            b: i.f64() + 0.5,
-            c: i.f64().rem_euclid(2.0) == 0.0,
+            a: i.f32(),
+            b: i.f32() + 0.5,
+            c: i.f32().rem_euclid(2.0) == 0.0,
             d: i * i,
         }
         i += 1

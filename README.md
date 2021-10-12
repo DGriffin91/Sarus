@@ -7,7 +7,7 @@ test with `cargo run --example run_file examples/test`
 Derived from https://github.com/bytecodealliance/cranelift-jit-demo
 
 In Progress: (more or less usable)
-- Base types: bool, f64, i64, &[f64], &[i64] 
+- Base types: bool, f32, i64, &[f32], &[i64] 
 - Structs with impls
 - Functions with multiple return variables
 - Basic branching (if/then, if/then/else)
@@ -23,23 +23,23 @@ struct Line {
     b: Point,
 }
 
-fn length(self: Line) -> (r: f64) {
+fn length(self: Line) -> (r: f32) {
     r = ((self.a.x - self.b.x).powf(2.0) + 
          (self.a.y - self.b.y).powf(2.0) + 
          (self.a.z - self.b.z).powf(2.0)).sqrt()
 }
 
 struct Point {
-    x: f64,
-    y: f64,
-    z: f64,
+    x: f32,
+    y: f32,
+    z: f32,
 }
 
-fn length(self: Point) -> (r: f64) {
+fn length(self: Point) -> (r: f32) {
     r = (self.x.powf(2.0) + self.y.powf(2.0) + self.z.powf(2.0)).sqrt()
 }
 
-fn main(n: f64) -> (c: f64) {
+fn main(n: f32) -> (c: f32) {
     p1 = Point {
         x: n,
         y: 200.0,

@@ -18,10 +18,10 @@ fn mul_node(a, b) -> (c) {
     c = a * b
 }
 fn tanh_node(a) -> (c) {
-    c = tanh(a)
+    c = a.tanh()
 }
 fn sin_node(a) -> (c) {
-    c = sin(a)
+    c = a.sin()
 }
 "#;
 
@@ -133,17 +133,17 @@ fn sin_node(a) -> (c) {
     // A pointer to the current chunk is sent to the graph.
     // The graph overwrites it with the new values
     const STEPS: usize = 48000 / STEP_SIZE;
-    let mut output_arr = [[0.0f64; STEP_SIZE]; STEPS];
+    let mut output_arr = [[0.0f32; STEP_SIZE]; STEPS];
     let mut n = 0;
     for i in 0..STEPS {
-        let mut audio_buffer = [0.0f64; STEP_SIZE];
+        let mut audio_buffer = [0.0f32; STEP_SIZE];
         for j in 0..STEP_SIZE {
-            audio_buffer[j] = ((n as f64).powi(2) * 0.000001).sin(); //sound source is sine sweep
+            audio_buffer[j] = ((n as f32).powi(2) * 0.000001).sin(); //sound source is sine sweep
             n += 1;
         }
 
         let func_ptr = graph.jit.get_func("graph")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [f64; STEP_SIZE])>(func_ptr) };
+        let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [f32; STEP_SIZE])>(func_ptr) };
         func(&mut audio_buffer);
 
         //Collect output audio
@@ -155,14 +155,14 @@ fn sin_node(a) -> (c) {
         .iter()
         .flatten()
         .map(|x| *x)
-        .collect::<Vec<f64>>();
+        .collect::<Vec<f32>>();
     write_wav(&flat, "graph_test.wav");
-    dbg!(flat.iter().sum::<f64>());
+    dbg!(flat.iter().sum::<f32>());
 
     Ok(())
 }
 
-fn write_wav(samples: &[f64], path: &str) {
+fn write_wav(samples: &[f32], path: &str) {
     let spec = hound::WavSpec {
         channels: 1,
         sample_rate: 48000,

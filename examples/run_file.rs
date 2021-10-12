@@ -21,9 +21,9 @@ fn main() -> anyhow::Result<()> {
         // Cast the raw pointer to a typed function pointer. This is unsafe, because
         // this is the critical point where you have to trust that the generated code
         // is safe to be called.
-        let func = unsafe { mem::transmute::<_, extern "C" fn(f64, f64) -> f64>(func_ptr) };
+        let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
 
-        println!("the answer is: {}", func(100.0f64, 200.0f64));
+        println!("the answer is: {}", func(100.0f32, 200.0f32));
     } else {
         anyhow::bail!("Couldn't load file");
     }

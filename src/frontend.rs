@@ -533,10 +533,10 @@ peg::parser!(pub grammar parser() for str {
 
     rule arg() -> Arg
         = _ i:identifier() _ ":" _ t:type_label() _ { Arg {name: i.into(), expr_type: t.into(), default_to_float: false } }
-        / _ pos:position!() i:identifier() _ { Arg {name: i.into(), expr_type: ExprType::F64(CodeRef::new(pos)), default_to_float: true } }
+        / _ pos:position!() i:identifier() _ { Arg {name: i.into(), expr_type: ExprType::F32(CodeRef::new(pos)), default_to_float: true } }
 
     rule type_label() -> ExprType
-        = _ pos:position!() "f64" _ { ExprType::F64(CodeRef::new(pos)) }
+        = _ pos:position!() "f32" _ { ExprType::F32(CodeRef::new(pos)) }
         / _ pos:position!() "i64" _ { ExprType::I64(CodeRef::new(pos)) }
         / _ pos:position!() "&[" ty:type_label() "]" _ { ExprType::Array(CodeRef::new(pos), Box::new(ty), None) }
         / _ pos:position!() "&" _ { ExprType::Address(CodeRef::new(pos)) }

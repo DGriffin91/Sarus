@@ -38,7 +38,7 @@ pub enum TypeError {
 pub enum ExprType {
     Void(CodeRef),
     Bool(CodeRef),
-    F64(CodeRef),
+    F32(CodeRef),
     I64(CodeRef),
     Array(CodeRef, Box<ExprType>, Option<usize>),
     Address(CodeRef),
@@ -46,8 +46,8 @@ pub enum ExprType {
     Struct(CodeRef, Box<String>),
 }
 
-pub fn f64_t() -> ExprType {
-    ExprType::F64(CodeRef::z())
+pub fn f32_t() -> ExprType {
+    ExprType::F32(CodeRef::z())
 }
 
 pub fn i64_t() -> ExprType {
@@ -79,8 +79,8 @@ impl PartialEq for ExprType {
                     return true;
                 }
             }
-            ExprType::F64(_) => {
-                if let ExprType::F64(_) = other {
+            ExprType::F32(_) => {
+                if let ExprType::F32(_) = other {
                     return true;
                 }
             }
@@ -119,7 +119,7 @@ impl Display for ExprType {
         match self {
             ExprType::Void(_) => write!(f, "void"),
             ExprType::Bool(_) => write!(f, "bool"),
-            ExprType::F64(_) => write!(f, "f64"),
+            ExprType::F32(_) => write!(f, "f32"),
             ExprType::I64(_) => write!(f, "i64"),
             ExprType::Array(_, ty, len) => {
                 if let Some(len) = len {
@@ -205,7 +205,7 @@ impl ExprType {
             ExprType::Array(code_ref, ..) => code_ref,
             ExprType::Void(code_ref) => code_ref,
             ExprType::Bool(code_ref) => code_ref,
-            ExprType::F64(code_ref) => code_ref,
+            ExprType::F32(code_ref) => code_ref,
             ExprType::I64(code_ref) => code_ref,
             ExprType::Address(code_ref) => code_ref,
             ExprType::Tuple(code_ref, ..) => code_ref,
@@ -217,7 +217,7 @@ impl ExprType {
             ExprType::Array(code_ref, ..) => *code_ref = new_code_ref,
             ExprType::Void(code_ref) => *code_ref = new_code_ref,
             ExprType::Bool(code_ref) => *code_ref = new_code_ref,
-            ExprType::F64(code_ref) => *code_ref = new_code_ref,
+            ExprType::F32(code_ref) => *code_ref = new_code_ref,
             ExprType::I64(code_ref) => *code_ref = new_code_ref,
             ExprType::Address(code_ref) => *code_ref = new_code_ref,
             ExprType::Tuple(code_ref, ..) => *code_ref = new_code_ref,
@@ -244,7 +244,7 @@ impl ExprType {
             }
             ExprType::Void(_) => Some(0),
             ExprType::Bool(_) => Some(types::I8.bytes() as usize),
-            ExprType::F64(_) => Some(types::F64.bytes() as usize),
+            ExprType::F32(_) => Some(types::F32.bytes() as usize),
             ExprType::I64(_) => Some(types::I64.bytes() as usize),
             ExprType::Address(_) => Some(ptr_ty.bytes() as usize),
             ExprType::Tuple(_code_ref, _expr_types) => None,
@@ -264,7 +264,7 @@ impl ExprType {
                     return Err(TypeError::UnknownVariable(*code_ref, id_name.to_string()));
                 }
             }
-            Expr::LiteralFloat(code_ref, _) => ExprType::F64(*code_ref),
+            Expr::LiteralFloat(code_ref, _) => ExprType::F32(*code_ref),
             Expr::LiteralInt(code_ref, _) => ExprType::I64(*code_ref),
             Expr::LiteralBool(code_ref, _) => ExprType::Bool(*code_ref),
             Expr::LiteralString(code_ref, _) => ExprType::Address(*code_ref), //TODO change to char
@@ -608,7 +608,7 @@ impl ExprType {
                     return Err(TypeError::UnknownFunction(*code_ref, fn_name.to_string()));
                 }
             }
-            Expr::GlobalDataAddr(code_ref, _) => ExprType::F64(*code_ref),
+            Expr::GlobalDataAddr(code_ref, _) => ExprType::F32(*code_ref),
             Expr::Parentheses(_code_ref, expr) => ExprType::of(expr, env)?,
             Expr::ArrayAccess(code_ref, id_name, idx_expr) => {
                 match ExprType::of(&*idx_expr, env)? {
@@ -650,7 +650,7 @@ impl ExprType {
         match self {
             ExprType::Void(_) => 0,
             ExprType::Bool(_)
-            | ExprType::F64(_)
+            | ExprType::F32(_)
             | ExprType::I64(_)
             | ExprType::Address(_)
             | ExprType::Struct(_, _)
@@ -674,7 +674,7 @@ impl ExprType {
             } else {
                 cranelift::prelude::types::B1
             }),
-            ExprType::F64(_code_ref) => Ok(cranelift::prelude::types::F64),
+            ExprType::F32(_code_ref) => Ok(cranelift::prelude::types::F32),
             ExprType::I64(_code_ref) => Ok(cranelift::prelude::types::I64),
             ExprType::Array(_code_ref, _, _) => Ok(ptr_type),
             ExprType::Address(_code_ref) => Ok(ptr_type),

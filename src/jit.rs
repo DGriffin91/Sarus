@@ -163,7 +163,7 @@ impl JIT {
         for (name, val) in constant_vars.iter() {
             match val {
                 SConstant::I64(n) => self.create_data(&name, (*n).to_ne_bytes().to_vec())?,
-                SConstant::F64(n) => self.create_data(&name, (*n).to_ne_bytes().to_vec())?,
+                SConstant::F32(n) => self.create_data(&name, (*n).to_ne_bytes().to_vec())?,
                 SConstant::Bool(n) => self.create_data(&name, (*n as i8).to_ne_bytes().to_vec())?,
             };
         }
@@ -254,7 +254,7 @@ impl JIT {
         for p in &func.params {
             self.ctx.func.signature.params.push({
                 match &p.expr_type {
-                    ExprType::F64(_code_ref) => AbiParam::new(types::F64),
+                    ExprType::F32(_code_ref) => AbiParam::new(types::F32),
                     ExprType::I64(_code_ref) => AbiParam::new(types::I64),
                     ExprType::Array(_code_ref, _ty, _len) => AbiParam::new(ptr_ty),
                     ExprType::Address(_code_ref) => AbiParam::new(ptr_ty),
@@ -340,9 +340,9 @@ impl JIT {
         for ret in func.returns.iter() {
             let return_variable = trans.env.variables.get(&ret.name).unwrap();
             let v = match &ret.expr_type {
-                ExprType::F64(code_ref) => trans
+                ExprType::F32(code_ref) => trans
                     .builder
-                    .use_var(return_variable.expect_f64(code_ref, "return_variable")?),
+                    .use_var(return_variable.expect_f32(code_ref, "return_variable")?),
                 ExprType::I64(code_ref) => trans
                     .builder
                     .use_var(return_variable.expect_i64(code_ref, "return_variable")?),
@@ -399,7 +399,7 @@ pub enum SValue {
     Void,
     Unknown(Value),
     Bool(Value),
-    F64(Value),
+    F32(Value),
     I64(Value),
     Array(Box<SValue>, Option<(Box<SValue>, usize)>),
     Address(Value),
@@ -412,7 +412,7 @@ impl Display for SValue {
         match self {
             SValue::Unknown(_) => write!(f, "unknown"),
             SValue::Bool(_) => write!(f, "bool"),
-            SValue::F64(_) => write!(f, "f64"),
+            SValue::F32(_) => write!(f, "f32"),
             SValue::I64(_) => write!(f, "i64"),
             SValue::Array(sval, len) => {
                 if let Some((_sval_len, len)) = len {
@@ -438,7 +438,7 @@ impl SValue {
         Ok(match expr_type {
             ExprType::Void(_code_ref) => SValue::Void,
             ExprType::Bool(_code_ref) => SValue::Bool(value),
-            ExprType::F64(_code_ref) => SValue::F64(value),
+            ExprType::F32(_code_ref) => SValue::F32(value),
             ExprType::I64(_code_ref) => SValue::I64(value),
             ExprType::Array(_code_ref, ty, len) => {
                 let sval_wlen = if let Some(len) = len {
@@ -465,7 +465,7 @@ impl SValue {
         Ok(match variable {
             SVariable::Unknown(_, v) => SValue::Unknown(builder.use_var(*v)),
             SVariable::Bool(_, v) => SValue::Bool(builder.use_var(*v)),
-            SVariable::F64(_, v) => SValue::F64(builder.use_var(*v)),
+            SVariable::F32(_, v) => SValue::F32(builder.use_var(*v)),
             SVariable::I64(_, v) => SValue::I64(builder.use_var(*v)),
             SVariable::Address(_, v) => SValue::Address(builder.use_var(*v)),
             SVariable::Array(svar, len) => SValue::Array(
@@ -481,7 +481,7 @@ impl SValue {
         Ok(match self {
             SValue::Void => SValue::Void,
             SValue::Bool(_) => SValue::Bool(value),
-            SValue::F64(_) => SValue::F64(value),
+            SValue::F32(_) => SValue::F32(value),
             SValue::I64(_) => SValue::I64(value),
             SValue::Array(sval, len) => {
                 SValue::Array(Box::new(sval.replace_value(value)?), len.clone())
@@ -503,7 +503,7 @@ impl SValue {
         Ok(match self {
             SValue::Unknown(_) => anyhow::bail!("expression type is unknown"),
             SValue::Bool(_) => ExprType::Bool(*code_ref),
-            SValue::F64(_) => ExprType::F64(*code_ref),
+            SValue::F32(_) => ExprType::F32(*code_ref),
             SValue::I64(_) => ExprType::I64(*code_ref),
             SValue::Array(sval, len) => {
                 let len = if let Some((_sval_len, len)) = len {
@@ -523,7 +523,7 @@ impl SValue {
         match self {
             SValue::Unknown(v) => Ok(*v),
             SValue::Bool(v) => Ok(*v),
-            SValue::F64(v) => Ok(*v),
+            SValue::F32(v) => Ok(*v),
             SValue::I64(v) => Ok(*v),
             SValue::Array(sval, _len) => Ok(sval.inner(ctx)?),
             SValue::Address(v) => Ok(*v),
@@ -532,10 +532,10 @@ impl SValue {
             SValue::Struct(_, v) => Ok(*v),
         }
     }
-    fn expect_f64(&self, ctx: &str) -> anyhow::Result<Value> {
+    fn expect_f32(&self, ctx: &str) -> anyhow::Result<Value> {
         match self {
-            SValue::F64(v) => Ok(*v),
-            v => anyhow::bail!("incorrect type {} expected F64 {}", v, ctx),
+            SValue::F32(v) => Ok(*v),
+            v => anyhow::bail!("incorrect type {} expected F32 {}", v, ctx),
         }
     }
     fn expect_i64(&self, ctx: &str) -> anyhow::Result<Value> {
@@ -578,7 +578,7 @@ impl SValue {
     //                sval.inner("expect_array")
     //            }
     //        }
-    //        v => anyhow::bail!("incorrect type {} expected UnboundedArrayF64 {}", v, ctx),
+    //        v => anyhow::bail!("incorrect type {} expected UnboundedArrayF32 {}", v, ctx),
     //    }
     //}
     fn expect_address(&self, ctx: &str) -> anyhow::Result<Value> {
@@ -626,8 +626,8 @@ impl<'a> FunctionTranslator<'a> {
     fn translate_expr(&mut self, expr: &Expr) -> anyhow::Result<SValue> {
         //dbg!(&expr);
         match expr {
-            Expr::LiteralFloat(_code_ref, literal) => Ok(SValue::F64(
-                self.builder.ins().f64const::<f64>(literal.parse().unwrap()),
+            Expr::LiteralFloat(_code_ref, literal) => Ok(SValue::F32(
+                self.builder.ins().f32const::<f32>(literal.parse().unwrap()),
             )),
             Expr::LiteralInt(_code_ref, literal) => Ok(SValue::I64(
                 self.builder
@@ -645,7 +645,7 @@ impl<'a> FunctionTranslator<'a> {
             Expr::Compare(_code_ref, cmp, lhs, rhs) => self.translate_cmp(*cmp, lhs, rhs),
             Expr::Call(code_ref, name, args) => self.translate_call(code_ref, name, args, None),
             Expr::GlobalDataAddr(_code_ref, name) => Ok(SValue::Array(
-                Box::new(SValue::F64(
+                Box::new(SValue::F32(
                     self.translate_global_data_addr(self.ptr_ty, name),
                 )),
                 None,
@@ -656,9 +656,9 @@ impl<'a> FunctionTranslator<'a> {
                 } else if let Some(sval) = self.translate_constant(name)? {
                     Ok(sval)
                 } else {
-                    Ok(SValue::F64(
+                    Ok(SValue::F32(
                         //TODO Don't assume this is a float
-                        self.translate_global_data_addr(types::F64, name),
+                        self.translate_global_data_addr(types::F32, name),
                     )) //Try to load global
                 }
             }
@@ -669,7 +669,7 @@ impl<'a> FunctionTranslator<'a> {
                 unimplemented!("currently AssignOp is turned into seperate assign and op")
                 //self.translate_math_assign(*op, lhs, rhs),
                 //for what this used to look like see:
-                //https://github.com/DGriffin91/sarus/tree/cd4bf6472bf02f00ea6037d606842ec84d0ff205
+                //https://github.com/DGriffin91/sarus/tree/cd4bf3272bf02f00ea6037d606842ec84d0ff205
             }
             Expr::NewStruct(code_ref, struct_name, fields) => {
                 self.translate_new_struct(code_ref, struct_name, fields)
@@ -752,7 +752,7 @@ impl<'a> FunctionTranslator<'a> {
         for i in 0..len {
             let val = item_value.inner("translate_array_create")?;
             match item_expr_type {
-                ExprType::Bool(_) | ExprType::F64(_) | ExprType::I64(_) | ExprType::Address(_) => {
+                ExprType::Bool(_) | ExprType::F32(_) | ExprType::I64(_) | ExprType::Address(_) => {
                     self.builder.ins().store(
                         MemFlags::new(),
                         val,
@@ -966,8 +966,8 @@ impl<'a> FunctionTranslator<'a> {
         let lhs_v = self.translate_expr(lhs)?;
         let rhs_v = self.translate_expr(rhs)?;
         match lhs_v {
-            SValue::F64(a) => match rhs_v {
-                SValue::F64(b) => Ok(SValue::F64(self.binop_float(op, a, b)?)),
+            SValue::F32(a) => match rhs_v {
+                SValue::F32(b) => Ok(SValue::F32(self.binop_float(op, a, b)?)),
                 _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs_v, op, rhs_v),
             },
             SValue::I64(a) => match rhs_v {
@@ -1002,7 +1002,7 @@ impl<'a> FunctionTranslator<'a> {
                 SValue::Bool(self.builder.ins().icmp(IntCC::Equal, i_bool, false_const))
             }
             SValue::Void
-            | SValue::F64(_)
+            | SValue::F32(_)
             | SValue::I64(_)
             | SValue::Unknown(_)
             | SValue::Array(_, _)
@@ -1056,8 +1056,8 @@ impl<'a> FunctionTranslator<'a> {
         let rhs = self.translate_expr(rhs_expr).unwrap();
         // if a or b is a float, convert to other to a float
         match lhs {
-            SValue::F64(a) => match rhs {
-                SValue::F64(b) => Ok(SValue::Bool(self.cmp_float(cmp, a, b))),
+            SValue::F32(a) => match rhs {
+                SValue::F32(b) => Ok(SValue::Bool(self.cmp_float(cmp, a, b))),
                 _ => anyhow::bail!(
                     "{} compare not supported: {:?} {} {:?}",
                     lhs_expr.get_code_ref(),
@@ -1292,7 +1292,7 @@ impl<'a> FunctionTranslator<'a> {
                 SValue::Void
                 | SValue::Unknown(_)
                 | SValue::Bool(_)
-                | SValue::F64(_)
+                | SValue::F32(_)
                 | SValue::I64(_)
                 | SValue::Array(_, _)
                 | SValue::Address(_)
@@ -1467,7 +1467,7 @@ impl<'a> FunctionTranslator<'a> {
             SValue::Void => todo!(),
             SValue::Unknown(_) => todo!(),
             SValue::Bool(_) => todo!(),
-            SValue::F64(_) => {}
+            SValue::F32(_) => {}
             SValue::I64(_) => todo!(),
             SValue::Array(_, _) => todo!(),
             SValue::Tuple(_) => todo!(),
@@ -1572,7 +1572,7 @@ impl<'a> FunctionTranslator<'a> {
             SValue::Void => vec![],
             SValue::Unknown(v) => vec![v],
             SValue::Bool(v) => vec![v],
-            SValue::F64(v) => vec![v],
+            SValue::F32(v) => vec![v],
             SValue::I64(v) => vec![v],
             SValue::Array(sval, _len) => vec![sval.inner("translate_if_else")?],
             SValue::Address(v) => vec![v],
@@ -2180,7 +2180,7 @@ fn call_with_values(
 pub enum SVariable {
     Unknown(String, Variable),
     Bool(String, Variable),
-    F64(String, Variable),
+    F32(String, Variable),
     I64(String, Variable),
     Array(Box<SVariable>, Option<(Box<SValue>, usize)>),
     Address(String, Variable),
@@ -2192,7 +2192,7 @@ impl Display for SVariable {
         match self {
             SVariable::Unknown(name, _) => write!(f, "{}", name),
             SVariable::Bool(name, _) => write!(f, "{}", name),
-            SVariable::F64(name, _) => write!(f, "{}", name),
+            SVariable::F32(name, _) => write!(f, "{}", name),
             SVariable::I64(name, _) => write!(f, "{}", name),
             SVariable::Array(svar, len) => {
                 if let Some((_svar_wlen, len)) = len {
@@ -2214,7 +2214,7 @@ impl SVariable {
         match self {
             SVariable::Unknown(_, v) => *v,
             SVariable::Bool(_, v) => *v,
-            SVariable::F64(_, v) => *v,
+            SVariable::F32(_, v) => *v,
             SVariable::I64(_, v) => *v,
             SVariable::Array(svar, _len) => svar.inner(),
             SVariable::Address(_, v) => *v,
@@ -2225,7 +2225,7 @@ impl SVariable {
         Ok(match self {
             SVariable::Unknown(_, _) => anyhow::bail!("expression type is unknown"),
             SVariable::Bool(_, _) => ExprType::Bool(*code_ref),
-            SVariable::F64(_, _) => ExprType::F64(*code_ref),
+            SVariable::F32(_, _) => ExprType::F32(*code_ref),
             SVariable::I64(_, _) => ExprType::I64(*code_ref),
             SVariable::Array(svar, len) => {
                 let len = if let Some((_svar_wlen, len)) = len {
@@ -2245,7 +2245,7 @@ impl SVariable {
         Ok(match self {
             SVariable::Unknown(_, _) => anyhow::bail!("Unknown has no type name"),
             SVariable::Bool(_, _) => "bool".to_string(),
-            SVariable::F64(_, _) => "f64".to_string(),
+            SVariable::F32(_, _) => "f32".to_string(),
             SVariable::I64(_, _) => "i64".to_string(),
             SVariable::Array(svar, len) => {
                 if let Some((_svar_wlan, len)) = len {
@@ -2258,9 +2258,9 @@ impl SVariable {
             SVariable::Struct(_, name, _, _) => name.to_string(),
         })
     }
-    fn expect_f64(&self, code_ref: &CodeRef, ctx: &str) -> anyhow::Result<Variable> {
+    fn expect_f32(&self, code_ref: &CodeRef, ctx: &str) -> anyhow::Result<Variable> {
         match self {
-            SVariable::F64(_, v) => Ok(*v),
+            SVariable::F32(_, v) => Ok(*v),
             v => anyhow::bail!("{} incorrect type {} expected Float {}", code_ref, v, ctx),
         }
     }
@@ -2347,7 +2347,7 @@ impl SVariable {
     ) -> anyhow::Result<SVariable> {
         Ok(match expr_type {
             ExprType::Bool(_code_ref) => SVariable::Bool(name, var),
-            ExprType::F64(_code_ref) => SVariable::F64(name, var),
+            ExprType::F32(_code_ref) => SVariable::F32(name, var),
             ExprType::I64(_code_ref) => SVariable::I64(name, var),
             ExprType::Array(_code_ref, ty, len) => {
                 let len = if let Some(len) = len {
@@ -2541,12 +2541,12 @@ fn declare_variable_from_type(
                 *index += 1;
             }
         }
-        ExprType::F64(_code_ref) => {
+        ExprType::F32(_code_ref) => {
             if !env.variables.contains_key(name) {
                 let var = Variable::new(*index);
                 env.variables
-                    .insert(name.into(), SVariable::F64(name.into(), var));
-                builder.declare_var(var, types::F64);
+                    .insert(name.into(), SVariable::F32(name.into(), var));
+                builder.declare_var(var, types::F32);
                 *index += 1;
             }
         }
@@ -2639,9 +2639,9 @@ fn declare_variable(
     let ptr_ty = module.target_config().pointer_type();
     if !variables.contains_key(&arg.name) {
         let (var, ty) = match &arg.expr_type {
-            ExprType::F64(_code_ref) => (
-                SVariable::F64(arg.name.clone(), Variable::new(*index)),
-                types::F64,
+            ExprType::F32(_code_ref) => (
+                SVariable::F32(arg.name.clone(), Variable::new(*index)),
+                types::F32,
             ),
             ExprType::I64(_code_ref) => (
                 SVariable::I64(arg.name.clone(), Variable::new(*index)),
@@ -2863,7 +2863,7 @@ fn order_structs(in_structs: &HashMap<String, &Struct>) -> anyhow::Result<Vec<St
                 match &field.expr_type {
                     ExprType::Void(_code_ref)
                     | ExprType::Bool(_code_ref)
-                    | ExprType::F64(_code_ref)
+                    | ExprType::F32(_code_ref)
                     | ExprType::I64(_code_ref)
                     | ExprType::Array(_code_ref, _, _)
                     | ExprType::Address(_code_ref)
