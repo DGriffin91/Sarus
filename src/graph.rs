@@ -8,7 +8,7 @@ use crate::{
         Function,
     },
     jit, sarus_std_lib,
-    validator::ExprType,
+    validator::{ArraySizedExpr, ExprType},
 };
 
 #[derive(Debug, Clone)]
@@ -262,7 +262,11 @@ fn build_graph_func(
         name: "graph".to_string(),
         params: vec![Arg {
             name: "audio".into(),
-            expr_type: ExprType::Array(CodeRef::z(), Box::new(ExprType::F32(CodeRef::z())), None),
+            expr_type: ExprType::Array(
+                CodeRef::z(),
+                Box::new(ExprType::F32(CodeRef::z())),
+                ArraySizedExpr::Unsized,
+            ),
             default_to_float: false,
         }],
         returns: vec![],

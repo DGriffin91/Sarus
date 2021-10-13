@@ -1,4 +1,6 @@
+use crate::validator::ArraySizedExpr;
 use crate::validator::ExprType;
+
 use std::fmt::Display;
 
 use std::fmt::Write;
@@ -538,12 +540,12 @@ peg::parser!(pub grammar parser() for str {
     rule type_label() -> ExprType
         = _ pos:position!() "f32" _ { ExprType::F32(CodeRef::new(pos)) }
         / _ pos:position!() "i64" _ { ExprType::I64(CodeRef::new(pos)) }
-        / _ pos:position!() "&[" ty:type_label() "]" _ { ExprType::Array(CodeRef::new(pos), Box::new(ty), None) }
+        / _ pos:position!() "&[" ty:type_label() "]" _ { ExprType::Array(CodeRef::new(pos), Box::new(ty), ArraySizedExpr::Unsized) }
         / _ pos:position!() "&" _ { ExprType::Address(CodeRef::new(pos)) }
         / _ pos:position!() "bool" _ { ExprType::Bool(CodeRef::new(pos)) }
         / _ pos:position!() n:identifier() _ { ExprType::Struct(CodeRef::new(pos), Box::new(n)) }
         / _ pos:position!() "[" _  ty:type_label()  _ ";" _ len:$(['0'..='9']+) _ "]" _ {
-            ExprType::Array(CodeRef::new(pos), Box::new(ty), Some(len.parse::<usize>().unwrap()))
+            ExprType::Array(CodeRef::new(pos), Box::new(ty), ArraySizedExpr::Fixed(len.parse::<usize>().unwrap()))
         }
 
     rule block() -> Vec<Expr>

@@ -34,13 +34,20 @@ pub enum TypeError {
     UnknownField(CodeRef, String, String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArraySizedExpr {
+    Unsized,      //size is unknown, just an address with a type
+    Sized,        //start of array address is i64 with size.
+    Fixed(usize), //size is part of type signature
+}
+
 #[derive(Debug, Clone)]
 pub enum ExprType {
     Void(CodeRef),
     Bool(CodeRef),
     F32(CodeRef),
     I64(CodeRef),
-    Array(CodeRef, Box<ExprType>, Option<usize>),
+    Array(CodeRef, Box<ExprType>, ArraySizedExpr),
     Address(CodeRef),
     Tuple(CodeRef, Vec<ExprType>),
     Struct(CodeRef, Box<String>),
@@ -121,13 +128,11 @@ impl Display for ExprType {
             ExprType::Bool(_) => write!(f, "bool"),
             ExprType::F32(_) => write!(f, "f32"),
             ExprType::I64(_) => write!(f, "i64"),
-            ExprType::Array(_, ty, len) => {
-                if let Some(len) = len {
-                    write!(f, "&[{}; {}]", ty, len)
-                } else {
-                    write!(f, "&[{}]", ty)
-                }
-            }
+            ExprType::Array(_, ty, size_type) => match size_type {
+                ArraySizedExpr::Unsized => write!(f, "&[{}]", ty),
+                ArraySizedExpr::Sized => todo!(),
+                ArraySizedExpr::Fixed(len) => write!(f, "[{}; {}]", ty, len),
+            },
             ExprType::Address(_) => write!(f, "&"),
             ExprType::Tuple(_, inner) => {
                 write!(f, "(")?;
@@ -231,17 +236,17 @@ impl ExprType {
         struct_map: &HashMap<String, StructDef>,
     ) -> Option<usize> {
         match self {
-            ExprType::Array(_code_ref, ty, len) => {
-                if let Some(len) = len {
+            ExprType::Array(_, ty, size_type) => match size_type {
+                ArraySizedExpr::Unsized => None,
+                ArraySizedExpr::Sized => todo!(),
+                ArraySizedExpr::Fixed(len) => {
                     if let Some(width) = ty.width(ptr_ty, struct_map) {
                         Some(width * len)
                     } else {
                         None
                     }
-                } else {
-                    None
                 }
-            }
+            },
             ExprType::Void(_) => Some(0),
             ExprType::Bool(_) => Some(types::I8.bytes() as usize),
             ExprType::F32(_) => Some(types::F32.bytes() as usize),
@@ -268,9 +273,11 @@ impl ExprType {
             Expr::LiteralInt(code_ref, _) => ExprType::I64(*code_ref),
             Expr::LiteralBool(code_ref, _) => ExprType::Bool(*code_ref),
             Expr::LiteralString(code_ref, _) => ExprType::Address(*code_ref), //TODO change to char
-            Expr::LiteralArray(code_ref, e, len) => {
-                ExprType::Array(*code_ref, Box::new(ExprType::of(e, env)?), Some(*len))
-            }
+            Expr::LiteralArray(code_ref, e, len) => ExprType::Array(
+                *code_ref,
+                Box::new(ExprType::of(e, env)?),
+                ArraySizedExpr::Fixed(*len),
+            ),
             Expr::Binop(binop_code_ref, binop, lhs, rhs) => match binop {
                 crate::frontend::Binop::DotAccess => {
                     let mut path = Vec::new();

@@ -2406,3 +2406,68 @@ fn main() -> () {
     func();
     Ok(())
 }
+
+#[test]
+fn returns_a_fixed_array_in_a_struct() -> anyhow::Result<()> {
+    let code = r#"
+struct B {
+    a: bool,
+    arr: [A; 10],
+    b: bool,
+}
+
+fn returns_a_fixed_array_in_a_struct() -> (arr: B) {    
+    i = 0
+    s = A {
+        a: 1.0,
+        b: 2.0,
+        c: true,
+        d: 3,
+    }
+    n = [s; 10]
+    while i < 10 {
+        n[i] = A {
+            a: i.f32(),
+            b: i.f32() + 0.5,
+            c: i.f32().rem_euclid(2.0) == 0.0,
+            d: i * i,
+        }
+        i += 1
+    }
+    arr = B {
+        a: true,
+        arr: n,
+        b: true,
+    }
+}
+
+struct A {
+    a: f32,
+    b: f32,
+    c: bool,
+    d: i64,
+}
+
+
+fn main() -> () {
+    n = returns_a_fixed_array_in_a_struct().arr
+    i = 0
+    while i < 10 {
+        n[i].a.assert_eq(i.f32())
+        n[i].b.assert_eq(i.f32() + 0.5)
+        n[i].c.assert_eq(i.f32().rem_euclid(2.0) == 0.0)
+        n[i].d.assert_eq(i * i)
+        i += 1
+    }
+    returns_a_fixed_array_in_a_struct().a.assert_eq(true)
+    returns_a_fixed_array_in_a_struct().b.assert_eq(true)
+    B::size.println()
+    A::size.println()
+}
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
