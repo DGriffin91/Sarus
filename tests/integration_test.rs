@@ -1,5 +1,10 @@
 #![feature(core_intrinsics)]
 
+use tracing::info;
+use tracing_subscriber::{
+    self, filter, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, Layer,
+};
+
 use serde::Deserialize;
 use std::{
     alloc::{alloc, dealloc, Layout},
@@ -8,6 +13,28 @@ use std::{
     ffi::CStr,
     mem,
 };
+
+fn setup_logging() {
+    // Some spans:
+    //sarus::jit
+    //cranelift_jit::backend
+
+    // install global collector configured based on RUST_LOG env var.
+    let my_filter = filter::filter_fn(|metadata| {
+        // Only enable spans or events with the target "interesting_things"
+        metadata.target().contains("sarus")
+    });
+
+    let layer = tracing_subscriber::fmt::layer().without_time();
+
+    //let layer = tracing_subscriber::fmt::layer().without_time();
+
+    tracing_subscriber::registry()
+        .with(layer.with_filter(my_filter))
+        .init();
+    //tracing_subscriber::fmt::init();
+    info!("setup_logging");
+}
 
 use sarus::*;
 
@@ -2407,13 +2434,39 @@ fn main() -> () {
     Ok(())
 }
 
-#[test]
-fn returns_a_fixed_array_in_a_struct() -> anyhow::Result<()> {
-    let code = r#"
+#[cfg(test)]
+mod returns_a_fixed_array_in_a_struct {
+    use super::*;
+
+    #[repr(C)]
+    #[derive(Debug)]
+    struct A {
+        a: f32,
+        b: f32,
+        c: bool,
+        d: i64,
+    }
+
+    #[repr(C)]
+    #[derive(Debug)]
+    struct B {
+        i: i64,
+        a: bool,
+        arr: [A; 10],
+        b: bool,
+        f: f32,
+    }
+
+    #[test]
+    fn returns_a_fixed_array_in_a_struct() -> anyhow::Result<()> {
+        setup_logging();
+        let code = r#"
 struct B {
+    i: i64,
     a: bool,
     arr: [A; 10],
     b: bool,
+    f: f32,
 }
 
 fn returns_a_fixed_array_in_a_struct() -> (arr: B) {    
@@ -2435,9 +2488,11 @@ fn returns_a_fixed_array_in_a_struct() -> (arr: B) {
         i += 1
     }
     arr = B {
+        i: 123,
         a: true,
         arr: n,
         b: true,
+        f: 123.123,
     }
 }
 
@@ -2459,15 +2514,23 @@ fn main() -> () {
         n[i].d.assert_eq(i * i)
         i += 1
     }
+    returns_a_fixed_array_in_a_struct().i.assert_eq(123)
     returns_a_fixed_array_in_a_struct().a.assert_eq(true)
     returns_a_fixed_array_in_a_struct().b.assert_eq(true)
+    returns_a_fixed_array_in_a_struct().f.assert_eq(123.123)
     B::size.println()
     A::size.println()
 }
 "#;
-    let mut jit = default_std_jit_from_code(&code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        //TODO copy into fixed array
+        let func_ptr = jit.get_func("returns_a_fixed_array_in_a_struct")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn() -> B>(func_ptr) };
+        let b = func();
+        dbg!(b);
+        Ok(())
+    }
 }

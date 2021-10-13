@@ -13,6 +13,9 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::fmt::Display;
 use std::slice;
+use tracing::info;
+use tracing::instrument;
+use tracing::trace;
 
 /// The basic JIT class.
 pub struct JIT {
@@ -72,14 +75,9 @@ impl JIT {
     }
 
     /// Compile a string in the toy language into machine code.
+    #[instrument(level = "info", skip(self, prog, src_code))]
     pub fn translate(&mut self, prog: Vec<Declaration>, src_code: String) -> anyhow::Result<()> {
-        //let mut return_counts = HashMap::new();
-        //for func in prog.iter().filter_map(|d| match d {
-        //    Declaration::Function(func) => Some(func.clone()),
-        //    _ => None,
-        //}) {
-        //    return_counts.insert(func.name.to_string(), func.returns.len());
-        //}
+        info!("--------------- translate ---------------");
 
         let mut prog = prog;
 
@@ -99,15 +97,6 @@ impl JIT {
             }
         }
 
-        //for func in prog.iter().filter_map(|d| match d {
-        //    Declaration::Function(func) => Some(func),
-        //    _ => None,
-        //}) {
-        //    let mut func = func.clone();
-        //    setup_coderef(&mut func.body, &src_code);
-        //    funcs.insert(func.name.clone(), func);
-        //}
-
         // First, parse the string, producing AST nodes.
 
         for d in prog.clone() {
@@ -115,6 +104,10 @@ impl JIT {
                 Declaration::Function(func) => {
                     if func.extern_func {
                         //Don't parse contents of std func, it will be empty
+                        trace!(
+                            "Function {} is an external function, skipping codegen",
+                            func.sig_string()?
+                        );
                         continue;
                     }
                     ////println!(
@@ -219,6 +212,10 @@ impl JIT {
     }
 
     // Translate from AST nodes into Cranelift IR.
+    #[instrument(
+        level = "info",
+        skip(self, func, funcs, prog, struct_map, constant_vars)
+    )]
     fn codegen(
         &mut self,
         func: &Function,
@@ -227,6 +224,7 @@ impl JIT {
         struct_map: &HashMap<String, StructDef>,
         constant_vars: &HashMap<String, SConstant>,
     ) -> anyhow::Result<()> {
+        info!("{}", func.sig_string()?);
         let ptr_ty = self.module.target_config().pointer_type();
 
         if func.returns.len() > 0 {
@@ -269,6 +267,7 @@ impl JIT {
             });
         }
 
+        trace!("FunctionBuilder::new");
         // Create the builder to build a function.
         let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
 
@@ -613,7 +612,14 @@ struct FunctionTranslator<'a> {
 impl<'a> FunctionTranslator<'a> {
     /// When you write out instructions in Cranelift, you get back `Value`s. You
     /// can then use these references in other instructions.
+    #[instrument(name = "e", skip(self, expr))]
     fn translate_expr(&mut self, expr: &Expr) -> anyhow::Result<SValue> {
+        info!(
+            "{} {}: {}",
+            expr.get_code_ref(),
+            expr.debug_get_name(),
+            expr
+        );
         //dbg!(&expr);
         match expr {
             Expr::LiteralFloat(_code_ref, literal) => Ok(SValue::F32(
@@ -789,6 +795,7 @@ impl<'a> FunctionTranslator<'a> {
         Ok(ret_val)
     }
 
+    #[instrument(skip(self, op, lhs, rhs))]
     fn translate_binop(
         &mut self,
         op: Binop,
@@ -797,6 +804,16 @@ impl<'a> FunctionTranslator<'a> {
         get_address: bool,
     ) -> anyhow::Result<(SValue, Option<StructField>)> {
         //println!("{}:{} translate_binop {} {} {}", file!(), line!(), lhs, op, rhs);
+        info!(
+            "{} translate_binop {}{}{} | {}{}{}",
+            lhs.get_code_ref(),
+            lhs,
+            op,
+            rhs,
+            lhs.debug_get_name(),
+            op,
+            rhs.debug_get_name(),
+        );
         if let Binop::DotAccess = op {
         } else {
             return Ok((self.translate_math_binop(op, lhs, rhs)?, None));
@@ -2362,6 +2379,7 @@ impl SVariable {
     }
 }
 
+#[instrument(level = "info", skip(builder, module, stmts, entry_block, env))]
 fn declare_variables(
     builder: &mut FunctionBuilder,
     module: &mut dyn Module,
@@ -2374,7 +2392,13 @@ fn declare_variables(
     let mut index = 0;
 
     let entry_block_is_offset = if returns.len() > 0 {
-        if let ExprType::Struct(_code_ref, _struct_name) = &returns[0].expr_type {
+        if let ExprType::Struct(code_ref, struct_name) = &returns[0].expr_type {
+            trace!(
+                "{} fn is returning struct {} declaring var {}",
+                code_ref,
+                struct_name,
+                &returns[0].name
+            );
             // When calling a function that will return a struct, Rust (or possibly anything using the C ABI),
             // will allocate the stack space needed for the struct that will be returned. This is allocated in
             // the callers frame, then the stack address is passed as a special argument to the first parameter
@@ -2617,6 +2641,7 @@ fn declare_variable(
 ) -> anyhow::Result<Option<SVariable>> {
     let ptr_ty = module.target_config().pointer_type();
     if !variables.contains_key(&arg.name) {
+        trace!("declaring var {}", arg.name);
         let (var, ty) = match &arg.expr_type {
             ExprType::F32(_code_ref) => (
                 SVariable::F32(arg.name.clone(), Variable::new(*index)),
@@ -2663,6 +2688,10 @@ fn declare_variable(
         *index += 1;
         Ok(Some(var))
     } else {
+        trace!(
+            "variables already contains key {} no need to declare",
+            arg.name
+        );
         Ok(None)
     }
 }
@@ -2702,6 +2731,7 @@ fn create_struct_map(
         let mut fields = HashMap::new();
         let mut fields_v = Vec::new();
         let mut struct_size = 0usize;
+        trace!("determine size of struct {}", struct_name);
         for (i, field) in fields_def.iter().enumerate() {
             let (field_size, is_struct) =
                 get_field_size(&field.expr_type, &structs, ptr_type, false)?;
@@ -2715,13 +2745,18 @@ fn create_struct_map(
             fields_v.push(new_field);
 
             struct_size += field_size;
-            //print!(
-            //    "struct_size {} \t {} \t field_size {} \t",
-            //    struct_size, field.name, field_size
-            //);
+            trace!(
+                "struct {} field {} with size {} \t",
+                struct_name,
+                field.name,
+                field_size
+            );
 
             if i < fields_def.len() - 1 {
                 //repr(C) alignment see memoffset crate
+
+                // pad based on size of next non struct/array field,
+                // or largest field if next item is struct/array of structs
                 let mut field_size: usize;
                 let (next_field_size, _is_struct) =
                     get_field_size(&fields_def[i + 1].expr_type, &structs, ptr_type, true)?;
@@ -2735,12 +2770,10 @@ fn create_struct_map(
                 let m = struct_size % field_size;
                 let padding = if m > 0 { field_size - m } else { m };
                 struct_size += padding;
-                //print!(
-                //    " padding {} \t --- (next_field_size {}) ",
-                //    padding, next_field_size
-                //);
+                if padding > 0 {
+                    trace!("padding added for next field: {}", padding);
+                }
             }
-            //println!("");
         }
 
         //Padding at end of struct
@@ -2752,8 +2785,12 @@ fn create_struct_map(
                 m
             };
             struct_size += padding;
+            if padding > 0 {
+                trace!("{} padding added at end of struct", padding);
+            }
         }
 
+        trace!("struct {} final size {}", struct_name, struct_size);
         structs.insert(
             struct_name.to_string(),
             StructDef {

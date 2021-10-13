@@ -126,6 +126,13 @@ pub enum Expr {
 }
 
 impl Expr {
+    pub fn debug_get_name(&self) -> String {
+        //Is this really the easiest way?
+        let s = format!("{:?}", self);
+        let end = s.find("(").unwrap_or(s.len());
+        s[0..end].to_string()
+    }
+
     pub fn get_code_ref(&self) -> &CodeRef {
         match self {
             Expr::LiteralFloat(code_ref, ..) => code_ref,
@@ -270,7 +277,7 @@ impl Display for Expr {
             Expr::LiteralString(_, s) => write!(f, "\"{}\"", s),
             Expr::LiteralArray(_, e, len) => write!(f, "[{}; {}]", e, len),
             Expr::Identifier(_, s) => write!(f, "{}", s),
-            Expr::Binop(_, op, e1, e2) => write!(f, "{} {} {}", e1, op, e2),
+            Expr::Binop(_, op, e1, e2) => write!(f, "{}{}{}", e1, op, e2),
             Expr::Unaryop(_, op, e1) => write!(f, "{} {}", op, e1),
             Expr::Compare(_, cmp, e1, e2) => write!(f, "{} {} {}", e1, cmp, e2),
             Expr::IfThen(_, e, body) => {
@@ -424,6 +431,28 @@ pub struct Function {
     pub extern_func: bool,
 }
 
+impl Function {
+    pub fn sig_string(&self) -> anyhow::Result<String> {
+        let mut f = String::new();
+        f.reserve(200);
+
+        write!(f, "fn {} (", self.name)?;
+        for (i, param) in self.params.iter().enumerate() {
+            write!(f, "{}", param)?;
+            if i < self.params.len() - 1 {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, ") -> (")?;
+        for ret in self.returns.iter() {
+            write!(f, "{}", ret)?;
+        }
+        write!(f, ") {{}}")?;
+
+        Ok(f)
+    }
+}
+
 impl Display for Function {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "fn {} (", self.name)?;
@@ -437,7 +466,10 @@ impl Display for Function {
         for ret in self.returns.iter() {
             write!(f, "{}", ret)?;
         }
-        writeln!(f, ") {{")?;
+        write!(f, ") {{")?;
+        if !self.extern_func {
+            writeln!(f, "")?;
+        }
         for expr in self.body.iter() {
             writeln!(f, "{}", expr)?;
         }
@@ -456,10 +488,16 @@ pub struct Struct {
 impl Display for Struct {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "struct {} {{", self.name)?;
+        if !self.extern_struct {
+            writeln!(f, "")?;
+        }
         for param in &self.fields {
             writeln!(f, "{},", param)?;
         }
-        writeln!(f, "}}")?;
+        write!(f, "}}")?;
+        if !self.extern_struct {
+            writeln!(f, "")?;
+        }
         Ok(())
     }
 }
