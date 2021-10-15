@@ -9,6 +9,9 @@ use std::{
     mem,
 };
 
+#[allow(unused_imports)]
+use sarus::logging::setup_logging;
+
 use sarus::*;
 
 #[test]
@@ -1151,8 +1154,7 @@ fn main(n: f32) -> (c: f32) {
 }
 "#;
 
-    let ast = parser::program(&code)?;
-    dbg!(&ast);
+    //let ast = parser::program(&code)?;
     let a = 100.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
@@ -2411,12 +2413,11 @@ fn main() -> () {
 
 #[cfg(test)]
 mod returns_a_fixed_array_in_a_struct {
-    use sarus::logging::setup_logging;
 
     use super::*;
 
     #[repr(C)]
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq)]
     struct A {
         a: f32,
         b: f32,
@@ -2425,7 +2426,7 @@ mod returns_a_fixed_array_in_a_struct {
     }
 
     #[repr(C)]
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq)]
     struct B {
         i: i64,
         a: bool,
@@ -2483,6 +2484,7 @@ struct A {
 
 fn main() -> () {
     n = returns_a_fixed_array_in_a_struct().arr
+    n[0].a.println()
     i = 0
     while i < 10 {
         n[i].a.assert_eq(i.f32())
@@ -2503,11 +2505,198 @@ fn main() -> () {
         let func_ptr = jit.get_func("main")?;
         let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
         func();
-        //TODO copy into fixed array
         let func_ptr = jit.get_func("returns_a_fixed_array_in_a_struct")?;
         let func = unsafe { mem::transmute::<_, extern "C" fn() -> B>(func_ptr) };
-        let b = func();
-        dbg!(b);
+        let b = B {
+            i: 123,
+            a: true,
+            arr: [
+                A {
+                    a: 0.0,
+                    b: 0.5,
+                    c: true,
+                    d: 0,
+                },
+                A {
+                    a: 1.0,
+                    b: 1.5,
+                    c: false,
+                    d: 1,
+                },
+                A {
+                    a: 2.0,
+                    b: 2.5,
+                    c: true,
+                    d: 4,
+                },
+                A {
+                    a: 3.0,
+                    b: 3.5,
+                    c: false,
+                    d: 9,
+                },
+                A {
+                    a: 4.0,
+                    b: 4.5,
+                    c: true,
+                    d: 16,
+                },
+                A {
+                    a: 5.0,
+                    b: 5.5,
+                    c: false,
+                    d: 25,
+                },
+                A {
+                    a: 6.0,
+                    b: 6.5,
+                    c: true,
+                    d: 36,
+                },
+                A {
+                    a: 7.0,
+                    b: 7.5,
+                    c: false,
+                    d: 49,
+                },
+                A {
+                    a: 8.0,
+                    b: 8.5,
+                    c: true,
+                    d: 64,
+                },
+                A {
+                    a: 9.0,
+                    b: 9.5,
+                    c: false,
+                    d: 81,
+                },
+            ],
+            b: true,
+            f: 123.123,
+        };
+        assert_eq!(func(), b);
         Ok(())
     }
+
+    #[repr(C)]
+    #[derive(Debug)]
+    struct C {
+        arr: [i64; 10],
+    }
+
+    #[test]
+    fn returns_a_fixed_array_in_a_struct_basic() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+struct C {
+    arr: [i64; 10],
+}
+
+fn returns_a_fixed_array_in_a_struct() -> (struct_of_arr: C) {    
+    i = 0
+    n = [1; 10]
+    while i < 10 {
+        n[i] = i
+        i += 1
+    }
+    struct_of_arr = C {
+        arr: n,
+    }
+    i = 0
+    while i < 10 {
+        struct_of_arr.arr[i].assert_eq(i)
+        i += 1
+    }
+}
+
+fn main() -> () {
+    struct_of_arr = returns_a_fixed_array_in_a_struct()
+    struct_of_arr.arr[0].println()
+    i = 0
+    while i < 10 {
+        struct_of_arr.arr[i].assert_eq(i)
+        i += 1
+    }
+}
+
+"#;
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("returns_a_fixed_array_in_a_struct")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn() -> C>(func_ptr) };
+        let b = func();
+        assert_eq!([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], b.arr);
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        Ok(())
+    }
+}
+
+#[test]
+fn modify_fixed_array_arg() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+
+fn modifies_an_array(arr: [i64; 10]) -> () {    
+    i = 0
+    while i < 10 {
+        arr[i] = i
+        i += 1
+    }
+}
+
+fn modifies_a_unbounded_array(arr: &[i64]) -> () {    
+    i = 0
+    while i < 10 {
+        arr[i] = i
+        i += 1
+    }
+}
+
+fn main() -> () {
+    n = [1; 10]
+    modifies_an_array(n)
+    i = 0
+    while i < 10 {
+        n[i].assert_eq(i)
+        i += 1
+    }
+}
+
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let mut arr = [1i64; 10];
+    let func_ptr = jit.get_func("modifies_an_array")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [i64; 10])>(func_ptr) };
+    func(&mut arr);
+    assert_eq!([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], arr);
+    let mut arr = [1i64; 10];
+    let func_ptr = jit.get_func("modifies_a_unbounded_array")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [i64; 10])>(func_ptr) };
+    func(&mut arr);
+    assert_eq!([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], arr);
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn modify_fixed_array_assign_to_arg() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+
+fn modifies_an_array(arr: [i64; 10]) -> () {    
+    arr = [2; 10]
+}
+
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let mut arr = [1i64; 10];
+    let func_ptr = jit.get_func("modifies_an_array")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [i64; 10])>(func_ptr) };
+    func(&mut arr);
+    assert_eq!([2i64; 10], arr);
+    Ok(())
 }

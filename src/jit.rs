@@ -1165,8 +1165,8 @@ impl<'a> FunctionTranslator<'a> {
 
     fn translate_assign(
         &mut self,
-        to_exprs: &[Expr],
-        from_exprs: &[Expr],
+        dst_exprs: &[Expr],
+        src_exprs: &[Expr],
     ) -> anyhow::Result<SValue> {
         // `def_var` is used to write the value of a variable. Note that
         // variables can have multiple definitions. Cranelift will
@@ -1176,10 +1176,10 @@ impl<'a> FunctionTranslator<'a> {
         //eg: `a, b = b, a` then use the first output of each expression
         //But if there is not, use the output of the first expression:
         //eg: `a, b = func_that_outputs_2_floats(1.0)`
-        if to_exprs.len() == from_exprs.len() {
-            'expression: for (i, to_expr) in to_exprs.iter().enumerate() {
-                let val = self.translate_expr(from_exprs.get(i).unwrap())?;
-                match to_expr {
+        if dst_exprs.len() == src_exprs.len() {
+            'expression: for (i, dst_expr) in dst_exprs.iter().enumerate() {
+                let src_sval = self.translate_expr(src_exprs.get(i).unwrap())?;
+                match dst_expr {
                     Expr::Binop(_code_ref, op, lhs, rhs) => {
                         let (struct_field_address, struct_field) =
                             self.translate_binop(*op, lhs, rhs, true)?;
@@ -1187,7 +1187,7 @@ impl<'a> FunctionTranslator<'a> {
                         if let Some(struct_field_def) = struct_field {
                             self.set_struct_field_at_address(
                                 struct_field_address,
-                                val,
+                                src_sval,
                                 struct_field_def,
                             )?
                         } else {
@@ -1195,13 +1195,24 @@ impl<'a> FunctionTranslator<'a> {
                         }
                     }
                     Expr::Identifier(code_ref, name) => {
-                        let var = match self.env.variables.get(name) {
+                        let dst_svar = match self.env.variables.get(name) {
                             Some(v) => v,
                             None => anyhow::bail!("variable {} not found", name),
                         };
 
                         for arg in &self.func.params {
                             if *name == arg.name {
+                                /*
+                                Should this happen also if the var already exists and has already been initialized?
+                                (this can't really be determined at compile time. One option would be to allocate
+                                the stack space for all potential vars to be used in a given function. But that
+                                could also be excessive. Also even if this copy happens, the stack data from the
+                                src_var won't be freed until after the function returns. This could be another
+                                reason for having scopes work more like they do in other languages. Then if a stack
+                                allocation is being created in a loop, it will be freed on each loop if it hasn't been
+                                stored to a var that is outside of the scope of the loop) (How is works also has
+                                implications for how aliasing works)
+                                */
                                 if let ExprType::Struct(code_ref, struct_name) = &arg.expr_type {
                                     trace!(
                                         "{} struct {} is arg {} of this fn {} copying onto memory at {} on assignment",
@@ -1212,13 +1223,12 @@ impl<'a> FunctionTranslator<'a> {
                                         arg.name,
                                     );
                                     //copy to struct that was passed in as parameter
-                                    //TODO also do this for arrays
-                                    let struct_address = self.builder.use_var(var.inner());
+                                    let struct_address = self.builder.use_var(dst_svar.inner());
                                     copy_to_stack_slot(
                                         self.module.target_config(),
                                         &mut self.builder,
                                         self.env.struct_map[&struct_name.to_string()].size,
-                                        val.expect_struct(
+                                        src_sval.expect_struct(
                                             &struct_name.to_string(),
                                             &format!("{} translate_assign", code_ref),
                                         )?,
@@ -1226,11 +1236,44 @@ impl<'a> FunctionTranslator<'a> {
                                         0,
                                     )?;
                                     continue 'expression;
+                                } else if let ExprType::Array(code_ref, expr_type, size_type) =
+                                    &arg.expr_type
+                                {
+                                    match size_type {
+                                        ArraySizedExpr::Unsized => (), //Use normal assignment below
+                                        ArraySizedExpr::Sized => todo!(),
+                                        ArraySizedExpr::Fixed(len) => {
+                                            trace!(
+                                                "{} array {} is arg {} of this fn {} copying onto memory at {} on assignment",
+                                                code_ref,
+                                                expr_type,
+                                                arg.name,
+                                                self.func.name,
+                                                arg.name,
+                                            );
+                                            //copy to array that was passed in as parameter
+                                            let array_address =
+                                                self.builder.use_var(dst_svar.inner());
+                                            copy_to_stack_slot(
+                                                self.module.target_config(),
+                                                &mut self.builder,
+                                                *len * expr_type
+                                                    .width(self.ptr_ty, &self.env.struct_map)
+                                                    .unwrap(),
+                                                src_sval.inner("translate_assign")?,
+                                                array_address,
+                                                0,
+                                            )?;
+                                            continue 'expression;
+                                        }
+                                    }
                                 }
                             }
                         }
 
-                        if let SVariable::Struct(var_name, struct_name, _var, return_struct) = var {
+                        if let SVariable::Struct(var_name, struct_name, var, return_struct) =
+                            dst_svar
+                        {
                             //TODO also copy fixed array
                             if *return_struct {
                                 trace!(
@@ -1242,7 +1285,7 @@ impl<'a> FunctionTranslator<'a> {
                                     var_name,
                                 );
                                 //copy to struct, we don't want to return a reference
-                                let return_address = self.builder.use_var(var.inner());
+                                let return_address = self.builder.use_var(*var);
                                 if !self.env.struct_map.contains_key(struct_name) {
                                     anyhow::bail!(
                                         "{} struct {} does not exist",
@@ -1254,44 +1297,44 @@ impl<'a> FunctionTranslator<'a> {
                                     self.module.target_config(),
                                     &mut self.builder,
                                     self.env.struct_map[struct_name].size,
-                                    val.expect_struct(struct_name, "translate_assign")?,
+                                    src_sval.expect_struct(struct_name, "translate_assign")?,
                                     return_address,
                                     0,
                                 )?;
                                 continue 'expression;
                             }
                         }
-                        if var.expr_type(code_ref)? != val.expr_type(code_ref)? {
+                        if dst_svar.expr_type(code_ref)? != src_sval.expr_type(code_ref)? {
                             anyhow::bail!(
                                 "{} cannot assign value of type {} to variable {} of type {} ",
                                 code_ref,
-                                val.expr_type(code_ref)?,
-                                var,
-                                var.expr_type(code_ref)?,
+                                src_sval.expr_type(code_ref)?,
+                                dst_svar,
+                                dst_svar.expr_type(code_ref)?,
                             )
                         }
                         self.builder
-                            .def_var(var.inner(), val.inner("translate_assign")?);
+                            .def_var(dst_svar.inner(), src_sval.inner("translate_assign")?);
                     }
                     Expr::ArrayAccess(_code_ref, name, idx_expr) => {
                         let idx_val = self.idx_expr_to_val(idx_expr)?;
-                        self.translate_array_set_from_var(name.to_string(), idx_val, &val)?;
+                        self.translate_array_set_from_var(name.to_string(), idx_val, &src_sval)?;
                     }
                     _ => {
-                        //dbg!(to_expr);
+                        //dbg!(dst_expr);
                         todo!()
                     }
                 }
             }
             Ok(SValue::Void)
         } else {
-            match self.translate_expr(from_exprs.first().unwrap())? {
+            match self.translate_expr(src_exprs.first().unwrap())? {
                 SValue::Tuple(values) => {
-                    for (i, to_expr) in to_exprs.iter().enumerate() {
-                        if let Expr::Binop(_code_ref, _, _, _) = to_expr {
+                    for (i, dst_expr) in dst_exprs.iter().enumerate() {
+                        if let Expr::Binop(_code_ref, _, _, _) = dst_expr {
                             todo!()
-                            //self.set_struct_field(to_expr, values[i].clone())?
-                        } else if let Expr::Identifier(_code_ref, name) = to_expr {
+                            //self.set_struct_field(dst_expr, values[i].clone())?
+                        } else if let Expr::Identifier(_code_ref, name) = dst_expr {
                             let var = match self.env.variables.get(name) {
                                 Some(v) => v,
                                 None => anyhow::bail!("variable {} not found", name),
@@ -1312,7 +1355,7 @@ impl<'a> FunctionTranslator<'a> {
                 | SValue::I64(_)
                 | SValue::Array(_, _)
                 | SValue::Address(_)
-                | SValue::Struct(_, _) => anyhow::bail!("operation not supported {:?}", from_exprs),
+                | SValue::Struct(_, _) => anyhow::bail!("operation not supported {:?}", src_exprs),
             }
         }
     }
@@ -1795,50 +1838,76 @@ impl<'a> FunctionTranslator<'a> {
     fn translate_new_struct(
         &mut self,
         code_ref: &CodeRef,
-        name: &str,
+        struct_name: &str,
         fields: &[StructAssignField],
     ) -> anyhow::Result<SValue> {
         let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
-            self.env.struct_map[name].size as u32,
+            self.env.struct_map[struct_name].size as u32,
         ));
 
         for field in fields.iter() {
-            let dst_field_def = &self.env.struct_map[name].fields[&field.field_name];
+            let dst_field_def = &self.env.struct_map[struct_name].fields[&field.field_name];
             let sval = self.translate_expr(&field.expr)?;
 
             let mem_copy = match &sval {
                 SValue::Struct(src_name, src_start_ptr) => {
-                    //TODO also copy fixed array into struct
                     trace!(
                         "{}: copy struct {} into struct {}",
                         code_ref,
                         &src_name,
-                        &name
+                        &struct_name
                     );
                     if *src_name != *dst_field_def.expr_type.to_string() {
                         anyhow::bail!(
                             "{} struct {} expected struct {} for field {} but got {} instead",
                             code_ref,
-                            name,
+                            struct_name,
                             dst_field_def.expr_type.to_string(),
                             dst_field_def.name,
                             src_name
                         )
                     }
 
-                    Some((src_start_ptr, self.env.struct_map[src_name].size as u64))
+                    Some((*src_start_ptr, self.env.struct_map[src_name].size as u64))
                 }
+                SValue::Array(sval_item, size_type) => match size_type {
+                    ArraySized::Unsized => None,
+                    ArraySized::Sized => todo!(),
+                    ArraySized::Fixed(_sval_len, array_len) => {
+                        trace!(
+                            "{}: copy array {} into struct {}",
+                            code_ref,
+                            &field.field_name,
+                            &struct_name
+                        );
+                        let array_item_width = (sval_item
+                            .expr_type(code_ref)?
+                            .width(self.ptr_ty, &self.env.struct_map))
+                        .unwrap();
+                        Some((
+                            sval_item.inner("translate_new_struct")?,
+                            (*array_len * array_item_width) as u64,
+                        ))
+                    }
+                },
                 SValue::Void
                 | SValue::Unknown(_)
                 | SValue::Bool(_)
                 | SValue::F32(_)
                 | SValue::I64(_)
-                | SValue::Array(_, _)
                 | SValue::Address(_)
                 | SValue::Tuple(_) => None,
             };
             if let Some((src_start_ptr, size)) = mem_copy {
+                trace!(
+                    "{}: mem copy {} {} bytes {} into struct {}",
+                    code_ref,
+                    &sval,
+                    size,
+                    &field.field_name,
+                    &struct_name
+                );
                 let stack_slot_address = self.builder.ins().stack_addr(
                     self.ptr_ty,
                     stack_slot,
@@ -1847,7 +1916,7 @@ impl<'a> FunctionTranslator<'a> {
                 self.builder.emit_small_memory_copy(
                     self.module.target_config(),
                     stack_slot_address,
-                    *src_start_ptr,
+                    src_start_ptr,
                     size,
                     1,
                     1,
@@ -1856,11 +1925,11 @@ impl<'a> FunctionTranslator<'a> {
                 );
             } else {
                 trace!(
-                    "{}: copy {} {} into struct {}",
+                    "{}: copy single value or address {} {} into struct {}",
                     code_ref,
                     &sval,
                     &field.field_name,
-                    &name
+                    &struct_name
                 );
                 let stack_slot_address = self.builder.ins().stack_addr(
                     self.ptr_ty,
@@ -1876,7 +1945,7 @@ impl<'a> FunctionTranslator<'a> {
                         anyhow::bail!(
                             "{} struct {} expected type {} for field {} but got {} instead",
                             code_ref,
-                            name,
+                            struct_name,
                             dst_field_def.expr_type.to_string(),
                             dst_field_def.name,
                             sval.to_string()
@@ -1898,7 +1967,7 @@ impl<'a> FunctionTranslator<'a> {
             self.builder
                 .ins()
                 .stack_addr(self.ptr_ty, stack_slot, Offset32::new(0));
-        Ok(SValue::Struct(name.to_string(), stack_slot_address))
+        Ok(SValue::Struct(struct_name.to_string(), stack_slot_address))
     }
 
     fn get_struct_field_location(
@@ -1977,6 +2046,22 @@ impl<'a> FunctionTranslator<'a> {
                 SValue::Struct(name.to_string(), address),
                 parent_struct_field_def,
             ))
+        } else if let ExprType::Array(code_ref, item_type, size_type) =
+            &parent_struct_field_def.expr_type
+        {
+            trace!(
+                "{}: ExprType::Array {} {:?}",
+                code_ref,
+                item_type,
+                size_type
+            );
+            match size_type {
+                ArraySizedExpr::Unsized => Ok((SValue::Address(address), parent_struct_field_def)),
+                ArraySizedExpr::Sized => todo!(),
+                ArraySizedExpr::Fixed(_len) => {
+                    Ok((SValue::Address(address), parent_struct_field_def))
+                }
+            }
         } else {
             trace!("SValue::Address");
             //If the struct field is not a struct, return address of value
@@ -1999,6 +2084,25 @@ impl<'a> FunctionTranslator<'a> {
 
         match field_address {
             SValue::Address(_) => {
+                if let ExprType::Array(coderef, expr_type, size_type) =
+                    &parent_struct_field_def.expr_type
+                {
+                    match size_type {
+                        ArraySizedExpr::Unsized => (),
+                        ArraySizedExpr::Sized => todo!(),
+                        ArraySizedExpr::Fixed(_len) => {
+                            trace!("{}: array {} is fixed in length and is stored directly in struct, returning fixed array SValue with address of array field", coderef, expr_type);
+                            return Ok(SValue::Array(
+                                Box::new(SValue::from(
+                                    &mut self.builder,
+                                    expr_type,
+                                    field_address.inner("get_struct_field")?,
+                                )?),
+                                ArraySized::from(&mut self.builder, size_type),
+                            ));
+                        }
+                    }
+                }
                 let mut val = self.builder.ins().load(
                     parent_struct_field_def
                         .expr_type
@@ -2023,23 +2127,46 @@ impl<'a> FunctionTranslator<'a> {
 
     fn set_struct_field_at_address(
         &mut self,
-        address: SValue,
+        dst_address: SValue,
         set_value: SValue,
-        struct_field_def: StructField,
+        dst_field_def: StructField,
     ) -> anyhow::Result<()> {
-        if let ExprType::Struct(code_ref, name) = &struct_field_def.expr_type {
-            trace!(
-                "{}: set_struct_field_at_address struct {} emit_small_memory_copy {}",
-                code_ref,
-                name,
-                struct_field_def.name
-            );
-            let src_ptr = set_value.expect_struct(name, "set_struct_field")?;
+        let copy_size = match &dst_field_def.expr_type {
+            ExprType::Void(_)
+            | ExprType::Bool(_)
+            | ExprType::F32(_)
+            | ExprType::I64(_)
+            | ExprType::Tuple(_, _)
+            | ExprType::Address(_) => None,
+            ExprType::Array(code_ref, expr_type, size_type) => match size_type {
+                ArraySizedExpr::Unsized => None,
+                ArraySizedExpr::Sized => todo!(),
+                ArraySizedExpr::Fixed(_len) => {
+                    trace!(
+                        "{}: set_struct_field_at_address array {} emit_small_memory_copy {}",
+                        code_ref,
+                        expr_type,
+                        dst_field_def.name
+                    );
+                    Some(dst_field_def.size as u64)
+                }
+            },
+            ExprType::Struct(code_ref, struct_name) => {
+                trace!(
+                    "{}: set_struct_field_at_address struct {} emit_small_memory_copy {}",
+                    code_ref,
+                    struct_name,
+                    dst_field_def.name
+                );
+                Some(dst_field_def.size as u64)
+            }
+        };
+        if let Some(copy_size) = copy_size {
             self.builder.emit_small_memory_copy(
                 self.module.target_config(),
-                address.inner("set_struct_field_at_address")?,
-                src_ptr,
-                struct_field_def.size as u64,
+                dst_address.inner("set_struct_field_at_address")?,
+                set_value.inner("set_struct_field_at_address")?,
+                copy_size,
                 1,
                 1,
                 true,
@@ -2052,11 +2179,16 @@ impl<'a> FunctionTranslator<'a> {
             } else {
                 set_value.inner("set_struct_field")?
             };
+            trace!(
+                "copy single value or address {} {} into struct",
+                &set_value,
+                &dst_field_def.name,
+            );
             //If the struct field is not a struct, set copy of value
             self.builder.ins().store(
                 MemFlags::new(),
                 val,
-                address.inner("set_struct_field_at_address")?,
+                dst_address.inner("set_struct_field_at_address")?,
                 Offset32::new(0),
             );
             Ok(())

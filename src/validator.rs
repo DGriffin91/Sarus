@@ -156,7 +156,11 @@ fn get_struct_field_type(
     let (lhs_val, start) = if let Some(lhs_val) = lhs_val {
         (lhs_val.clone(), 0)
     } else {
-        (env.variables[&parts[0]].expr_type(code_ref).unwrap(), 1)
+        if let Some(svar) = env.variables.get(&parts[0]) {
+            (svar.expr_type(code_ref).unwrap(), 1)
+        } else {
+            return Err(TypeError::UnknownVariable(*code_ref, parts[0].to_string()));
+        }
     };
     match lhs_val {
         ExprType::Struct(_code_ref, struct_name) => {
