@@ -1367,7 +1367,6 @@ impl<'a> FunctionTranslator<'a> {
         idx_val: Value,
         get_address: bool,
     ) -> anyhow::Result<SValue> {
-        //TODO crash if idx_val > ExprType::Array(_, len)
         let variable = match self.env.variables.get(&name) {
             Some(v) => v.clone(),
             None => anyhow::bail!("variable {} not found", name),
@@ -1421,9 +1420,6 @@ impl<'a> FunctionTranslator<'a> {
         get_address: bool,
         check_bounds: bool,
     ) -> anyhow::Result<SValue> {
-        //TODO crash if idx_val > ExprType::Array(_, len)
-
-        let mut base_struct = None;
         let mut width;
         let base_type = match &array_expr_type {
             ExprType::Array(code_ref, ty, size_type) => {
@@ -1452,10 +1448,39 @@ impl<'a> FunctionTranslator<'a> {
                 width = ty
                     .width(self.ptr_ty, &self.env.struct_map)
                     .unwrap_or(self.ptr_ty.bytes() as usize);
-                if let ExprType::Struct(_code_ref, name) = *ty.to_owned() {
-                    let s = self.env.struct_map[&name.to_string()].clone();
-                    width = s.size;
-                    base_struct = Some(s);
+                match *ty.to_owned() {
+                    ExprType::Void(_) => (),
+                    ExprType::Bool(_) => (),
+                    ExprType::F32(_) => (),
+                    ExprType::I64(_) => (),
+                    ExprType::Array(_, expr_type, size_type) => match size_type {
+                        ArraySizedExpr::Unsized => (),
+                        ArraySizedExpr::Sized => todo!(),
+                        ArraySizedExpr::Fixed(len) => {
+                            width =
+                                expr_type.width(self.ptr_ty, &self.env.struct_map).unwrap() * len;
+                            let array_address_at_idx_ptr =
+                                self.get_array_address_from_ptr(width, array_address, idx_val);
+                            return Ok(SValue::Array(
+                                Box::new(SValue::from(
+                                    &mut self.builder,
+                                    &expr_type,
+                                    array_address_at_idx_ptr,
+                                )?),
+                                ArraySized::from(&mut self.builder, &size_type),
+                            ));
+                        }
+                    },
+                    ExprType::Address(_) => (),
+                    ExprType::Tuple(_, _) => (),
+                    ExprType::Struct(_code_ref, name) => {
+                        //if the items of the array are structs return struct with same start address
+                        let base_struct = self.env.struct_map[&name.to_string()].clone();
+                        width = base_struct.size;
+                        let array_address_at_idx_ptr =
+                            self.get_array_address_from_ptr(width, array_address, idx_val);
+                        return Ok(SValue::Struct(base_struct.name, array_address_at_idx_ptr));
+                    }
                 }
                 c_ty
             }
@@ -1466,11 +1491,7 @@ impl<'a> FunctionTranslator<'a> {
 
         let array_address_at_idx_ptr =
             self.get_array_address_from_ptr(width, array_address, idx_val);
-
-        if let Some(base_struct) = base_struct {
-            //if the items of the array are structs return struct with same start address
-            Ok(SValue::Struct(base_struct.name, array_address_at_idx_ptr))
-        } else if get_address {
+        if get_address {
             Ok(SValue::Address(array_address_at_idx_ptr))
         } else {
             let val = self.builder.ins().load(

@@ -2700,3 +2700,26 @@ fn modifies_an_array(arr: [i64; 10]) -> () {
     assert_eq!([2i64; 10], arr);
     Ok(())
 }
+
+#[test]
+fn nested_fixed_array() -> anyhow::Result<()> {
+    setup_logging();
+    let code = r#"
+fn modifies_an_array(arr: [[i64; 10]; 10]) -> () {    
+    arr = [[2; 10]; 10]
+    a = arr[0]
+    a[0] = 5
+    //TODO normal multidimensional array access: arr[0][0] and (arr[0])[0]
+}
+
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let mut arr = [[1i64; 10]; 10];
+    let func_ptr = jit.get_func("modifies_an_array")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [[i64; 10]; 10])>(func_ptr) };
+    func(&mut arr);
+    let mut cmp_array = [[2i64; 10]; 10];
+    cmp_array[0][0] = 5;
+    assert_eq!(cmp_array, arr);
+    Ok(())
+}

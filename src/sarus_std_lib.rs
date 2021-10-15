@@ -14,12 +14,6 @@ use crate::{
 };
 use crate::{hashmap, make_decl};
 
-//Reference: https://www.gnu.org/software/libc/manual/html_node/Mathematics.html
-//https://docs.rs/libc/0.2.101/libc/
-//should this include bessel functions? It seems like they would pollute the name space.
-
-//couldn't get to work (STATUS_ACCESS_VIOLATION):
-// "asinh", "acosh", "atanh", "erf", "erfc", "lgamma", "gamma", "tgamma", "exp2", "exp10", "log2"
 const STD_1ARG_FF: [&str; 6] = [
     "f32.ceil", // built in std
     "f32.floor",
@@ -35,8 +29,6 @@ const STD_1ARG_FI: [&str; 1] = [
     "f32.i64", // built in std
 ];
 
-//couldn't get to work (STATUS_ACCESS_VIOLATION):
-// "hypot", "expm1", "log1p"
 const STD_2ARG_FF: [&str; 2] = [
     "f32.min", "f32.max", // built in std
 ];
