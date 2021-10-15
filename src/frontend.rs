@@ -455,6 +455,9 @@ impl Function {
 
 impl Display for Function {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.extern_func {
+            write!(f, "extern ")?;
+        }
         write!(f, "fn {} (", self.name)?;
         for (i, param) in self.params.iter().enumerate() {
             write!(f, "{}", param)?;
@@ -469,11 +472,14 @@ impl Display for Function {
         write!(f, ") {{")?;
         if !self.extern_func {
             writeln!(f, "")?;
+            for expr in self.body.iter() {
+                writeln!(f, "{}", expr)?;
+            }
         }
-        for expr in self.body.iter() {
-            writeln!(f, "{}", expr)?;
+        write!(f, "}}")?;
+        if !self.extern_func {
+            writeln!(f, "")?;
         }
-        writeln!(f, "}}")?;
         Ok(())
     }
 }
@@ -505,7 +511,7 @@ impl Display for Struct {
 // TODO there must be a better way.
 pub fn pretty_indent(code: &str) -> String {
     let mut f = String::from("");
-    let mut depth = 0;
+    let mut depth = 0i32;
     for line in code.lines() {
         if let Some(b_pos) = line.find("}") {
             if let Some(comment) = line.find("//") {
@@ -516,7 +522,7 @@ pub fn pretty_indent(code: &str) -> String {
                 depth -= 1;
             }
         }
-        writeln!(f, "{1:0$}{2:}", depth * 4, "", line).unwrap();
+        writeln!(f, "{1:0$}{2:}", depth.max(0) as usize * 4, "", line).unwrap();
         if let Some(b_pos) = line.find("{") {
             if let Some(comment) = line.find("//") {
                 if comment > b_pos {
@@ -696,6 +702,7 @@ peg::parser!(pub grammar parser() for str {
     rule comma() = _ ","
 
     rule _() =  quiet!{comment() / [' ' | '\t' | '\n']}*
+
 });
 
 pub fn assign_op_to_assign(op: Binop, a: Expr, b: Expr) -> Expr {

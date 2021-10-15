@@ -1,10 +1,5 @@
 #![feature(core_intrinsics)]
 
-use tracing::info;
-use tracing_subscriber::{
-    self, filter, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, Layer,
-};
-
 use serde::Deserialize;
 use std::{
     alloc::{alloc, dealloc, Layout},
@@ -13,28 +8,6 @@ use std::{
     ffi::CStr,
     mem,
 };
-
-fn setup_logging() {
-    // Some spans:
-    //sarus::jit
-    //cranelift_jit::backend
-
-    // install global collector configured based on RUST_LOG env var.
-    let my_filter = filter::filter_fn(|metadata| {
-        // Only enable spans or events with the target "interesting_things"
-        metadata.target().contains("sarus")
-    });
-
-    let layer = tracing_subscriber::fmt::layer().without_time();
-
-    //let layer = tracing_subscriber::fmt::layer().without_time();
-
-    tracing_subscriber::registry()
-        .with(layer.with_filter(my_filter))
-        .init();
-    //tracing_subscriber::fmt::init();
-    info!("setup_logging");
-}
 
 use sarus::*;
 
@@ -420,12 +393,14 @@ fn compiled_graph() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize, Debug)]
 struct Metadata {
     description: Option<String>,
     inputs: HashMap<String, MetadataInput>,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize, Debug)]
 struct MetadataInput {
     default: Option<f32>,
@@ -2436,6 +2411,8 @@ fn main() -> () {
 
 #[cfg(test)]
 mod returns_a_fixed_array_in_a_struct {
+    use sarus::logging::setup_logging;
+
     use super::*;
 
     #[repr(C)]
@@ -2459,7 +2436,7 @@ mod returns_a_fixed_array_in_a_struct {
 
     #[test]
     fn returns_a_fixed_array_in_a_struct() -> anyhow::Result<()> {
-        setup_logging();
+        //setup_logging();
         let code = r#"
 struct B {
     i: i64,

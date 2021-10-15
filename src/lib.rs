@@ -8,6 +8,7 @@ pub use frontend::{Arg, Declaration, Function};
 pub mod frontend;
 pub mod graph;
 pub mod jit;
+pub mod logging;
 pub mod sarus_std_lib;
 pub mod validator;
 
