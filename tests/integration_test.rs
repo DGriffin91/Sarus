@@ -564,6 +564,45 @@ fn float_as_bool_error() -> anyhow::Result<()> {
 }
 
 #[test]
+fn if_else_multi() -> anyhow::Result<()> {
+    let code = r#"
+fn main() -> () {   
+    a = 0
+    b = 0
+    c = 0
+    d = 0
+    if true {
+        a = 1
+        b = 2
+    } else {
+        c = 3
+        d = 4
+    }
+    a.assert_eq(1)
+    b.assert_eq(2)
+    c.assert_eq(0)
+    d.assert_eq(0)
+    if false {
+        a = 5
+        b = 6
+    } else {
+        c = 7
+        d = 8
+    }
+    a.assert_eq(1)
+    b.assert_eq(2)
+    c.assert_eq(7)
+    d.assert_eq(8)
+}
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
 fn array_return_from_if() -> anyhow::Result<()> {
     let code = r#"
 fn main(arr1: &[f32], arr2: &[f32], b) -> () {
@@ -2499,6 +2538,36 @@ fn main() -> () {
     returns_a_fixed_array_in_a_struct().f.assert_eq(123.123)
     B::size.println()
     A::size.println()
+
+    //Checking for over/under shoot on mem copy size
+    f = returns_a_fixed_array_in_a_struct()
+    f.arr[6].a.assert_eq(6.0)
+    f.arr[5] = A {
+        a: 0.1,
+        b: 0.2,
+        c: true,
+        d: 55,
+    }
+    f.arr[5].a.assert_eq(0.1)
+    f.arr[5].b.assert_eq(0.2)
+    f.arr[5].c.assert_eq(true)
+    f.arr[5].d.assert_eq(55)
+    f.arr[5].a += 1.0
+    f.arr[6].a.assert_eq(6.0)
+    f.arr = [A {
+                a: 0.1,
+                b: 0.2,
+                c: true,
+                d: 55,
+            }; 10]
+    i = 0
+    while i < 10 {
+        f.arr[i].a.assert_eq(0.1)
+        f.arr[i].b.assert_eq(0.2)
+        f.arr[i].c.assert_eq(true)
+        f.arr[i].d.assert_eq(55)
+        i += 1
+    }
 }
 "#;
         let mut jit = default_std_jit_from_code(&code)?;
@@ -2616,6 +2685,7 @@ fn main() -> () {
     i = 0
     while i < 10 {
         struct_of_arr.arr[i].assert_eq(i)
+        struct_of_arr.arr[i] += 1
         i += 1
     }
 }
@@ -2660,6 +2730,7 @@ fn main() -> () {
     i = 0
     while i < 10 {
         n[i].assert_eq(i)
+        n[i] += 1
         i += 1
     }
 }
@@ -2703,7 +2774,7 @@ fn modifies_an_array(arr: [i64; 10]) -> () {
 
 #[test]
 fn nested_fixed_array() -> anyhow::Result<()> {
-    setup_logging();
+    //setup_logging();
     let code = r#"
 fn modifies_an_array(arr: [[i64; 10]; 10]) -> () {    
     arr = [[2; 10]; 10]
@@ -2721,5 +2792,78 @@ fn modifies_an_array(arr: [[i64; 10]; 10]) -> () {
     let mut cmp_array = [[2i64; 10]; 10];
     cmp_array[0][0] = 5;
     assert_eq!(cmp_array, arr);
+    Ok(())
+}
+
+#[test]
+fn struct_macro() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+Slice for &[i64]
+fn modifies_an_array(arr: &[i64], len: i64) -> () {   
+    arr_slice = arr.into_slice(len)
+    a = arr_slice.get(0)
+    arr_slice.set(0, 5)
+    arr_slice.set(9, 5)
+}
+
+//TODO make a way to get the address of the fixed array
+//Slice for [i64; 10]
+//fn modifies_a_fixed_array(arr: [i64; 10], len: i64) -> () {   
+//    arr_slice = arr.into_slice()
+//    a = arr_slice.get(0)
+//    arr_slice.set(0, 5)
+//    arr_slice.set(9, 5)
+//}
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let mut arr = [1i64; 10];
+    let func_ptr = jit.get_func("modifies_an_array")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [i64; 10], i64)>(func_ptr) };
+    let len = arr.len() as i64;
+    func(&mut arr, len);
+    assert_eq!(arr, [5, 1, 1, 1, 1, 1, 1, 1, 1, 5,]);
+    //let func_ptr = jit.get_func("modifies_a_fixed_array")?;
+    //let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [i64; 10], i64)>(func_ptr) };
+    //let len = arr.len() as i64;
+    //func(&mut arr, len);
+    //assert_eq!(arr, [5, 1, 1, 1, 1, 1, 1, 1, 1, 5,]);
+    Ok(())
+}
+
+#[repr(C)]
+#[derive(Debug)]
+struct B {
+    arr: [i64; 10],
+}
+
+#[test]
+fn struct_macro_2() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+struct B {
+    arr: [i64; 10],
+}
+fn make_b(a: [i64; 10]) -> (r: B) {
+    r = B {
+        arr: a,
+    }
+}
+fn modifies_an_array(b: B) -> () {   
+    b.arr[0] = 5
+    c = make_b(b.arr)
+    c.arr[0] += 1 * 2
+    a = b.arr
+    a[1] += 1
+}
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let mut arr = [1i64; 10];
+    arr[5] = 5;
+    let mut b = B { arr };
+    let func_ptr = jit.get_func("modifies_an_array")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut B)>(func_ptr) };
+    func(&mut b);
+    assert_eq!(b.arr, [5, 2, 1, 1, 1, 5, 1, 1, 1, 1,]);
     Ok(())
 }

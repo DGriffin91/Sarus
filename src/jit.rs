@@ -94,6 +94,7 @@ impl JIT {
                 }
                 Declaration::Metadata(_, _) => continue,
                 Declaration::Struct(_) => continue,
+                Declaration::StructMacro(_, _) => continue,
             }
         }
 
@@ -115,7 +116,7 @@ impl JIT {
                     ////    &name, &params, &the_return
                     ////);
                     //// Then, translate the AST nodes into Cranelift IR.
-                    self.codegen(&func, funcs.to_owned(), &prog, &struct_map, &constant_vars)?;
+                    self.codegen(&func, funcs.to_owned(), &struct_map, &constant_vars)?;
                     // Next, declare the function to jit. Functions must be declared
                     // before they can be called, or defined.
                     let id = self
@@ -212,15 +213,11 @@ impl JIT {
     }
 
     // Translate from AST nodes into Cranelift IR.
-    #[instrument(
-        level = "info",
-        skip(self, func, funcs, prog, struct_map, constant_vars)
-    )]
+    #[instrument(level = "info", skip(self, func, funcs, struct_map, constant_vars))]
     fn codegen(
         &mut self,
         func: &Function,
         funcs: HashMap<String, Function>,
-        prog: &[Declaration],
         struct_map: &HashMap<String, StructDef>,
         constant_vars: &HashMap<String, SConstant>,
     ) -> anyhow::Result<()> {
@@ -290,7 +287,6 @@ impl JIT {
         // Walk the AST and declare all implicitly-declared variables.
 
         let mut env = Env {
-            prog,
             constant_vars,
             struct_map: struct_map.clone(),
             variables: HashMap::new(),
@@ -567,7 +563,6 @@ impl SValue {
 }
 
 pub struct Env<'a> {
-    pub prog: &'a [Declaration],
     pub constant_vars: &'a HashMap<String, SConstant>,
     pub struct_map: HashMap<String, StructDef>,
     pub variables: HashMap<String, SVariable>,
@@ -615,7 +610,9 @@ impl<'a> FunctionTranslator<'a> {
             }
             Expr::Unaryop(_code_ref, op, lhs) => self.translate_unaryop(*op, lhs),
             Expr::Compare(_code_ref, cmp, lhs, rhs) => self.translate_cmp(*cmp, lhs, rhs),
-            Expr::Call(code_ref, name, args) => self.translate_call(code_ref, name, args, None),
+            Expr::Call(code_ref, name, args, is_macro) => {
+                self.translate_call(code_ref, name, args, None, *is_macro)
+            }
             Expr::GlobalDataAddr(_code_ref, name) => Ok(SValue::Array(
                 Box::new(SValue::F32(
                     self.translate_global_data_addr(self.ptr_ty, name),
@@ -788,15 +785,16 @@ impl<'a> FunctionTranslator<'a> {
         lhs: &Expr,
         rhs: &Expr,
         get_address: bool,
-    ) -> anyhow::Result<(SValue, Option<StructField>)> {
+    ) -> anyhow::Result<(SValue, Option<StructField>, bool)> {
         if let Binop::DotAccess = op {
         } else {
-            return Ok((self.translate_math_binop(op, lhs, rhs)?, None));
+            return Ok((self.translate_math_binop(op, lhs, rhs)?, None, false));
         }
 
         let mut path = Vec::new();
         let mut lhs_val = None;
         let mut struct_field_def = None;
+        let mut array_field = false;
 
         let mut curr_expr = Some(lhs);
         let mut next_expr = Some(rhs);
@@ -814,11 +812,14 @@ impl<'a> FunctionTranslator<'a> {
                     }
                     curr_expr = next_expr;
                     next_expr = None;
+                    array_field = false;
                     match expr {
-                        Expr::Call(code_ref, fn_name, args) => {
+                        Expr::Call(code_ref, fn_name, args, is_macro) => {
                             if path.len() == 0 {
                                 lhs_val =
-                                    Some(self.translate_call(code_ref, fn_name, args, lhs_val)?);
+                                    Some(self.translate_call(
+                                        code_ref, fn_name, args, lhs_val, *is_macro,
+                                    )?);
                             } else {
                                 let sval = if path.len() > 1 || lhs_val.is_some() {
                                     let spath = path
@@ -845,6 +846,7 @@ impl<'a> FunctionTranslator<'a> {
                                     fn_name,
                                     args,
                                     Some(sval),
+                                    *is_macro,
                                 )?);
                                 path = Vec::new();
                             }
@@ -891,11 +893,12 @@ impl<'a> FunctionTranslator<'a> {
                                 let array_address = if let ExprType::Struct(_code_ref, _name) =
                                     struct_def.clone().expr_type
                                 {
-                                    sval_address
+                                    sval_address //TODO should this also just get the address if it's a fixed array?
                                 } else {
                                     self.get_struct_field(code_ref, sval_address, &struct_def)?
+                                    //struct_of_slices_of_structs fails if this is always sval_address so this is sometimes wanted
                                 };
-
+                                array_field = true;
                                 let idx_val = self.idx_expr_to_val(idx_expr)?;
                                 lhs_val = Some(self.array_get(
                                     array_address.inner("Expr::ArrayAccess")?,
@@ -951,7 +954,7 @@ impl<'a> FunctionTranslator<'a> {
         );
 
         if let Some(lhs_val) = lhs_val {
-            Ok((lhs_val, struct_field_def))
+            Ok((lhs_val, struct_field_def, array_field))
         } else {
             anyhow::bail!("No value found");
         }
@@ -1181,7 +1184,7 @@ impl<'a> FunctionTranslator<'a> {
                 let src_sval = self.translate_expr(src_exprs.get(i).unwrap())?;
                 match dst_expr {
                     Expr::Binop(_code_ref, op, lhs, rhs) => {
-                        let (struct_field_address, struct_field) =
+                        let (struct_field_address, struct_field, array_field) =
                             self.translate_binop(*op, lhs, rhs, true)?;
 
                         if let Some(struct_field_def) = struct_field {
@@ -1189,6 +1192,7 @@ impl<'a> FunctionTranslator<'a> {
                                 struct_field_address,
                                 src_sval,
                                 struct_field_def,
+                                array_field,
                             )?
                         } else {
                             unreachable!()
@@ -1633,6 +1637,21 @@ impl<'a> FunctionTranslator<'a> {
         // the then and else bodies. Cranelift uses block parameters,
         // so set up a parameter in the merge block, and we'll pass
         // the return values to it from the branches.
+
+        // Test the if condition and conditionally branch.
+        self.builder.ins().brz(b_condition_value, else_block, &[]);
+        // Fall through to then block.
+        self.builder.ins().jump(then_block, &[]);
+
+        self.builder.switch_to_block(then_block);
+        self.builder.seal_block(then_block);
+
+        for (i, expr) in then_body.iter().enumerate() {
+            if i != then_body.len() - 1 {
+                self.translate_expr(expr).unwrap();
+            }
+        }
+
         let then_value = self.translate_expr(then_body.last().unwrap())?;
         let then_return = match then_value.clone() {
             SValue::Tuple(t) => {
@@ -1653,6 +1672,18 @@ impl<'a> FunctionTranslator<'a> {
             }
         };
 
+        // Jump to the merge block, passing it the block return value.
+        self.builder.ins().jump(merge_block, &then_return);
+
+        self.builder.switch_to_block(else_block);
+        self.builder.seal_block(else_block);
+
+        for (i, expr) in else_body.iter().enumerate() {
+            if i != else_body.len() - 1 {
+                self.translate_expr(expr).unwrap();
+            }
+        }
+
         let else_value = self.translate_expr(else_body.last().unwrap())?;
         let else_return = match else_value.clone() {
             SValue::Tuple(t) => {
@@ -1672,28 +1703,6 @@ impl<'a> FunctionTranslator<'a> {
             SValue::Struct(_, v) => vec![v],
         };
 
-        if then_value.to_string() != else_value.to_string() {
-            anyhow::bail!(
-                "if_else return types don't match {:?} {:?}",
-                then_value,
-                else_value
-            )
-        }
-
-        // Test the if condition and conditionally branch.
-        self.builder.ins().brz(b_condition_value, else_block, &[]);
-        // Fall through to then block.
-        self.builder.ins().jump(then_block, &[]);
-
-        self.builder.switch_to_block(then_block);
-        self.builder.seal_block(then_block);
-
-        // Jump to the merge block, passing it the block return value.
-        self.builder.ins().jump(merge_block, &then_return);
-
-        self.builder.switch_to_block(else_block);
-        self.builder.seal_block(else_block);
-
         // Jump to the merge block, passing it the block return value.
         self.builder.ins().jump(merge_block, &else_return);
 
@@ -1706,6 +1715,14 @@ impl<'a> FunctionTranslator<'a> {
         // Read the value of the if-else by reading the merge block
         // parameter.
         let phi = self.builder.block_params(merge_block);
+
+        if then_value.to_string() != else_value.to_string() {
+            anyhow::bail!(
+                "if_else return types don't match {:?} {:?}",
+                then_value,
+                else_value
+            )
+        }
 
         if phi.len() > 1 {
             //TODO the frontend doesn't have the syntax support for this yet
@@ -1768,6 +1785,7 @@ impl<'a> FunctionTranslator<'a> {
         fn_name: &str,
         args: &[Expr],
         impl_val: Option<SValue>,
+        is_macro: bool,
     ) -> anyhow::Result<SValue> {
         let mut fn_name = fn_name.to_string();
         trace!(
@@ -1787,6 +1805,11 @@ impl<'a> FunctionTranslator<'a> {
             arg_values.push(self.translate_expr(expr)?.inner("translate_call")?)
         }
 
+        if is_macro {
+            todo!()
+            // returns = (macros[fn_name])(code_ref, arg_values, self.env)
+        }
+
         let stack_slot_return = {
             if !self.env.funcs.contains_key(&fn_name) {
                 anyhow::bail!("{} function {} not found", code_ref, fn_name)
@@ -1794,10 +1817,11 @@ impl<'a> FunctionTranslator<'a> {
             let returns = &self.env.funcs[&fn_name].returns;
             if returns.len() > 0 {
                 if let ExprType::Struct(_code_ref, name) = &returns[0].expr_type {
-                    Some((
-                        name.to_string(),
-                        self.env.struct_map[&name.to_string()].size,
-                    ))
+                    if let Some(s) = self.env.struct_map.get(&name.to_string()) {
+                        Some((name.to_string(), s.size))
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -2112,6 +2136,7 @@ impl<'a> FunctionTranslator<'a> {
                         ArraySizedExpr::Unsized => (),
                         ArraySizedExpr::Sized => todo!(),
                         ArraySizedExpr::Fixed(_len) => {
+                            //TODO will this have the correct size relative to the index?
                             trace!("{}: array {} is fixed in length and is stored directly in struct, returning fixed array SValue with address of array field", coderef, expr_type);
                             return Ok(SValue::Array(
                                 Box::new(SValue::from(
@@ -2151,6 +2176,7 @@ impl<'a> FunctionTranslator<'a> {
         dst_address: SValue,
         set_value: SValue,
         dst_field_def: StructField,
+        array_field: bool,
     ) -> anyhow::Result<()> {
         let copy_size = match &dst_field_def.expr_type {
             ExprType::Void(_)
@@ -2159,30 +2185,34 @@ impl<'a> FunctionTranslator<'a> {
             | ExprType::I64(_)
             | ExprType::Tuple(_, _)
             | ExprType::Address(_) => None,
-            ExprType::Array(code_ref, expr_type, size_type) => match size_type {
+            ExprType::Array(_code_ref, expr_type, size_type) => match size_type {
                 ArraySizedExpr::Unsized => None,
                 ArraySizedExpr::Sized => todo!(),
                 ArraySizedExpr::Fixed(_len) => {
-                    trace!(
-                        "{}: set_struct_field_at_address array {} emit_small_memory_copy {}",
-                        code_ref,
-                        expr_type,
-                        dst_field_def.name
-                    );
-                    Some(dst_field_def.size as u64)
+                    if array_field {
+                        let width = expr_type.width(self.ptr_ty, &self.env.struct_map).unwrap();
+                        Some(width as u64)
+                    } else {
+                        Some(dst_field_def.size as u64)
+                    }
                 }
             },
-            ExprType::Struct(code_ref, struct_name) => {
-                trace!(
-                    "{}: set_struct_field_at_address struct {} emit_small_memory_copy {}",
-                    code_ref,
-                    struct_name,
-                    dst_field_def.name
-                );
-                Some(dst_field_def.size as u64)
-            }
+            ExprType::Struct(_code_ref, _struct_name) => Some(dst_field_def.size as u64),
+        };
+        let copy_size = match &set_value {
+            SValue::Bool(_) => None, //TODO Refactor
+            SValue::F32(_) => None,
+            SValue::I64(_) => None,
+            _ => copy_size,
         };
         if let Some(copy_size) = copy_size {
+            trace!(
+                "{}: set_struct_field_at_address {} emit_small_memory_copy {} of size {}",
+                &dst_field_def.expr_type.get_code_ref(),
+                &dst_field_def.expr_type,
+                dst_field_def.name,
+                copy_size,
+            );
             self.builder.emit_small_memory_copy(
                 self.module.target_config(),
                 dst_address.inner("set_struct_field_at_address")?,
@@ -2707,8 +2737,14 @@ fn declare_variable_from_expr(
                 env,
             )?;
         }
+        Expr::Assign(_code_ref, ref _to_exprs, ref from_exprs) => {
+            for expr in from_exprs.iter() {
+                let expr_type = ExprType::of(expr, env)?;
+                declare_variable_from_type(ptr_type, &expr_type, builder, index, names, env)?;
+            }
+        }
         expr => {
-            let expr_type = ExprType::of(expr, &env)?;
+            let expr_type = ExprType::of(expr, env)?;
             declare_variable_from_type(ptr_type, &expr_type, builder, index, names, env)?;
         }
     };

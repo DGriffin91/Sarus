@@ -99,7 +99,9 @@ fn get_eq_jit() -> jit::JIT {
         n_ic2eq = 2.0 * v2 - ic2eq
         n_x = m0 * x + m1 * v1 + m2 * v2
     }
-    fn main(iterations: i64, output_arr: [f32; 48000]) -> (sum) {
+
+    Slice for &[f32]
+    fn main(iterations: i64, output_arr: &[f32]) -> (sum) {
         fs = 48000.0
         f1_a1, f1_a2, f1_a3, f1_m0, f1_m1, f1_m2 = highpass(100.0, 1.0, fs)
         f2_a1, f2_a2, f2_a3, f2_m0, f2_m1, f2_m2 = lowpass(5000.0, 1.0, fs)

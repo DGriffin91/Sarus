@@ -4,10 +4,11 @@ use std::ffi::CStr;
 use cranelift::frontend::FunctionBuilder;
 use cranelift::prelude::{types, InstBuilder, Value};
 use cranelift_jit::JITBuilder;
+use tracing::trace;
 
-use crate::frontend::{Arg, CodeRef};
+use crate::frontend::{parser, Arg, CodeRef};
 use crate::jit::{SValue, StructDef};
-use crate::validator::{address_t, bool_t, f32_t, i64_t, ExprType};
+use crate::validator::{address_t, bool_t, f32_t, i64_t, ArraySizedExpr, ExprType};
 use crate::{
     decl,
     frontend::{Declaration, Function},
@@ -215,6 +216,7 @@ pub fn append_std(prog: &mut Vec<Declaration>, jit_builder: &mut JITBuilder) {
     
     prog.push(make_decl("src_line", vec![], vec![("line", i64_t())]));
 
+    append_struct_macros(prog);
 }
 
 pub(crate) fn translate_std(
@@ -304,4 +306,77 @@ pub fn get_constants(struct_map: &HashMap<String, StructDef>) -> HashMap<String,
         constants.insert(format!("{}::size", name), SConstant::I64(def.size as i64));
     }
     constants
+}
+
+pub fn append_struct_macros(prog: &mut Vec<Declaration>) {
+    //Will probably change significantly or be removed
+    let mut new_decls = Vec::new();
+    for decl in prog.iter() {
+        if let Declaration::StructMacro(name, ty) = decl {
+            if name == "Slice" {
+                if let ExprType::Array(code_ref, expr_type, size_type) = &**ty {
+                    let code = format!(
+                        r#"
+struct Slice::{1} {{
+    arr: {0},
+    len: i64,
+}}
+fn get(self: Slice::{1}, i: i64) -> (r: {1}) {{
+    if i >= 0 && i < self.len {{
+        r = self.arr[i]
+    }} else {{
+        panic("index out of bounds")
+    }}
+}}
+fn set(self: Slice::{1}, i: i64, val: {1}) -> () {{
+    if i >= 0 && i < self.len {{
+        self.arr[i] = val
+    }} else {{
+        panic("index out of bounds")
+    }}
+}}
+"#,
+                        ty, expr_type
+                    );
+                    trace!("{}: {}", code_ref, &code);
+                    new_decls.append(&mut parser::program(&code).unwrap()); //TODO handle errors
+
+                    let code = match size_type {
+                        ArraySizedExpr::Unsized => {
+                            format!(
+                                r#"
+fn into_slice(self: {0}, len: i64) -> (r: Slice::{1}) {{
+    r = Slice::{1} {{
+        arr: self,
+        len: len,
+    }}
+}}
+"#,
+                                ty, expr_type
+                            )
+                        }
+                        ArraySizedExpr::Sized => todo!(),
+                        ArraySizedExpr::Fixed(len) => {
+                            format!(
+                                r#"
+fn into_slice(self: {0}) -> (r: Slice::{1}) {{
+    r = Slice::{1} {{
+        arr: self,
+        len: {2},
+    }}
+}}
+"#,
+                                ty, expr_type, len
+                            )
+                        }
+                    };
+                    trace!("{}: {}", code_ref, &code);
+                    new_decls.append(&mut parser::program(&code).unwrap()); //TODO handle errors
+                } else {
+                    panic!("Slice for type {} is unsupported", ty)
+                }
+            }
+        }
+    }
+    prog.append(&mut new_decls);
 }

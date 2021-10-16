@@ -191,6 +191,7 @@ fn build_graph_func(
                 CodeRef::z(),
                 node.func_name.clone(),
                 param_names,
+                false,
             )])
             .unwrap(),
         ))

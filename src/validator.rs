@@ -6,6 +6,7 @@ use crate::{
 };
 use cranelift::prelude::types;
 use thiserror::Error;
+use tracing::error;
 
 //TODO Make errors more information rich, also: show line in this file, and line in source
 #[derive(Debug, Clone, Error)]
@@ -165,17 +166,21 @@ fn get_struct_field_type(
     match lhs_val {
         ExprType::Struct(_code_ref, struct_name) => {
             let mut struct_name = *struct_name.to_owned();
-            let mut parent_struct_field = if let Some(parent_struct_field) =
-                env.struct_map[&struct_name].fields.get(&parts[start])
-            {
-                parent_struct_field
+            let mut parent_struct_field = if let Some(s) = env.struct_map.get(&struct_name) {
+                if let Some(parent_struct_field) = s.fields.get(&parts[start]) {
+                    parent_struct_field
+                } else {
+                    return Err(TypeError::UnknownField(
+                        *code_ref,
+                        struct_name,
+                        parts[start].to_string(),
+                    ));
+                }
             } else {
-                return Err(TypeError::UnknownField(
-                    *code_ref,
-                    struct_name,
-                    parts[start].to_string(),
-                ));
+                dbg!(&env.struct_map);
+                return Err(TypeError::UnknownStruct(*code_ref, struct_name));
             };
+
             if parts.len() > 2 {
                 for i in start..parts.len() {
                     if let ExprType::Struct(code_ref, _name) = &parent_struct_field.expr_type {
@@ -199,11 +204,12 @@ fn get_struct_field_type(
             Ok(parent_struct_field.expr_type.clone())
         }
         v => {
+            error!("");
             return Err(TypeError::TypeMismatch {
                 c: v.get_code_ref(),
                 expected: ExprType::Struct(v.get_code_ref(), Box::new("".to_string())),
                 actual: v.clone(),
-            })
+            });
         }
     }
 }
@@ -298,7 +304,10 @@ impl ExprType {
                                 curr_expr = next_expr;
                                 next_expr = None;
                                 match expr.clone() {
-                                    Expr::Call(code_ref, fn_name, args) => {
+                                    Expr::Call(code_ref, fn_name, args, is_macro) => {
+                                        if is_macro {
+                                            todo!("binop macros not supported yet")
+                                        }
                                         let sval = if path.len() == 0 {
                                             if let Some(lhs_val) = lhs_val {
                                                 lhs_val
@@ -400,11 +409,12 @@ impl ExprType {
                                         match ExprType::of(&idx_expr, env)? {
                                             ExprType::I64(_code_ref) => (),
                                             e => {
+                                                error!("");
                                                 return Err(TypeError::TypeMismatch {
                                                     c: code_ref,
                                                     expected: ExprType::I64(code_ref),
                                                     actual: e,
-                                                })
+                                                });
                                             }
                                         };
                                         if path.len() > 0 {
@@ -456,6 +466,7 @@ impl ExprType {
                     if lt == rt {
                         lt
                     } else {
+                        error!("");
                         return Err(TypeError::TypeMismatch {
                             c: *binop_code_ref,
                             expected: lt,
@@ -469,6 +480,7 @@ impl ExprType {
             Expr::IfThen(code_ref, econd, _) => {
                 let tcond = ExprType::of(econd, env)?;
                 if tcond != ExprType::Bool(*code_ref) {
+                    error!("");
                     return Err(TypeError::TypeMismatch {
                         c: *code_ref,
                         expected: ExprType::Bool(*code_ref),
@@ -480,6 +492,7 @@ impl ExprType {
             Expr::IfElse(code_ref, econd, etrue, efalse) => {
                 let tcond = ExprType::of(econd, env)?;
                 if tcond != ExprType::Bool(*code_ref) {
+                    error!("");
                     return Err(TypeError::TypeMismatch {
                         c: *code_ref,
                         expected: ExprType::Bool(*code_ref),
@@ -505,6 +518,7 @@ impl ExprType {
                 if ttrue == tfalse {
                     ttrue
                 } else {
+                    error!("");
                     return Err(TypeError::TypeMismatch {
                         c: *code_ref,
                         expected: ttrue,
@@ -542,6 +556,7 @@ impl ExprType {
                         let rhs_type = ExprType::of(rhs_expr, env)?;
 
                         if lhs_type != rhs_type {
+                            error!("");
                             return Err(TypeError::TypeMismatch {
                                 c: *lhs_expr.clone().get_code_ref(),
                                 expected: lhs_type,
@@ -551,12 +566,13 @@ impl ExprType {
                         rhs_types.push(rhs_type);
                     }
                 }
-                ExprType::Tuple(*code_ref, rhs_types)
+                ExprType::Void(*code_ref)
             }
             Expr::AssignOp(_code_ref, _, _, e) => ExprType::of(e, env)?,
             Expr::WhileLoop(code_ref, idx_expr, stmts) => {
                 let idx_type = ExprType::of(idx_expr, env)?;
                 if idx_type != ExprType::Bool(*code_ref) {
+                    error!("");
                     return Err(TypeError::TypeMismatch {
                         c: *code_ref,
                         expected: ExprType::Bool(*code_ref),
@@ -575,7 +591,12 @@ impl ExprType {
                 .last()
                 .map(Result::unwrap)
                 .unwrap_or(ExprType::Void(*code_ref)),
-            Expr::Call(code_ref, fn_name, args) => {
+            Expr::Call(code_ref, fn_name, args, is_macro) => {
+                if *is_macro {
+                    todo!()
+                    // Here the macro can check if the args works and will return
+                    // returns = (macros[fn_name])(code_ref, args, env)
+                }
                 if let Some(func) = env.funcs.get(fn_name) {
                     let mut targs = Vec::new();
 
@@ -597,6 +618,7 @@ impl ExprType {
                         if param_type == *targ {
                             continue;
                         } else {
+                            error!("");
                             return Err(TypeError::TypeMismatchSpecific {
                                     c: *code_ref,
                                     s: format!("function {} expected parameter {} to be of type {} but type {} was found", fn_name, i, param_type, targ)
@@ -625,11 +647,12 @@ impl ExprType {
                 match ExprType::of(&*idx_expr, env)? {
                     ExprType::I64(_code_ref) => (),
                     e => {
+                        error!("");
                         return Err(TypeError::TypeMismatch {
                             c: *code_ref,
                             expected: ExprType::I64(*code_ref),
                             actual: e,
-                        })
+                        });
                     }
                 };
                 if env.variables.contains_key(id_name) {

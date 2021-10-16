@@ -82,7 +82,7 @@ impl CodeRef {
         CodeRef { pos: 0, line: None }
     }
     pub fn setup(&mut self, code: &String) {
-        if self.line.is_none() {
+        if self.line.is_none() && self.pos < code.len() {
             self.line = Some(code[..self.pos].matches("\n").count());
         }
     }
@@ -119,7 +119,7 @@ pub enum Expr {
     NewStruct(CodeRef, String, Vec<StructAssignField>),
     WhileLoop(CodeRef, Box<Expr>, Vec<Expr>), //Should this take a block instead of Vec<Expr>?
     Block(CodeRef, Vec<Expr>),
-    Call(CodeRef, String, Vec<Expr>),
+    Call(CodeRef, String, Vec<Expr>, bool),
     GlobalDataAddr(CodeRef, String),
     Parentheses(CodeRef, Box<Expr>),
     ArrayAccess(CodeRef, String, Box<Expr>),
@@ -246,7 +246,7 @@ impl Expr {
                     b.setup_ref(src_code);
                 }
             }
-            Expr::Call(_, _, bv) => {
+            Expr::Call(_, _, bv, _) => {
                 for b in bv {
                     b.setup_ref(src_code);
                 }
@@ -341,7 +341,7 @@ impl Display for Expr {
                 }
                 Ok(())
             }
-            Expr::Call(_, func_name, args) => {
+            Expr::Call(_, func_name, args, _) => {
                 //todo print this correctly
                 write!(f, "{}(", func_name)?;
                 for (i, arg) in args.iter().enumerate() {
@@ -374,6 +374,7 @@ pub enum Declaration {
     Function(Function),
     Metadata(Vec<String>, String),
     Struct(Struct),
+    StructMacro(String, Box<ExprType>),
 }
 
 impl Display for Declaration {
@@ -389,6 +390,7 @@ impl Display for Declaration {
                 Ok(())
             }
             Declaration::Struct(e) => write!(f, "{}", e),
+            Declaration::StructMacro(name, e) => write!(f, "{}({})", name, e),
         }
     }
 }
@@ -544,9 +546,13 @@ peg::parser!(pub grammar parser() for str {
         = function()
         / metadata()
         / structdef()
+        / structmacro()
 
     rule structdef() -> Declaration
-        = _ ext:("extern")? _ "struct" name:identifier() _ "{" _ fields:(a:arg() comma() {a})* _ "}" _ {Declaration::Struct(Struct{name, fields, extern_struct: if ext.is_some() {true} else {false}})}
+        = _ ext:("extern")? _ "struct" _ name:$(s:identifier() ("::" (ty:type_label() ** "::"))?) _ "{" _ fields:(a:arg() comma() {a})* _ "}" _ {Declaration::Struct(Struct{name: name.to_string(), fields, extern_struct: if ext.is_some() {true} else {false}})}
+
+    rule structmacro() -> Declaration
+        = _ name:identifier() _ "for" _ t:type_label() _ {Declaration::StructMacro(name, Box::new(t))}
 
     rule metadata() -> Declaration
         = _ "@" _ headings:(i:(metadata_identifier()** ([' ' | '\t'])) {i}) ([' ' | '\t'])* "\n" body:$[^'@']* "@" _ {Declaration::Metadata(headings, body.join(""))}
@@ -587,6 +593,7 @@ peg::parser!(pub grammar parser() for str {
         / _ pos:position!() "&[" ty:type_label() "]" _ { ExprType::Array(CodeRef::new(pos), Box::new(ty), ArraySizedExpr::Unsized) }
         / _ pos:position!() "&" _ { ExprType::Address(CodeRef::new(pos)) }
         / _ pos:position!() "bool" _ { ExprType::Bool(CodeRef::new(pos)) }
+        / _ pos:position!() n:$(identifier() "::" (type_label() ** "::")) _ { ExprType::Struct(CodeRef::new(pos), Box::new(n.to_string())) }
         / _ pos:position!() n:identifier() _ { ExprType::Struct(CodeRef::new(pos), Box::new(n)) }
         / _ pos:position!() "[" _  ty:type_label()  _ ";" _ len:$(['0'..='9']+) _ "]" _ {
             ExprType::Array(CodeRef::new(pos), Box::new(ty), ArraySizedExpr::Fixed(len.parse::<usize>().unwrap()))
@@ -653,7 +660,7 @@ peg::parser!(pub grammar parser() for str {
         --
         a:@ _ pos:position!() "/" _ b:(@) { Expr::Binop(CodeRef::new(pos), Binop::Div, Box::new(a), Box::new(b)) }
         --
-        a:@ pos:position!() "." b:(@) { Expr::Binop(CodeRef::new(pos), Binop::DotAccess, Box::new(a), Box::new(b)) }
+        a:@ pos:position!() _ "." b:(@) { Expr::Binop(CodeRef::new(pos), Binop::DotAccess, Box::new(a), Box::new(b)) }
         --
         u:unary_op()  { u }
     }
@@ -662,8 +669,8 @@ peg::parser!(pub grammar parser() for str {
         //Having a _ before the () breaks in this case:
         //c = p.x + p.y + p.z
         //(p.x).print()
-        pos:position!() i:identifier() "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
-            Expr::Call(CodeRef::new(pos), i, args)
+        pos:position!() i:identifier() _macro:("!")? "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
+            Expr::Call(CodeRef::new(pos), i, args, _macro.is_some())
         }
         pos:position!() i:identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" { Expr::NewStruct(CodeRef::new(pos), i, args) }
         pos:position!() i:identifier() _ "[" idx:expression() "]" { Expr::ArrayAccess(CodeRef::new(pos), i, Box::new(idx)) }
@@ -706,14 +713,15 @@ peg::parser!(pub grammar parser() for str {
 });
 
 pub fn assign_op_to_assign(op: Binop, a: Expr, b: Expr) -> Expr {
+    let b_code_ref = *b.clone().get_code_ref();
     Expr::Assign(
         *a.clone().get_code_ref(),
         make_nonempty(vec![a.clone()]).unwrap(),
         make_nonempty(vec![Expr::Binop(
-            *b.clone().get_code_ref(),
+            b_code_ref,
             op,
             Box::new(a),
-            Box::new(b),
+            Box::new(Expr::Parentheses(b_code_ref, Box::new(b))),
         )])
         .unwrap(),
     )
