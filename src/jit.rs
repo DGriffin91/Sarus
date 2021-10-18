@@ -2746,7 +2746,17 @@ impl InlineVarData {
 
 #[instrument(
     level = "info",
-    skip(builder, module, stmts, entry_block, env, inline_data)
+    skip(
+        builder,
+        module,
+        params,
+        returns,
+        stmts,
+        entry_block,
+        env,
+        variables,
+        inline_data
+    )
 )]
 fn declare_variables(
     index: &mut usize,
@@ -2983,14 +2993,20 @@ fn declare_variable_from_expr(
                 inline_data,
             )?;
         }
-        Expr::Assign(_code_ref, ref _to_exprs, ref from_exprs) => {
-            for expr in from_exprs.iter() {
+        Expr::Assign(code_ref, ref _to_exprs, ref from_exprs) => {
+            for from_expr in from_exprs.iter() {
+                trace!(
+                    "{} declare_variable_from_expr Expr::Assign {}",
+                    code_ref,
+                    from_expr,
+                );
                 if let Some(inline_data) = inline_data {
-                    let expr_type = ExprType::of(expr, env, variables, &inline_data.prefix)?;
+                    let expr_type = ExprType::of(from_expr, env, &variables, &inline_data.prefix)?;
                     let mut inline_names = Vec::new();
                     for name in names {
                         inline_names.push(inline_data.get_name(name));
                     }
+                    trace!("{:?}", inline_names);
                     declare_variable_from_type(
                         ptr_type,
                         &expr_type,
@@ -3000,7 +3016,8 @@ fn declare_variable_from_expr(
                         variables,
                     )?;
                 } else {
-                    let expr_type = ExprType::of(expr, env, &variables, "")?;
+                    let expr_type = ExprType::of(from_expr, env, &variables, "")?;
+                    trace!("{:?}", names);
                     declare_variable_from_type(
                         ptr_type, &expr_type, builder, index, names, variables,
                     )?;
@@ -3033,39 +3050,43 @@ fn declare_variable_from_type(
     variables: &mut HashMap<String, SVariable>,
 ) -> anyhow::Result<()> {
     let name = names.first().unwrap();
-    if name.contains(".") {
+    if name.contains(".") && !name.contains("->") {
         return Ok(());
     }
     match expr_type {
         ExprType::Void(code_ref) => {
             anyhow::bail!("{} can't assign void type to {}", code_ref, name)
         }
-        ExprType::Bool(_code_ref) => {
+        ExprType::Bool(code_ref) => {
             if !variables.contains_key(name) {
+                trace!("{} {} {}", code_ref, expr_type, name);
                 let var = Variable::new(*index);
                 variables.insert(name.into(), SVariable::Bool(name.into(), var));
                 builder.declare_var(var, types::B1);
                 *index += 1;
             }
         }
-        ExprType::F32(_code_ref) => {
+        ExprType::F32(code_ref) => {
             if !variables.contains_key(name) {
+                trace!("{} {} {}", code_ref, expr_type, name);
                 let var = Variable::new(*index);
                 variables.insert(name.into(), SVariable::F32(name.into(), var));
                 builder.declare_var(var, types::F32);
                 *index += 1;
             }
         }
-        ExprType::I64(_code_ref) => {
+        ExprType::I64(code_ref) => {
             if !variables.contains_key(name) {
+                trace!("{} {} {}", code_ref, expr_type, name);
                 let var = Variable::new(*index);
                 variables.insert(name.into(), SVariable::I64(name.into(), var));
                 builder.declare_var(var, types::I64);
                 *index += 1;
             }
         }
-        ExprType::Array(_code_ref, ty, size_type) => {
+        ExprType::Array(code_ref, ty, size_type) => {
             if !variables.contains_key(name) {
+                trace!("{} {} {}", code_ref, expr_type, name);
                 let var = Variable::new(*index);
                 variables.insert(
                     name.into(),
@@ -3078,18 +3099,19 @@ fn declare_variable_from_type(
                 *index += 1;
             }
         }
-        ExprType::Address(_code_ref) => {
+        ExprType::Address(code_ref) => {
             if !variables.contains_key(name) {
+                trace!("{} {} {}", code_ref, expr_type, name);
                 let var = Variable::new(*index);
                 variables.insert(name.into(), SVariable::Address(name.into(), var));
                 builder.declare_var(var, ptr_type);
                 *index += 1;
             }
         }
-        ExprType::Tuple(_code_ref, expr_types) => {
+        ExprType::Tuple(code_ref, expr_types) => {
             if expr_types.len() == 1 {
                 //Single nested tuple
-                if let ExprType::Tuple(_code_ref, expr_types) = expr_types.first().unwrap() {
+                if let ExprType::Tuple(code_ref, expr_types) = expr_types.first().unwrap() {
                     for (expr_type, sname) in expr_types.iter().zip(names.iter()) {
                         declare_variable_from_type(
                             ptr_type,
@@ -3114,8 +3136,9 @@ fn declare_variable_from_type(
                 )?
             }
         }
-        ExprType::Struct(_code_ref, structname) => {
+        ExprType::Struct(code_ref, structname) => {
             if !variables.contains_key(name) {
+                trace!("{} {} {}", code_ref, expr_type, name);
                 let var = Variable::new(*index);
                 variables.insert(
                     name.into(),

@@ -299,6 +299,7 @@ impl ExprType {
                     v.expr_type(Some(*code_ref)) //Constants like PI, TAU...
                 } else {
                     dbg!(&id_name);
+                    error!("{:#?}", variables);
                     return Err(TypeError::UnknownVariable(*code_ref, id_name.to_string()));
                 }
             }

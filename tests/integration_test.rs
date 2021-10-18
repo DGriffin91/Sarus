@@ -2935,7 +2935,8 @@ fn inline_function() -> anyhow::Result<()> {
     let code = r#"
 
 inline fn add(x, y) -> (z) {
-    z = x + y
+    f = x * y
+    z = x + y * f
 }
 
 fn main() -> () {    
@@ -2956,3 +2957,84 @@ fn main() -> () {
 ///////////////////////////////////////////////////////////////////////////////
 // TODO come up with a way to run all the tests both with and without inlining
 ///////////////////////////////////////////////////////////////////////////////
+
+#[test]
+fn editor_like_example() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+
+struct ProcessState {
+    filter_l: Filter,
+    filter_r: Filter,
+}
+
+fn init_process_state(state: ProcessState) -> () {
+    filter_l = Filter { ic1eq: 0.0, ic2eq: 0.0, }
+    filter_r = Filter { ic1eq: 0.0, ic2eq: 0.0, }
+    state = ProcessState {
+        filter_l: filter_l,
+        filter_r: filter_r,
+    }
+}
+
+fn process(params: SarusDSPModelParams, audio: AudioData, 
+           state: ProcessState, dbg: Debugger) -> () {
+    i = 0
+    left = audio.in_left
+    right = audio.in_right
+
+    while i < audio.len {
+        highshelf = Coefficients::highshelf(
+            audio.sample_rate,
+            1.0,
+            1.0,
+            1.0
+        )
+        left[i] = state.filter_l.process(left[i], highshelf)
+        right[i] = state.filter_r.process(right[i], highshelf)
+        audio.out_left[i] = left[i]
+        audio.out_right[i] = right[i]
+        i += 1
+    }
+}
+
+struct Filter {
+    ic1eq,
+    ic2eq,
+}
+
+inline fn process(self: Filter, audio, c: Coefficients) -> (audio_out) {
+    v3 = audio - self.ic2eq
+    v1 = c.a1 * self.ic1eq + c.a2 * v3
+    v2 = self.ic2eq + c.a2 * self.ic1eq + c.a3 * v3
+    self.ic1eq = 2.0 * v1 - self.ic1eq
+    self.ic2eq = 2.0 * v2 - self.ic2eq
+    audio_out = c.m0 * audio + c.m1 * v1 + c.m2 * v2
+}
+
+struct Coefficients { a1, a2, a3, m0, m1, m2, }
+
+inline fn Coefficients::highshelf(cutoff_hz, gain_db, q_value, sample_rate) -> (coeffs: Coefficients) {
+    cutoff_hz = cutoff_hz.min(sample_rate * 0.5)
+    a = (10.0).powf(gain_db / 40.0)
+    g = (PI * cutoff_hz / sample_rate).tan() * a.sqrt()
+    k = 1.0 / q_value
+    a1 = 1.0 / (1.0 + g * (g + k))
+    a2 = g * a1
+    a3 = g * a2
+    m0 = a * a
+    m1 = k * (1.0 - a) * a
+    m2 = 1.0 - a * a
+    coeffs = Coefficients { a1: a1, a2: a2, a3: a3, m0: m0, m1: m1, m2: m2, }
+}
+
+struct AudioData { in_left: &[f32], in_right: &[f32], out_left: &[f32], out_right: &[f32], len: i64, sample_rate: f32, }
+struct Ui { ui: &, }
+struct Debugger {}
+struct SarusUIModelParams { p1: f32, p2: f32, p3: f32, p4: f32, p5: f32, p6: f32, p7: f32, p8: f32, }
+struct SarusDSPModelParams { p1: &[f32], p2: &[f32], p3: &[f32], p4: &[f32], p5: &[f32], p6: &[f32], p7: &[f32], p8: &[f32], }
+
+"#;
+    default_std_jit_from_code(&code)?;
+    Ok(())
+}

@@ -474,6 +474,17 @@ impl Function {
 
         Ok(f)
     }
+
+    pub fn external(name: String, params: Vec<Arg>, returns: Vec<Arg>) -> Self {
+        Function {
+            name,
+            params,
+            returns,
+            body: vec![],
+            extern_func: true,
+            inline: InlineKind::Never,
+        }
+    }
 }
 
 impl Display for Function {

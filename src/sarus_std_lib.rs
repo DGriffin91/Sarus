@@ -6,12 +6,11 @@ use cranelift::prelude::{types, InstBuilder, Value};
 use cranelift_jit::JITBuilder;
 use tracing::trace;
 
-use crate::frontend::{parser, Arg, CodeRef};
 use crate::jit::{SValue, StructDef};
 use crate::validator::{address_t, bool_t, f32_t, i64_t, ArraySizedExpr, ExprType};
 use crate::{
     decl,
-    frontend::{Declaration, Function},
+    frontend::{parser, Arg, CodeRef, Declaration, Function},
 };
 use crate::{hashmap, make_decl};
 
@@ -102,6 +101,7 @@ pub fn append_std_math(
     prog: &mut Vec<Declaration>,
     jit_builder: &mut JITBuilder,
 ) {
+
     let jb = jit_builder;
     decl!(prog, jb, "f32.signum",           f32::signum,           (f32_t()),                 (f32_t()));
     decl!(prog, jb, "f32.copysign",         f32::copysign,         (f32_t(), f32_t()),         (f32_t()));
