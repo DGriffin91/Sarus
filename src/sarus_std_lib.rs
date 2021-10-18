@@ -255,6 +255,7 @@ pub(crate) fn translate_std(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum SConstant {
     F32(f32),
     I64(i64),
@@ -321,14 +322,14 @@ struct Slice::{1} {{
     arr: {0},
     len: i64,
 }}
-fn get(self: Slice::{1}, i: i64) -> (r: {1}) {{
+inline fn get(self: Slice::{1}, i: i64) -> (r: {1}) {{
     if i >= 0 && i < self.len {{
         r = self.arr[i]
     }} else {{
         panic("index out of bounds")
     }}
 }}
-fn set(self: Slice::{1}, i: i64, val: {1}) -> () {{
+inline fn set(self: Slice::{1}, i: i64, val: {1}) -> () {{
     if i >= 0 && i < self.len {{
         self.arr[i] = val
     }} else {{
@@ -345,7 +346,7 @@ fn set(self: Slice::{1}, i: i64, val: {1}) -> () {{
                         ArraySizedExpr::Unsized => {
                             format!(
                                 r#"
-fn into_slice(self: {0}, len: i64) -> (r: Slice::{1}) {{
+inline fn into_slice(self: {0}, len: i64) -> (r: Slice::{1}) {{
     r = Slice::{1} {{
         arr: self,
         len: len,
@@ -359,7 +360,7 @@ fn into_slice(self: {0}, len: i64) -> (r: Slice::{1}) {{
                         ArraySizedExpr::Fixed(len) => {
                             format!(
                                 r#"
-fn into_slice(self: {0}) -> (r: Slice::{1}) {{
+inline fn into_slice(self: {0}) -> (r: Slice::{1}) {{
     r = Slice::{1} {{
         arr: self,
         len: {2},

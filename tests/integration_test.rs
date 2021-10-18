@@ -1002,6 +1002,7 @@ fn main(a: f32) -> (c: f32) {
 
 #[test]
 fn struct_impl() -> anyhow::Result<()> {
+    //setup_logging();
     let code = r#"
 struct Point {
     x: f32,
@@ -2261,6 +2262,7 @@ struct FilterParams { a1, a2, a3, m0, m1, m2, }
 
 #[test]
 fn inner_struct_manipulate() -> anyhow::Result<()> {
+    //setup_logging();
     let code = r#"
 struct Filter {
     ic1eq,
@@ -2571,9 +2573,9 @@ fn main() -> () {
 }
 "#;
         let mut jit = default_std_jit_from_code(&code)?;
-        let func_ptr = jit.get_func("main")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-        func();
+        //let func_ptr = jit.get_func("main")?;
+        //let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        //func();
         let func_ptr = jit.get_func("returns_a_fixed_array_in_a_struct")?;
         let func = unsafe { mem::transmute::<_, extern "C" fn() -> B>(func_ptr) };
         let b = B {
@@ -2645,6 +2647,65 @@ fn main() -> () {
             f: 123.123,
         };
         assert_eq!(func(), b);
+        Ok(())
+    }
+
+    #[test]
+    fn returns_a_fixed_array_in_a_struct_inline_issue() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+struct B {
+    i: i64,
+    a: bool,
+    arr: [A; 10],
+    b: bool,
+    f: f32,
+}
+
+fn returns_a_fixed_array_in_a_struct() -> (arr: B) {    
+    i = 0
+    s = A {
+        a: 1.0,
+        b: 2.0,
+        c: true,
+        d: 3,
+    }
+    n = [s; 10]
+    while i < 10 {
+        n[i] = A {
+            a: i.f32(),
+            b: i.f32() + 0.5,
+            c: i.f32().rem_euclid(2.0) == 0.0,
+            d: i * i,
+        }
+        i += 1
+    }
+    arr = B {
+        i: 123,
+        a: true,
+        arr: n,
+        b: true,
+        f: 123.123,
+    }
+}
+
+struct A {
+    a: f32,
+    b: f32,
+    c: bool,
+    d: i64,
+}
+
+fn main() -> () {
+    returns_a_fixed_array_in_a_struct()
+    returns_a_fixed_array_in_a_struct()
+    returns_a_fixed_array_in_a_struct()
+    returns_a_fixed_array_in_a_struct()
+    returns_a_fixed_array_in_a_struct()
+}
+"#;
+        default_std_jit_from_code(&code)?;
+
         Ok(())
     }
 
@@ -2867,3 +2928,31 @@ fn modifies_an_array(b: B) -> () {
     assert_eq!(b.arr, [5, 2, 1, 1, 1, 5, 1, 1, 1, 1,]);
     Ok(())
 }
+
+#[test]
+fn inline_function() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+
+inline fn add(x, y) -> (z) {
+    z = x + y
+}
+
+fn main() -> () {    
+    a = 5.0
+    b = 6.0
+    c = add(a, b)
+    c.println()
+}
+
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// TODO come up with a way to run all the tests both with and without inlining
+///////////////////////////////////////////////////////////////////////////////

@@ -10,6 +10,7 @@ use cranelift::prelude::*;
 pub use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataContext, Linkage, Module};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::ffi::CString;
 use std::fmt::Display;
 use std::slice;
@@ -38,8 +39,8 @@ pub struct JIT {
     //CLIF cranelift IR string, by function name
     pub clif: HashMap<String, String>,
 
-    //local variables for each function
-    pub variables: HashMap<String, HashMap<String, SVariable>>,
+    //local variables for each function kept around for later debug/print
+    pub func_variables: HashMap<String, HashMap<String, SVariable>>,
 }
 
 impl Default for JIT {
@@ -52,7 +53,7 @@ impl Default for JIT {
             data_ctx: DataContext::new(),
             module,
             clif: HashMap::new(),
-            variables: HashMap::new(),
+            func_variables: HashMap::new(),
         }
     }
 }
@@ -70,11 +71,11 @@ impl JIT {
             data_ctx: DataContext::new(),
             module,
             clif: HashMap::new(),
-            variables: HashMap::new(),
+            func_variables: HashMap::new(),
         }
     }
 
-    /// Compile a string in the toy language into machine code.
+    /// Compile the ast into machine code.
     #[instrument(level = "info", skip(self, prog, src_code))]
     pub fn translate(&mut self, prog: Vec<Declaration>, src_code: String) -> anyhow::Result<()> {
         info!("--------------- translate ---------------");
@@ -98,23 +99,18 @@ impl JIT {
             }
         }
 
-        // First, parse the string, producing AST nodes.
-
         for d in prog.clone() {
             match d {
                 Declaration::Function(func) => {
                     if func.extern_func {
-                        //Don't parse contents of std func, it will be empty
+                        //Don't compile the contents of std func, it will be empty
                         trace!(
                             "Function {} is an external function, skipping codegen",
                             func.sig_string()?
                         );
                         continue;
                     }
-                    ////println!(
-                    ////    "name {:?}, params {:?}, the_return {:?}",
-                    ////    &name, &params, &the_return
-                    ////);
+
                     //// Then, translate the AST nodes into Cranelift IR.
                     self.codegen(&func, funcs.to_owned(), &struct_map, &constant_vars)?;
                     // Next, declare the function to jit. Functions must be declared
@@ -126,7 +122,7 @@ impl JIT {
                             anyhow::anyhow!("{}:{}:{} {:?}", file!(), line!(), column!(), e)
                         })?;
 
-                    ////println!("ID IS {}", id);
+                    trace!("cranelift func id is {}", id);
                     // Define the function to jit. This finishes compilation, although
                     // there may be outstanding relocations to perform. Currently, jit
                     // cannot finish relocations until all functions to be called are
@@ -287,15 +283,19 @@ impl JIT {
         // Walk the AST and declare all implicitly-declared variables.
 
         let mut env = Env {
-            constant_vars,
+            constant_vars: constant_vars.clone(),
             struct_map: struct_map.clone(),
-            variables: HashMap::new(),
             ptr_ty,
             funcs,
         };
 
         //println!("declare_variables {}", func.name);
+
+        let mut variables = HashMap::new();
+
+        let mut var_index = 0;
         declare_variables(
+            &mut var_index,
             &mut builder,
             &mut self.module,
             &func.params,
@@ -303,16 +303,18 @@ impl JIT {
             &func.body,
             entry_block,
             &mut env,
+            &mut variables,
+            &mut None,
         )?;
 
         //Keep function vars around for later debug/print
-        self.variables
-            .insert(func.name.to_string(), env.variables.clone());
+        self.func_variables
+            .insert(func.name.to_string(), variables.clone());
 
         //println!("validate_program {}", func.name);
 
         //Check every statement, this can catch funcs with no assignment, etc...
-        validate_program(&func.body, &env)?;
+        validate_program(&func.body, &env, &variables)?;
 
         //println!("FunctionTranslator {}", func.name);
         let ptr_ty = self.module.target_config().pointer_type();
@@ -323,7 +325,13 @@ impl JIT {
             func,
             module: &mut self.module,
             ptr_ty,
-            env: &env,
+            env,
+            inline_outer_var_aliases: HashMap::new(),
+            inline_prefix: Vec::new(),
+            inline_variables: HashMap::new(),
+            entry_block,
+            var_index,
+            variables,
         };
         for expr in &func.body {
             trans.translate_expr(expr)?;
@@ -334,7 +342,7 @@ impl JIT {
         // variable.
         let mut return_values = Vec::new();
         for ret in func.returns.iter() {
-            let return_variable = trans.env.variables.get(&ret.name).unwrap();
+            let return_variable = trans.variables.get(&ret.name).unwrap();
             let v = match &ret.expr_type {
                 ExprType::F32(code_ref) => trans
                     .builder
@@ -377,6 +385,7 @@ impl JIT {
             func.name.to_string(),
             trans.builder.func.display(None).to_string(),
         );
+        trace!("{}", trans.builder.func.display(None).to_string());
         Ok(())
     }
 
@@ -384,7 +393,7 @@ impl JIT {
         for (func_name, func_clif) in &self.clif {
             let mut func_clif = func_clif.clone();
             if show_vars {
-                for (var_name, var) in &self.variables[func_name] {
+                for (var_name, var) in &self.func_variables[func_name] {
                     let clif_var_name = format!("v{}", var.inner().index());
                     func_clif = func_clif
                         .replace(&clif_var_name, &format!("{}~{}", clif_var_name, var_name));
@@ -562,22 +571,39 @@ impl SValue {
     }
 }
 
-pub struct Env<'a> {
-    pub constant_vars: &'a HashMap<String, SConstant>,
+pub struct Env {
+    pub constant_vars: HashMap<String, SConstant>,
     pub struct_map: HashMap<String, StructDef>,
-    pub variables: HashMap<String, SVariable>,
     pub ptr_ty: types::Type,
     pub funcs: HashMap<String, Function>,
 }
 
-/// A collection of state used for translating from toy-language AST nodes
+/// A collection of state used for translating from Sarus AST nodes
 /// into Cranelift IR.
 struct FunctionTranslator<'a> {
     builder: FunctionBuilder<'a>,
     module: &'a mut JITModule,
-    env: &'a Env<'a>,
+    env: Env,
     func: &'a Function,
     ptr_ty: types::Type,
+
+    pub variables: HashMap<String, SVariable>,
+
+    // Aliases to outer vars for use instead of arg/returns
+    pub inline_outer_var_aliases: HashMap<String, String>,
+
+    // Stack of prefixes for inline
+    // when entering an inline section the func name will be appended
+    // when leaving the inline section the func name will be removed
+    // these will be joined with the var names like this "func1->func2->var_name"
+    pub inline_prefix: Vec<String>,
+
+    // Variables that need to be accessed by inline functions
+    pub inline_variables: HashMap<String, SVariable>,
+
+    // so that we can add inline vars
+    entry_block: Block,
+    var_index: usize,
 }
 
 impl<'a> FunctionTranslator<'a> {
@@ -620,8 +646,9 @@ impl<'a> FunctionTranslator<'a> {
                 ArraySized::Unsized,
             )),
             Expr::Identifier(code_ref, name) => {
-                if let Some(svar) = self.env.variables.get(name) {
-                    SValue::get_from_variable(&mut self.builder, svar)
+                if let Ok(svar) = self.get_variable(code_ref, name) {
+                    let svar = svar.clone();
+                    SValue::get_from_variable(&mut self.builder, &svar)
                 } else if let Some(sval) = self.translate_constant(code_ref, name)? {
                     Ok(sval)
                 } else {
@@ -666,6 +693,27 @@ impl<'a> FunctionTranslator<'a> {
             Expr::ArrayAccess(code_ref, name, idx_expr) => {
                 let idx_val = self.idx_expr_to_val(idx_expr)?;
                 self.translate_array_get_from_var(code_ref, name.to_string(), idx_val, false)
+            }
+        }
+    }
+
+    fn get_variable(&mut self, code_ref: &CodeRef, name: &str) -> anyhow::Result<&SVariable> {
+        if self.inline_prefix.len() > 0 {
+            //We are in an inline section
+            let name = format!("{}->{}", self.inline_prefix.join("->"), name);
+            let name = if let Some(alias_name) = self.inline_outer_var_aliases.get(&name) {
+                alias_name.as_str()
+            } else {
+                name.as_str()
+            };
+            match self.inline_variables.get(name) {
+                Some(v) => Ok(v),
+                None => anyhow::bail!("{} inline variable {} not found", code_ref, name),
+            }
+        } else {
+            match self.variables.get(name) {
+                Some(v) => Ok(v),
+                None => anyhow::bail!("{} variable {} not found", code_ref, name),
             }
         }
     }
@@ -1199,10 +1247,8 @@ impl<'a> FunctionTranslator<'a> {
                         }
                     }
                     Expr::Identifier(code_ref, name) => {
-                        let dst_svar = match self.env.variables.get(name) {
-                            Some(v) => v,
-                            None => anyhow::bail!("variable {} not found", name),
-                        };
+                        //Can this be done without clone?
+                        let dst_svar = self.get_variable(code_ref, name)?.clone();
 
                         for arg in &self.func.params {
                             if *name == arg.name {
@@ -1276,7 +1322,7 @@ impl<'a> FunctionTranslator<'a> {
                         }
 
                         if let SVariable::Struct(var_name, struct_name, var, return_struct) =
-                            dst_svar
+                            &dst_svar
                         {
                             //TODO also copy fixed array
                             if *return_struct {
@@ -1301,7 +1347,7 @@ impl<'a> FunctionTranslator<'a> {
                                     self.module.target_config(),
                                     &mut self.builder,
                                     self.env.struct_map[struct_name].size,
-                                    src_sval.expect_struct(struct_name, "translate_assign")?,
+                                    src_sval.expect_struct(&struct_name, "translate_assign")?,
                                     return_address,
                                     0,
                                 )?;
@@ -1338,13 +1384,10 @@ impl<'a> FunctionTranslator<'a> {
                         if let Expr::Binop(_code_ref, _, _, _) = dst_expr {
                             todo!()
                             //self.set_struct_field(dst_expr, values[i].clone())?
-                        } else if let Expr::Identifier(_code_ref, name) = dst_expr {
-                            let var = match self.env.variables.get(name) {
-                                Some(v) => v,
-                                None => anyhow::bail!("variable {} not found", name),
-                            };
+                        } else if let Expr::Identifier(code_ref, name) = dst_expr {
+                            let var = self.get_variable(code_ref, name)?.inner();
                             self.builder
-                                .def_var(var.inner(), values[i].inner("translate_assign")?);
+                                .def_var(var, values[i].inner("translate_assign")?);
                         } else {
                             todo!()
                         }
@@ -1371,10 +1414,7 @@ impl<'a> FunctionTranslator<'a> {
         idx_val: Value,
         get_address: bool,
     ) -> anyhow::Result<SValue> {
-        let variable = match self.env.variables.get(&name) {
-            Some(v) => v.clone(),
-            None => anyhow::bail!("variable {} not found", name),
-        };
+        let variable = self.get_variable(code_ref, &name)?.clone();
         let array_expr_type = &variable.expr_type(code_ref)?;
 
         match variable {
@@ -1535,10 +1575,7 @@ impl<'a> FunctionTranslator<'a> {
         val: &SValue,
     ) -> anyhow::Result<SValue> {
         //TODO crash if idx_val > ExprType::Array(_, len)
-        let variable = match self.env.variables.get(&name) {
-            Some(v) => v.clone(),
-            None => anyhow::bail!("variable {} not found", name),
-        };
+        let variable = self.get_variable(&CodeRef::z(), &name)?.clone();
 
         let array_address = self.builder.use_var(variable.inner());
 
@@ -1798,11 +1835,11 @@ impl<'a> FunctionTranslator<'a> {
         let mut arg_values = Vec::new();
         if let Some(impl_sval) = impl_val {
             fn_name = format!("{}.{}", impl_sval.to_string(), fn_name);
-            arg_values.push(impl_sval.inner("translate_call")?);
+            arg_values.push(impl_sval);
         }
 
         for expr in args.iter() {
-            arg_values.push(self.translate_expr(expr)?.inner("translate_call")?)
+            arg_values.push(self.translate_expr(expr)?)
         }
 
         if is_macro {
@@ -1810,35 +1847,22 @@ impl<'a> FunctionTranslator<'a> {
             // returns = (macros[fn_name])(code_ref, arg_values, self.env)
         }
 
-        let stack_slot_return = {
-            if !self.env.funcs.contains_key(&fn_name) {
-                anyhow::bail!("{} function {} not found", code_ref, fn_name)
-            }
-            let returns = &self.env.funcs[&fn_name].returns;
-            if returns.len() > 0 {
-                if let ExprType::Struct(_code_ref, name) = &returns[0].expr_type {
-                    if let Some(s) = self.env.struct_map.get(&name.to_string()) {
-                        Some((name.to_string(), s.size))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        };
+        if !self.env.funcs.contains_key(&fn_name) {
+            anyhow::bail!("{} function {} not found", code_ref, fn_name)
+        }
+        let returns = &self.env.funcs[&fn_name].returns;
 
-        call_with_values(
-            &code_ref,
-            &fn_name,
-            &arg_values,
-            &self.env.funcs,
-            &mut self.module,
-            &mut self.builder,
-            stack_slot_return,
-        )
+        let mut stack_slot_return = None;
+
+        if returns.len() > 0 {
+            if let ExprType::Struct(_code_ref, name) = &returns[0].expr_type {
+                if let Some(s) = self.env.struct_map.get(&name.to_string()) {
+                    stack_slot_return = Some((name.to_string(), s.size));
+                }
+            }
+        }
+
+        self.call_with_svalues(&code_ref, &fn_name, arg_values, stack_slot_return)
     }
 
     fn translate_constant(
@@ -1892,7 +1916,7 @@ impl<'a> FunctionTranslator<'a> {
         ));
 
         for field in fields.iter() {
-            let dst_field_def = &self.env.struct_map[struct_name].fields[&field.field_name];
+            let dst_field_def = &self.env.struct_map[struct_name].fields[&field.field_name].clone();
             let sval = self.translate_expr(&field.expr)?;
 
             let mem_copy = match &sval {
@@ -2032,21 +2056,15 @@ impl<'a> FunctionTranslator<'a> {
                 anyhow::bail!("struct type not found")
             }
         } else {
-            if self.env.variables.contains_key(&parts[0]) {
-                if let SVariable::Struct(_var_name, vstruct_name, var, _return_struct) =
-                    &self.env.variables[&parts[0]]
-                {
-                    let base_struct_var_ptr = self.builder.use_var(*var);
-                    start = 1;
-                    struct_name = vstruct_name.to_string();
-                    base_struct_var_ptr
-                } else {
-                    anyhow::bail!("struct type not found")
-                }
+            let svar = self.get_variable(&CodeRef::z(), &parts[0])?.clone();
+            if let SVariable::Struct(_var_name, vstruct_name, var, _return_struct) = svar {
+                let base_struct_var_ptr = self.builder.use_var(var);
+                start = 1;
+                struct_name = vstruct_name.to_string();
+                base_struct_var_ptr
             } else {
-                anyhow::bail!("variable {} not found", &parts[0])
+                anyhow::bail!("struct type not found")
             }
-            //(&self.env.variables[&parts[0]], 1)
         };
 
         let mut parent_struct_field = &self.env.struct_map[&struct_name].fields[&parts[start]];
@@ -2271,16 +2289,235 @@ impl<'a> FunctionTranslator<'a> {
     }
 
     fn call_panic(&mut self, code_ref: &CodeRef, message: &String) -> anyhow::Result<()> {
-        call_with_values(
-            &code_ref,
-            "panic",
-            &[self.translate_string(message)?.inner("call_panic")?],
-            &self.env.funcs,
-            self.module,
-            &mut self.builder,
-            None,
-        )?;
+        let arg_values = vec![self.translate_string(message)?];
+        self.call_with_svalues(&code_ref, "panic", arg_values, None)?;
         Ok(())
+    }
+
+    fn call_with_svalues(
+        &mut self,
+        code_ref: &CodeRef,
+        fn_name: &str,
+        arg_svalues: Vec<SValue>,
+        stack_slot_return: Option<(String, usize)>,
+    ) -> anyhow::Result<SValue> {
+        let fn_name = &fn_name.to_string();
+
+        if !self.env.funcs.contains_key(fn_name) {
+            anyhow::bail!("{} function {} not found", code_ref, fn_name)
+        }
+        let func = self.env.funcs[fn_name].clone();
+
+        let inline_function_requested = match func.inline {
+            InlineKind::Default => false, //TODO make default still inline if it seems worth it
+            InlineKind::Never => false,
+            InlineKind::Always => true,
+            InlineKind::Often => true, //TODO make often not inline if it's an issue
+        };
+
+        let inline_function = inline_function_requested && !func.extern_func;
+
+        if func.params.len() != arg_svalues.len() {
+            anyhow::bail!(
+                "function call to {} has {} args, but function description has {}",
+                fn_name,
+                arg_svalues.len(),
+                func.params.len()
+            )
+        }
+
+        let mut arg_values = Vec::new();
+
+        for arg_svalue in &arg_svalues {
+            arg_values.push(arg_svalue.inner("call_with_svalues")?)
+        }
+
+        if func.extern_func {
+            if let Some(v) = sarus_std_lib::translate_std(
+                self.module.target_config().pointer_type(),
+                &mut self.builder,
+                code_ref,
+                fn_name,
+                &arg_values,
+            )? {
+                return Ok(v);
+            }
+        }
+
+        let mut sig = self.module.make_signature();
+
+        let ptr_ty = self.module.target_config().pointer_type();
+
+        let mut arg_values = Vec::from(arg_values); //in case we need to insert a val for the StructReturnSlot
+
+        for val in arg_values.iter() {
+            sig.params
+                .push(AbiParam::new(self.builder.func.dfg.value_type(*val)));
+        }
+
+        let stack_slot_address = if let Some((fn_name, size)) = &stack_slot_return {
+            //setup StackSlotData to be used as a StructReturnSlot
+            let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
+                if inline_function {
+                    StackSlotKind::ExplicitSlot
+                } else {
+                    StackSlotKind::StructReturnSlot
+                },
+                *size as u32,
+            ));
+            //get stack address of StackSlotData
+            let stack_slot_address =
+                self.builder
+                    .ins()
+                    .stack_addr(ptr_ty, stack_slot, Offset32::new(0));
+            arg_values.insert(0, stack_slot_address);
+            sig.params
+                .insert(0, AbiParam::special(ptr_ty, ArgumentPurpose::StructReturn));
+            Some((fn_name.clone(), stack_slot_address))
+        } else {
+            None
+        };
+
+        if stack_slot_return.is_none() {
+            for ret_arg in &func.returns {
+                sig.returns.push(AbiParam::new(
+                    ret_arg.expr_type.cranelift_type(ptr_ty, false)?,
+                ));
+            }
+        }
+
+        let res = if inline_function && !func.extern_func {
+            trace!("{} inlining function {}", code_ref, &func.name);
+
+            //It seems like this could be done once and the block could be stored, then just jumped to.
+            //But, is this really the same as inlining? It seems like it should at worst have the
+            //performance of a if/then branch without the branch condition (just a jump),
+            //also would it be faster if we were calling all Sarus internal functions this way?
+
+            //let func_block = self.builder.create_block();
+            //self.builder.ins().jump(func_block, &[]); //&arg_values
+            //self.builder.switch_to_block(func_block);
+            //self.builder.seal_block(func_block);
+            //for expr in &func.body {
+            //    trans.translate_expr(expr)?;
+            //}
+            //self.builder.block_params(func_block).to_vec()
+
+            //------------
+            /*
+            TODO: create alias table for func parameter and return var names:
+                (this will only work for explicit var names in the func call
+                 we'll also need a way to actually get these identifiers)
+                a = 5
+                b = 6
+                c = add_and_1(a, b)
+
+                fn add(x, y) -> (z) {
+                    and_1 = 1
+                    c = x + y + and_1
+                }
+
+                alias_table = [
+                    "add->x" : "a"
+                    "add->y" : "b"
+                    "add->z" : "c"
+                ]
+
+                the alias table needs to work like a stack, removing just the ones added here
+                    because this could already be in an inlined section
+                    also, if an alias already existed, don't add it again, and don't remove it after
+                    just make a local list here that has what needs to be removed
+                no need to declare new vars for things in the alias table
+
+                any new vars will need to have a prefix added to them.
+                    It could be something that isn't allowed in normal var names. currently it's using "->"
+                    "func_name1->var_name"
+                    then two layers deep it would be
+                    "func_name1->func_name2->var_name"
+                    this is kept in self.inline_prefix
+
+                we also have to include the prefix in the alias table so we don't reference some var 2 layers up
+
+            */
+
+            self.inline_prefix.push(fn_name.to_string());
+
+            let existing_vars = self
+                .inline_variables
+                .keys()
+                .map(|v| v.to_string())
+                .collect::<HashSet<_>>();
+
+            let inline_data = InlineVarData {
+                prefix: self.inline_prefix.join("->"),
+                arg_values,
+            };
+
+            declare_variables(
+                &mut self.var_index,
+                &mut self.builder,
+                &mut self.module,
+                &func.params,
+                &func.returns,
+                func.body.as_slice(),
+                self.entry_block,
+                &mut self.env,
+                &mut self.inline_variables,
+                &mut Some(inline_data),
+            )?;
+
+            for expr in &func.body {
+                self.translate_expr(expr)?;
+            }
+
+            let mut _return = Vec::new();
+            for ret in &func.returns {
+                let v = self.inline_variables
+                    [&format!("{}->{}", self.inline_prefix.join("->"), &ret.name)]
+                    .inner();
+                _return.push(self.builder.use_var(v))
+            }
+
+            self.inline_prefix.pop();
+
+            //Remove vars from self.inline_variables that are no longer needed
+            self.inline_variables
+                .retain(|k, _| existing_vars.contains(k));
+
+            _return
+        } else {
+            let callee = self
+                .module
+                .declare_function(&fn_name, Linkage::Import, &sig)
+                .expect("problem declaring function");
+            let local_callee = self
+                .module
+                .declare_func_in_func(callee, &mut self.builder.func);
+            let call = self.builder.ins().call(local_callee, &arg_values);
+            self.builder.inst_results(call).to_vec()
+        };
+
+        if let Some((fn_name, stack_slot_address)) = stack_slot_address {
+            Ok(SValue::Struct(fn_name, stack_slot_address))
+        } else if res.len() > 1 {
+            Ok(SValue::Tuple(
+                res.iter()
+                    .zip(func.returns.iter())
+                    .map(move |(v, arg)| {
+                        SValue::from(&mut self.builder, &arg.expr_type, *v).unwrap()
+                    })
+                    .collect::<Vec<SValue>>(),
+            ))
+        } else if res.len() == 1 {
+            let res = *res.first().unwrap();
+            Ok(SValue::from(
+                &mut self.builder,
+                &func.returns.first().unwrap().expr_type,
+                res,
+            )?)
+        } else {
+            Ok(SValue::Void)
+        }
     }
 }
 
@@ -2333,105 +2570,6 @@ fn copy_to_stack_slot(
     );
 
     Ok(stack_slot_address)
-}
-
-fn call_with_values(
-    code_ref: &CodeRef,
-    name: &str,
-    arg_values: &[Value],
-    funcs: &HashMap<String, Function>,
-    module: &mut JITModule,
-    builder: &mut FunctionBuilder,
-    stack_slot_return: Option<(String, usize)>,
-) -> anyhow::Result<SValue> {
-    let name = &name.to_string();
-
-    if !funcs.contains_key(name) {
-        anyhow::bail!("{} function {} not found", code_ref, name)
-    }
-    let func = funcs[name].clone();
-    if func.params.len() != arg_values.len() {
-        anyhow::bail!(
-            "function call to {} has {} args, but function description has {}",
-            name,
-            arg_values.len(),
-            func.params.len()
-        )
-    }
-
-    if func.extern_func {
-        if let Some(v) = sarus_std_lib::translate_std(
-            module.target_config().pointer_type(),
-            builder,
-            code_ref,
-            name,
-            arg_values,
-        )? {
-            return Ok(v);
-        }
-    }
-
-    let mut sig = module.make_signature();
-
-    let ptr_ty = module.target_config().pointer_type();
-
-    let mut arg_values = Vec::from(arg_values); //in case we need to insert a val for the StructReturnSlot
-
-    for val in arg_values.iter() {
-        sig.params
-            .push(AbiParam::new(builder.func.dfg.value_type(*val)));
-    }
-
-    let stack_slot_address = if let Some((name, size)) = &stack_slot_return {
-        //setup StackSlotData to be used as a StructReturnSlot
-        let stack_slot = builder.create_stack_slot(StackSlotData::new(
-            StackSlotKind::StructReturnSlot,
-            *size as u32,
-        ));
-        //get stack address of StackSlotData
-        let stack_slot_address = builder
-            .ins()
-            .stack_addr(ptr_ty, stack_slot, Offset32::new(0));
-        arg_values.insert(0, stack_slot_address);
-        sig.params
-            .insert(0, AbiParam::special(ptr_ty, ArgumentPurpose::StructReturn));
-        Some((name.clone(), stack_slot_address))
-    } else {
-        None
-    };
-
-    if stack_slot_return.is_none() {
-        for ret_arg in &func.returns {
-            sig.returns.push(AbiParam::new(
-                ret_arg.expr_type.cranelift_type(ptr_ty, false)?,
-            ));
-        }
-    }
-    let callee = module
-        .declare_function(&name, Linkage::Import, &sig)
-        .expect("problem declaring function");
-    let local_callee = module.declare_func_in_func(callee, &mut builder.func);
-    let call = builder.ins().call(local_callee, &arg_values);
-    let res = builder.inst_results(call).to_vec();
-    if let Some((name, stack_slot_address)) = stack_slot_address {
-        Ok(SValue::Struct(name, stack_slot_address))
-    } else if res.len() > 1 {
-        Ok(SValue::Tuple(
-            res.iter()
-                .zip(func.returns.iter())
-                .map(move |(v, arg)| SValue::from(builder, &arg.expr_type, *v).unwrap())
-                .collect::<Vec<SValue>>(),
-        ))
-    } else if res.len() == 1 {
-        let res = *res.first().unwrap();
-        Ok(SValue::from(
-            builder,
-            &func.returns.first().unwrap().expr_type,
-            res,
-        )?)
-    } else {
-        Ok(SValue::Void)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2595,8 +2733,23 @@ impl SVariable {
     }
 }
 
-#[instrument(level = "info", skip(builder, module, stmts, entry_block, env))]
+struct InlineVarData {
+    prefix: String,
+    arg_values: Vec<Value>,
+}
+
+impl InlineVarData {
+    fn get_name(&self, name: &str) -> String {
+        format!("{}->{}", self.prefix, name)
+    }
+}
+
+#[instrument(
+    level = "info",
+    skip(builder, module, stmts, entry_block, env, inline_data)
+)]
 fn declare_variables(
+    index: &mut usize,
     builder: &mut FunctionBuilder,
     module: &mut dyn Module,
     params: &[Arg],
@@ -2604,9 +2757,9 @@ fn declare_variables(
     stmts: &[Expr],
     entry_block: Block,
     env: &mut Env,
+    variables: &mut HashMap<String, SVariable>,
+    inline_data: &mut Option<InlineVarData>,
 ) -> anyhow::Result<()> {
-    let mut index = 0;
-
     let entry_block_is_offset = if returns.len() > 0 {
         if let ExprType::Struct(code_ref, struct_name) = &returns[0].expr_type {
             trace!(
@@ -2623,22 +2776,44 @@ fn declare_variables(
             // https://docs.wasmtime.dev/api/cranelift_codegen/ir/enum.ArgumentPurpose.html#variant.StructReturn
 
             let return_struct_arg = &returns[0];
-            let return_struct_param_val = builder.block_params(entry_block)[0];
+            let (name, val) = if let Some(inline_data) = inline_data {
+                (
+                    inline_data.get_name(&return_struct_arg.name),
+                    inline_data.arg_values[0],
+                )
+            } else {
+                let return_struct_param_val = builder.block_params(entry_block)[0];
+                (return_struct_arg.name.clone(), return_struct_param_val)
+            };
             let var = declare_variable(
                 module,
                 builder,
-                &mut env.variables,
-                &mut index,
-                return_struct_arg,
+                variables,
+                index,
+                name,
+                &return_struct_arg.expr_type,
                 true,
             )?;
             if let Some(var) = var {
-                builder.def_var(var.inner(), return_struct_param_val);
+                builder.def_var(var.inner(), val);
             }
             true
         } else {
             for arg in returns {
-                declare_variable(module, builder, &mut env.variables, &mut index, arg, false)?;
+                let name = if let Some(inline_data) = inline_data {
+                    inline_data.get_name(&arg.name)
+                } else {
+                    arg.name.clone()
+                };
+                declare_variable(
+                    module,
+                    builder,
+                    variables,
+                    index,
+                    name,
+                    &arg.expr_type,
+                    false,
+                )?;
             }
             false
         }
@@ -2647,12 +2822,33 @@ fn declare_variables(
     };
 
     for (i, arg) in params.iter().enumerate() {
-        let val = if entry_block_is_offset {
-            builder.block_params(entry_block)[i + 1]
+        let val = if let Some(inline_data) = inline_data {
+            if entry_block_is_offset {
+                inline_data.arg_values[i + 1]
+            } else {
+                inline_data.arg_values[i]
+            }
         } else {
-            builder.block_params(entry_block)[i]
+            if entry_block_is_offset {
+                builder.block_params(entry_block)[i + 1]
+            } else {
+                builder.block_params(entry_block)[i]
+            }
         };
-        let var = declare_variable(module, builder, &mut env.variables, &mut index, arg, false)?;
+        let name = if let Some(inline_data) = inline_data {
+            inline_data.get_name(&arg.name)
+        } else {
+            arg.name.clone()
+        };
+        let var = declare_variable(
+            module,
+            builder,
+            variables,
+            index,
+            name,
+            &arg.expr_type,
+            false,
+        )?;
         if let Some(var) = var {
             builder.def_var(var.inner(), val);
         }
@@ -2662,9 +2858,11 @@ fn declare_variables(
         declare_variables_in_stmt(
             module.target_config().pointer_type(),
             builder,
-            &mut index,
+            index,
             expr,
             env,
+            variables,
+            inline_data,
         )?;
     }
 
@@ -2679,36 +2877,80 @@ fn declare_variables_in_stmt(
     index: &mut usize,
     expr: &Expr,
     env: &mut Env,
+    variables: &mut HashMap<String, SVariable>,
+    inline_data: &mut Option<InlineVarData>,
 ) -> anyhow::Result<()> {
     match *expr {
         Expr::Assign(_code_ref, ref to_exprs, ref from_exprs) => {
             if to_exprs.len() == from_exprs.len() {
                 for (to_expr, _from_expr) in to_exprs.iter().zip(from_exprs.iter()) {
                     if let Expr::Identifier(_code_ref, name) = to_expr {
-                        declare_variable_from_expr(ptr_type, expr, builder, index, &[name], env)?;
+                        declare_variable_from_expr(
+                            ptr_type,
+                            expr,
+                            builder,
+                            index,
+                            &vec![name.to_string()],
+                            env,
+                            variables,
+                            inline_data,
+                        )?;
                     }
                 }
             } else {
                 let mut sto_exprs = Vec::new();
                 for to_expr in to_exprs.iter() {
                     if let Expr::Identifier(_code_ref, name) = to_expr {
-                        sto_exprs.push(name.as_str());
+                        sto_exprs.push(name.to_string());
                     }
                 }
-                declare_variable_from_expr(ptr_type, expr, builder, index, &sto_exprs, env)?;
+                declare_variable_from_expr(
+                    ptr_type,
+                    expr,
+                    builder,
+                    index,
+                    &sto_exprs,
+                    env,
+                    variables,
+                    inline_data,
+                )?;
             }
         }
         Expr::IfElse(_code_ref, ref _condition, ref then_body, ref else_body) => {
             for stmt in then_body {
-                declare_variables_in_stmt(ptr_type, builder, index, &stmt, env)?;
+                declare_variables_in_stmt(
+                    ptr_type,
+                    builder,
+                    index,
+                    &stmt,
+                    env,
+                    variables,
+                    inline_data,
+                )?;
             }
             for stmt in else_body {
-                declare_variables_in_stmt(ptr_type, builder, index, &stmt, env)?;
+                declare_variables_in_stmt(
+                    ptr_type,
+                    builder,
+                    index,
+                    &stmt,
+                    env,
+                    variables,
+                    inline_data,
+                )?;
             }
         }
         Expr::WhileLoop(_code_ref, ref _condition, ref loop_body) => {
             for stmt in loop_body {
-                declare_variables_in_stmt(ptr_type, builder, index, &stmt, env)?;
+                declare_variables_in_stmt(
+                    ptr_type,
+                    builder,
+                    index,
+                    &stmt,
+                    env,
+                    variables,
+                    inline_data,
+                )?;
             }
         }
         _ => (),
@@ -2722,8 +2964,10 @@ fn declare_variable_from_expr(
     expr: &Expr,
     builder: &mut FunctionBuilder,
     index: &mut usize,
-    names: &[&str],
+    names: &Vec<String>,
     env: &mut Env,
+    variables: &mut HashMap<String, SVariable>,
+    inline_data: &mut Option<InlineVarData>,
 ) -> anyhow::Result<()> {
     match expr {
         Expr::IfElse(_code_ref, _condition, then_body, _else_body) => {
@@ -2735,17 +2979,46 @@ fn declare_variable_from_expr(
                 index,
                 names,
                 env,
+                variables,
+                inline_data,
             )?;
         }
         Expr::Assign(_code_ref, ref _to_exprs, ref from_exprs) => {
             for expr in from_exprs.iter() {
-                let expr_type = ExprType::of(expr, env)?;
-                declare_variable_from_type(ptr_type, &expr_type, builder, index, names, env)?;
+                if let Some(inline_data) = inline_data {
+                    let expr_type = ExprType::of(expr, env, variables, &inline_data.prefix)?;
+                    let mut inline_names = Vec::new();
+                    for name in names {
+                        inline_names.push(inline_data.get_name(name));
+                    }
+                    declare_variable_from_type(
+                        ptr_type,
+                        &expr_type,
+                        builder,
+                        index,
+                        &inline_names,
+                        variables,
+                    )?;
+                } else {
+                    let expr_type = ExprType::of(expr, env, &variables, "")?;
+                    declare_variable_from_type(
+                        ptr_type, &expr_type, builder, index, names, variables,
+                    )?;
+                }
             }
         }
         expr => {
-            let expr_type = ExprType::of(expr, env)?;
-            declare_variable_from_type(ptr_type, &expr_type, builder, index, names, env)?;
+            if let Some(inline_data) = inline_data {
+                let expr_type = ExprType::of(expr, env, variables, &inline_data.prefix)?;
+                let mut inline_names = Vec::new();
+                for name in names {
+                    inline_names.push(inline_data.get_name(name));
+                }
+                declare_variable_from_type(ptr_type, &expr_type, builder, index, names, variables)?;
+            } else {
+                let expr_type = ExprType::of(expr, env, &variables, "")?;
+                declare_variable_from_type(ptr_type, &expr_type, builder, index, names, variables)?;
+            }
         }
     };
     Ok(())
@@ -2756,10 +3029,10 @@ fn declare_variable_from_type(
     expr_type: &ExprType,
     builder: &mut FunctionBuilder,
     index: &mut usize,
-    names: &[&str],
-    env: &mut Env,
+    names: &Vec<String>,
+    variables: &mut HashMap<String, SVariable>,
 ) -> anyhow::Result<()> {
-    let name = *names.first().unwrap();
+    let name = names.first().unwrap();
     if name.contains(".") {
         return Ok(());
     }
@@ -2768,36 +3041,33 @@ fn declare_variable_from_type(
             anyhow::bail!("{} can't assign void type to {}", code_ref, name)
         }
         ExprType::Bool(_code_ref) => {
-            if !env.variables.contains_key(name) {
+            if !variables.contains_key(name) {
                 let var = Variable::new(*index);
-                env.variables
-                    .insert(name.into(), SVariable::Bool(name.into(), var));
+                variables.insert(name.into(), SVariable::Bool(name.into(), var));
                 builder.declare_var(var, types::B1);
                 *index += 1;
             }
         }
         ExprType::F32(_code_ref) => {
-            if !env.variables.contains_key(name) {
+            if !variables.contains_key(name) {
                 let var = Variable::new(*index);
-                env.variables
-                    .insert(name.into(), SVariable::F32(name.into(), var));
+                variables.insert(name.into(), SVariable::F32(name.into(), var));
                 builder.declare_var(var, types::F32);
                 *index += 1;
             }
         }
         ExprType::I64(_code_ref) => {
-            if !env.variables.contains_key(name) {
+            if !variables.contains_key(name) {
                 let var = Variable::new(*index);
-                env.variables
-                    .insert(name.into(), SVariable::I64(name.into(), var));
+                variables.insert(name.into(), SVariable::I64(name.into(), var));
                 builder.declare_var(var, types::I64);
                 *index += 1;
             }
         }
         ExprType::Array(_code_ref, ty, size_type) => {
-            if !env.variables.contains_key(name) {
+            if !variables.contains_key(name) {
                 let var = Variable::new(*index);
-                env.variables.insert(
+                variables.insert(
                     name.into(),
                     SVariable::Array(
                         Box::new(SVariable::from(builder, ty, name.to_string(), var)?),
@@ -2809,10 +3079,9 @@ fn declare_variable_from_type(
             }
         }
         ExprType::Address(_code_ref) => {
-            if !env.variables.contains_key(name) {
+            if !variables.contains_key(name) {
                 let var = Variable::new(*index);
-                env.variables
-                    .insert(name.into(), SVariable::Address(name.into(), var));
+                variables.insert(name.into(), SVariable::Address(name.into(), var));
                 builder.declare_var(var, ptr_type);
                 *index += 1;
             }
@@ -2827,21 +3096,28 @@ fn declare_variable_from_type(
                             expr_type,
                             builder,
                             index,
-                            &[sname],
-                            env,
+                            &vec![sname.to_string()],
+                            variables,
                         )?
                     }
                     return Ok(());
                 }
             }
             for (expr_type, sname) in expr_types.iter().zip(names.iter()) {
-                declare_variable_from_type(ptr_type, expr_type, builder, index, &[sname], env)?
+                declare_variable_from_type(
+                    ptr_type,
+                    expr_type,
+                    builder,
+                    index,
+                    &vec![sname.to_string()],
+                    variables,
+                )?
             }
         }
         ExprType::Struct(_code_ref, structname) => {
-            if !env.variables.contains_key(name) {
+            if !variables.contains_key(name) {
                 let var = Variable::new(*index);
-                env.variables.insert(
+                variables.insert(
                     name.into(),
                     SVariable::Struct(name.into(), structname.to_string(), var, false),
                 );
@@ -2858,19 +3134,20 @@ fn declare_variable(
     builder: &mut FunctionBuilder,
     variables: &mut HashMap<String, SVariable>,
     index: &mut usize,
-    arg: &Arg,
+    arg_name: String,
+    expr_type: &ExprType,
     return_struct: bool,
 ) -> anyhow::Result<Option<SVariable>> {
     let ptr_ty = module.target_config().pointer_type();
-    if !variables.contains_key(&arg.name) {
-        trace!("declaring var {}", arg.name);
-        let (var, ty) = match &arg.expr_type {
+    if !variables.contains_key(&arg_name) {
+        trace!("declaring var {}", arg_name);
+        let (var, ty) = match expr_type {
             ExprType::F32(_code_ref) => (
-                SVariable::F32(arg.name.clone(), Variable::new(*index)),
+                SVariable::F32(arg_name.clone(), Variable::new(*index)),
                 types::F32,
             ),
             ExprType::I64(_code_ref) => (
-                SVariable::I64(arg.name.clone(), Variable::new(*index)),
+                SVariable::I64(arg_name.clone(), Variable::new(*index)),
                 types::I64,
             ),
             ExprType::Array(_code_ref, ty, size_type) => (
@@ -2878,7 +3155,7 @@ fn declare_variable(
                     Box::new(SVariable::from(
                         builder,
                         ty,
-                        arg.name.clone(),
+                        arg_name.clone(),
                         Variable::new(*index),
                     )?),
                     ArraySized::from(builder, size_type),
@@ -2886,18 +3163,18 @@ fn declare_variable(
                 ptr_ty,
             ),
             ExprType::Address(_code_ref) => (
-                SVariable::Address(arg.name.clone(), Variable::new(*index)),
+                SVariable::Address(arg_name.clone(), Variable::new(*index)),
                 ptr_ty,
             ),
             ExprType::Void(_code_ref) => return Ok(None),
             ExprType::Bool(_code_ref) => (
-                SVariable::Bool(arg.name.clone(), Variable::new(*index)),
+                SVariable::Bool(arg_name.clone(), Variable::new(*index)),
                 types::B1,
             ),
             ExprType::Tuple(_code_ref, _) => return Ok(None), //anyhow::bail!("single variable tuple not supported"),
             ExprType::Struct(_code_ref, structname) => (
                 SVariable::Struct(
-                    arg.name.clone(),
+                    arg_name.clone(),
                     structname.to_string(),
                     Variable::new(*index),
                     return_struct,
@@ -2905,14 +3182,14 @@ fn declare_variable(
                 ptr_ty,
             ),
         };
-        variables.insert(arg.name.clone(), var.clone());
+        variables.insert(arg_name.clone(), var.clone());
         builder.declare_var(var.inner(), ty);
         *index += 1;
         Ok(Some(var))
     } else {
         trace!(
             "variables already contains key {} no need to declare",
-            arg.name
+            arg_name
         );
         Ok(None)
     }

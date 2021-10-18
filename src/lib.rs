@@ -1,5 +1,6 @@
 use cranelift_jit::JITBuilder;
 
+use frontend::InlineKind;
 use validator::ExprType;
 
 pub use frontend::parser;
@@ -83,6 +84,7 @@ macro_rules! decl {
                 returns,
                 body: vec![],
                 extern_func: true,
+                inline: crate::frontend::InlineKind::Default,
             }))
 
         }
@@ -114,5 +116,6 @@ fn make_decl(
             .collect(),
         body: vec![],
         extern_func: true,
+        inline: InlineKind::Default,
     })
 }

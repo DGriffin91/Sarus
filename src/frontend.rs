@@ -374,7 +374,7 @@ pub enum Declaration {
     Function(Function),
     Metadata(Vec<String>, String),
     Struct(Struct),
-    StructMacro(String, Box<ExprType>),
+    StructMacro(String, Box<ExprType>), //Will probably change significantly or be removed
 }
 
 impl Display for Declaration {
@@ -424,6 +424,26 @@ impl Display for StructAssignField {
     }
 }
 
+/// Comparison operations
+#[derive(Debug, Copy, Clone)]
+pub enum InlineKind {
+    Default,
+    Never,
+    Always,
+    Often,
+}
+
+impl Display for InlineKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InlineKind::Default => write!(f, ""),
+            InlineKind::Never => write!(f, "never_inline"),
+            InlineKind::Always => write!(f, "always_inline"),
+            InlineKind::Often => write!(f, "inline"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: String,
@@ -431,6 +451,7 @@ pub struct Function {
     pub returns: Vec<Arg>,
     pub body: Vec<Expr>,
     pub extern_func: bool,
+    pub inline: InlineKind,
 }
 
 impl Function {
@@ -562,7 +583,7 @@ peg::parser!(pub grammar parser() for str {
         / expected!("identifier")
 
     rule function() -> Declaration
-        = _ ext:("extern")? _  "fn" name:identifier() _
+        = _ ext:("extern")? _ inline:function_inline_kind()? _  "fn" name:identifier() _
         "(" params:(i:arg() ** comma()) ")" _
         "->" _
         "(" returns:(i:arg() ** comma()) _ ")"
@@ -580,8 +601,14 @@ peg::parser!(pub grammar parser() for str {
             params,
             returns,
             body,
-            extern_func: if ext.is_some() {true} else {false},
+            extern_func: ext.is_some(),
+            inline: if let Some(inline) = inline {inline} else {InlineKind::Default},
         }) }
+
+    rule function_inline_kind() -> InlineKind
+    = "inline" {InlineKind::Often}
+    / "never_inline" {InlineKind::Never}
+    / "always_inline" {InlineKind::Always}
 
     rule arg() -> Arg
         = _ i:identifier() _ ":" _ t:type_label() _ { Arg {name: i.into(), expr_type: t.into(), default_to_float: false } }

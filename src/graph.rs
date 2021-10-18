@@ -5,7 +5,7 @@ use toposort_scc::IndexGraph;
 use crate::{
     frontend::{
         assign_op_to_assign, make_nonempty, parser, Arg, Binop, Cmp, CodeRef, Declaration, Expr,
-        Function,
+        Function, InlineKind,
     },
     jit, sarus_std_lib,
     validator::{ArraySizedExpr, ExprType},
@@ -273,5 +273,6 @@ fn build_graph_func(
         returns: vec![],
         body: main_body,
         extern_func: false,
+        inline: InlineKind::Default,
     }))
 }

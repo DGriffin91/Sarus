@@ -153,13 +153,24 @@ fn get_struct_field_type(
     parts: Vec<String>,
     lhs_val: &Option<ExprType>,
     code_ref: &CodeRef,
+    variables: &HashMap<String, SVariable>,
+    inline_prefix: &str,
 ) -> Result<ExprType, TypeError> {
     let (lhs_val, start) = if let Some(lhs_val) = lhs_val {
         (lhs_val.clone(), 0)
     } else {
-        if let Some(svar) = env.variables.get(&parts[0]) {
+        let id_name = &parts[0];
+        let id_name_s;
+        let id_name = if inline_prefix != "" {
+            id_name_s = format!("{}->{}", inline_prefix, id_name);
+            id_name_s.as_str()
+        } else {
+            id_name
+        };
+        if let Some(svar) = variables.get(id_name) {
             (svar.expr_type(code_ref).unwrap(), 1)
         } else {
+            error!("");
             return Err(TypeError::UnknownVariable(*code_ref, parts[0].to_string()));
         }
     };
@@ -267,12 +278,24 @@ impl ExprType {
         }
     }
 
-    pub fn of(expr: &Expr, env: &Env) -> Result<ExprType, TypeError> {
+    pub fn of(
+        expr: &Expr,
+        env: &Env,
+        variables: &HashMap<String, SVariable>,
+        inline_prefix: &str,
+    ) -> Result<ExprType, TypeError> {
         let res = match expr {
-            Expr::Identifier(code_ref, id_name) => {
-                if env.variables.contains_key(id_name) {
-                    env.variables[id_name].expr_type(&code_ref).unwrap()
-                } else if let Some(v) = env.constant_vars.get(id_name) {
+            Expr::Identifier(code_ref, orig_id_name) => {
+                let id_name_s;
+                let id_name = if inline_prefix != "" {
+                    id_name_s = format!("{}->{}", inline_prefix, orig_id_name);
+                    id_name_s.as_str()
+                } else {
+                    orig_id_name
+                };
+                if variables.contains_key(id_name) {
+                    variables[id_name].expr_type(&code_ref).unwrap()
+                } else if let Some(v) = env.constant_vars.get(orig_id_name) {
                     v.expr_type(Some(*code_ref)) //Constants like PI, TAU...
                 } else {
                     dbg!(&id_name);
@@ -285,7 +308,7 @@ impl ExprType {
             Expr::LiteralString(code_ref, _) => ExprType::Address(*code_ref), //TODO change to char
             Expr::LiteralArray(code_ref, e, len) => ExprType::Array(
                 *code_ref,
-                Box::new(ExprType::of(e, env)?),
+                Box::new(ExprType::of(e, env, variables, inline_prefix)?),
                 ArraySizedExpr::Fixed(*len),
             ),
             Expr::Binop(binop_code_ref, binop, lhs, rhs) => match binop {
@@ -313,7 +336,12 @@ impl ExprType {
                                                 lhs_val
                                             } else {
                                                 //This is a lhs call
-                                                lhs_val = Some(ExprType::of(&expr, env)?);
+                                                lhs_val = Some(ExprType::of(
+                                                    &expr,
+                                                    env,
+                                                    variables,
+                                                    inline_prefix,
+                                                )?);
                                                 continue;
                                             }
                                         } else if path.len() > 1 || lhs_val.is_some() {
@@ -321,9 +349,16 @@ impl ExprType {
                                                 .iter()
                                                 .map(|lhs_i: &Expr| lhs_i.to_string())
                                                 .collect::<Vec<String>>();
-                                            get_struct_field_type(&env, spath, &lhs_val, &code_ref)?
+                                            get_struct_field_type(
+                                                &env,
+                                                spath,
+                                                &lhs_val,
+                                                &code_ref,
+                                                variables,
+                                                inline_prefix,
+                                            )?
                                         } else {
-                                            ExprType::of(&path[0], env)?
+                                            ExprType::of(&path[0], env, variables, inline_prefix)?
                                         };
 
                                         let fn_name = format!("{}.{}", sval.to_string(), fn_name);
@@ -349,7 +384,8 @@ impl ExprType {
                                         for (i, (param, arg)) in
                                             params.iter().skip(1).zip(args.iter()).enumerate()
                                         {
-                                            let targ = ExprType::of(arg, env)?;
+                                            let targ =
+                                                ExprType::of(arg, env, variables, inline_prefix)?;
                                             if param.expr_type != targ {
                                                 return Err(TypeError::TypeMismatchSpecific {
                                                     c: code_ref,
@@ -378,10 +414,20 @@ impl ExprType {
                                     Expr::LiteralInt(_code_ref, _) => todo!(),
                                     Expr::LiteralBool(_code_ref, _) => todo!(),
                                     Expr::LiteralString(_code_ref, _) => {
-                                        lhs_val = Some(ExprType::of(&expr, env)?);
+                                        lhs_val = Some(ExprType::of(
+                                            &expr,
+                                            env,
+                                            variables,
+                                            inline_prefix,
+                                        )?);
                                     }
                                     Expr::LiteralArray(_code_ref, _, _) => {
-                                        lhs_val = Some(ExprType::of(&expr, env)?);
+                                        lhs_val = Some(ExprType::of(
+                                            &expr,
+                                            env,
+                                            variables,
+                                            inline_prefix,
+                                        )?);
                                     }
                                     Expr::Identifier(_code_ref, _i) => path.push(expr),
                                     Expr::Binop(_code_ref, op, lhs, rhs) => {
@@ -403,10 +449,16 @@ impl ExprType {
                                     Expr::Block(_code_ref, _) => todo!(),
                                     Expr::GlobalDataAddr(_code_ref, _) => todo!(),
                                     Expr::Parentheses(_code_ref, e) => {
-                                        lhs_val = Some(ExprType::of(&e, env)?)
+                                        lhs_val =
+                                            Some(ExprType::of(&e, env, variables, inline_prefix)?)
                                     }
                                     Expr::ArrayAccess(code_ref, name, idx_expr) => {
-                                        match ExprType::of(&idx_expr, env)? {
+                                        match ExprType::of(
+                                            &idx_expr,
+                                            env,
+                                            variables,
+                                            inline_prefix,
+                                        )? {
                                             ExprType::I64(_code_ref) => (),
                                             e => {
                                                 error!("");
@@ -425,13 +477,23 @@ impl ExprType {
                                             spath.push(name.to_string());
                                             if let ExprType::Array(_code_ref, ty, _len) =
                                                 get_struct_field_type(
-                                                    &env, spath, &lhs_val, &code_ref,
+                                                    &env,
+                                                    spath,
+                                                    &lhs_val,
+                                                    &code_ref,
+                                                    variables,
+                                                    inline_prefix,
                                                 )?
                                             {
                                                 lhs_val = Some(*ty.to_owned());
                                             }
                                         } else {
-                                            lhs_val = Some(ExprType::of(&expr, env)?);
+                                            lhs_val = Some(ExprType::of(
+                                                &expr,
+                                                env,
+                                                variables,
+                                                inline_prefix,
+                                            )?);
                                         }
 
                                         path = Vec::new();
@@ -451,6 +513,8 @@ impl ExprType {
                             spath,
                             &lhs_val,
                             binop_code_ref,
+                            variables,
+                            inline_prefix,
                         )?);
                     }
 
@@ -461,8 +525,8 @@ impl ExprType {
                     }
                 }
                 _ => {
-                    let lt = ExprType::of(lhs, env)?;
-                    let rt = ExprType::of(rhs, env)?;
+                    let lt = ExprType::of(lhs, env, variables, inline_prefix)?;
+                    let rt = ExprType::of(rhs, env, variables, inline_prefix)?;
                     if lt == rt {
                         lt
                     } else {
@@ -475,10 +539,10 @@ impl ExprType {
                     }
                 }
             },
-            Expr::Unaryop(_code_ref, _, l) => ExprType::of(l, env)?,
+            Expr::Unaryop(_code_ref, _, l) => ExprType::of(l, env, variables, inline_prefix)?,
             Expr::Compare(code_ref, _, _, _) => ExprType::Bool(*code_ref),
             Expr::IfThen(code_ref, econd, _) => {
-                let tcond = ExprType::of(econd, env)?;
+                let tcond = ExprType::of(econd, env, variables, inline_prefix)?;
                 if tcond != ExprType::Bool(*code_ref) {
                     error!("");
                     return Err(TypeError::TypeMismatch {
@@ -490,7 +554,7 @@ impl ExprType {
                 ExprType::Void(*code_ref)
             }
             Expr::IfElse(code_ref, econd, etrue, efalse) => {
-                let tcond = ExprType::of(econd, env)?;
+                let tcond = ExprType::of(econd, env, variables, inline_prefix)?;
                 if tcond != ExprType::Bool(*code_ref) {
                     error!("");
                     return Err(TypeError::TypeMismatch {
@@ -502,14 +566,14 @@ impl ExprType {
 
                 let ttrue = etrue
                     .iter()
-                    .map(|e| ExprType::of(e, env))
+                    .map(|e| ExprType::of(e, env, variables, inline_prefix))
                     .collect::<Result<Vec<_>, _>>()?
                     .last()
                     .cloned()
                     .unwrap_or(ExprType::Void(*code_ref));
                 let tfalse = efalse
                     .iter()
-                    .map(|e| ExprType::of(e, env))
+                    .map(|e| ExprType::of(e, env, variables, inline_prefix))
                     .collect::<Result<Vec<_>, _>>()?
                     .last()
                     .cloned()
@@ -528,7 +592,7 @@ impl ExprType {
             }
             Expr::Assign(code_ref, lhs_exprs, rhs_exprs) => {
                 let tlen = match rhs_exprs.len().into() {
-                    1 => ExprType::of(&rhs_exprs[0], env)?.tuple_size(),
+                    1 => ExprType::of(&rhs_exprs[0], env, variables, inline_prefix)?.tuple_size(),
                     n => n,
                 };
                 if usize::from(lhs_exprs.len()) != tlen {
@@ -549,11 +613,11 @@ impl ExprType {
                     //);
                     if let Expr::Identifier(_code_ref, _name) = lhs_expr {
                         //The lhs_expr is just a new var
-                        let rhs_type = ExprType::of(rhs_expr, env)?;
+                        let rhs_type = ExprType::of(rhs_expr, env, variables, inline_prefix)?;
                         rhs_types.push(rhs_type);
                     } else {
-                        let lhs_type = ExprType::of(lhs_expr, env)?;
-                        let rhs_type = ExprType::of(rhs_expr, env)?;
+                        let lhs_type = ExprType::of(lhs_expr, env, variables, inline_prefix)?;
+                        let rhs_type = ExprType::of(rhs_expr, env, variables, inline_prefix)?;
 
                         if lhs_type != rhs_type {
                             error!("");
@@ -568,9 +632,9 @@ impl ExprType {
                 }
                 ExprType::Void(*code_ref)
             }
-            Expr::AssignOp(_code_ref, _, _, e) => ExprType::of(e, env)?,
+            Expr::AssignOp(_code_ref, _, _, e) => ExprType::of(e, env, variables, inline_prefix)?,
             Expr::WhileLoop(code_ref, idx_expr, stmts) => {
-                let idx_type = ExprType::of(idx_expr, env)?;
+                let idx_type = ExprType::of(idx_expr, env, variables, inline_prefix)?;
                 if idx_type != ExprType::Bool(*code_ref) {
                     error!("");
                     return Err(TypeError::TypeMismatch {
@@ -580,14 +644,14 @@ impl ExprType {
                     });
                 }
                 for expr in stmts {
-                    ExprType::of(expr, env)?;
+                    ExprType::of(expr, env, variables, inline_prefix)?;
                 }
                 ExprType::Void(*code_ref)
             }
 
             Expr::Block(code_ref, b) => b
                 .iter()
-                .map(|e| ExprType::of(e, env))
+                .map(|e| ExprType::of(e, env, variables, inline_prefix))
                 .last()
                 .map(Result::unwrap)
                 .unwrap_or(ExprType::Void(*code_ref)),
@@ -601,7 +665,7 @@ impl ExprType {
                     let mut targs = Vec::new();
 
                     for e in args {
-                        targs.push(ExprType::of(e, env)?);
+                        targs.push(ExprType::of(e, env, variables, inline_prefix)?);
                     }
 
                     if func.params.len() != targs.len() {
@@ -642,9 +706,11 @@ impl ExprType {
                 }
             }
             Expr::GlobalDataAddr(code_ref, _) => ExprType::F32(*code_ref),
-            Expr::Parentheses(_code_ref, expr) => ExprType::of(expr, env)?,
+            Expr::Parentheses(_code_ref, expr) => {
+                ExprType::of(expr, env, variables, inline_prefix)?
+            }
             Expr::ArrayAccess(code_ref, id_name, idx_expr) => {
-                match ExprType::of(&*idx_expr, env)? {
+                match ExprType::of(&*idx_expr, env, variables, inline_prefix)? {
                     ExprType::I64(_code_ref) => (),
                     e => {
                         error!("");
@@ -655,8 +721,15 @@ impl ExprType {
                         });
                     }
                 };
-                if env.variables.contains_key(id_name) {
-                    match &env.variables[id_name] {
+                let id_name_s;
+                let id_name = if inline_prefix != "" {
+                    id_name_s = format!("{}->{}", inline_prefix, id_name);
+                    id_name_s.as_str()
+                } else {
+                    id_name
+                };
+                if variables.contains_key(id_name) {
+                    match &variables[id_name] {
                         SVariable::Array(ty, _len) => Ok(ty.expr_type(code_ref).unwrap()),
                         _ => Err(TypeError::TypeMismatchSpecific {
                             c: *code_ref,
@@ -721,9 +794,13 @@ impl ExprType {
     }
 }
 
-pub fn validate_program(stmts: &Vec<Expr>, env: &Env) -> Result<(), TypeError> {
+pub fn validate_program(
+    stmts: &Vec<Expr>,
+    env: &Env,
+    variables: &HashMap<String, SVariable>,
+) -> Result<(), TypeError> {
     for expr in stmts {
-        ExprType::of(expr, env)?;
+        ExprType::of(expr, env, variables, "")?;
     }
     Ok(())
 }
