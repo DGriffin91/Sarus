@@ -442,7 +442,9 @@ impl ExprType {
                                     Expr::Unaryop(_code_ref, _, _) => todo!(),
                                     Expr::Compare(_code_ref, _, _, _) => todo!(),
                                     Expr::IfThen(_code_ref, _, _) => todo!(),
-                                    Expr::IfElse(_code_ref, _, _, _) => todo!(),
+                                    Expr::IfElse(_code_ref, _, _, _) => todo!(), //TODO, this should actually be possible
+                                    Expr::IfThenElseIf(_code_ref, _) => todo!(),
+                                    Expr::IfThenElseIfElse(_code_ref, _, _) => todo!(), //TODO, this should actually be possible
                                     Expr::Assign(_code_ref, _, _) => todo!(),
                                     Expr::AssignOp(_code_ref, _, _, _) => todo!(),
                                     Expr::NewStruct(_code_ref, _, _) => todo!(),
@@ -543,6 +545,7 @@ impl ExprType {
             Expr::Unaryop(_code_ref, _, l) => ExprType::of(l, env, variables, inline_prefix)?,
             Expr::Compare(code_ref, _, _, _) => ExprType::Bool(*code_ref),
             Expr::IfThen(code_ref, econd, _) => {
+                //TODO should we check ExprType::of of every line of body?
                 let tcond = ExprType::of(econd, env, variables, inline_prefix)?;
                 if tcond != ExprType::Bool(*code_ref) {
                     error!("");
@@ -554,7 +557,80 @@ impl ExprType {
                 }
                 ExprType::Void(*code_ref)
             }
+            Expr::IfThenElseIf(code_ref, expr_bodies) => {
+                //TODO should we check ExprType::of of every line of body?
+                for (econd, _body) in expr_bodies {
+                    let tcond = ExprType::of(econd, env, variables, inline_prefix)?;
+                    if tcond != ExprType::Bool(*code_ref) {
+                        error!("");
+                        return Err(TypeError::TypeMismatch {
+                            c: *code_ref,
+                            expected: ExprType::Bool(*code_ref),
+                            actual: tcond,
+                        });
+                    }
+                }
+                ExprType::Void(*code_ref)
+            }
+            //TODO this should work for IfThenElseIfElse
+            Expr::IfThenElseIfElse(code_ref, expr_bodies, else_body) => {
+                //TODO should we check ExprType::of of every line of body?
+                let mut last_body_type = None;
+                for (econd, body) in expr_bodies {
+                    let tcond = ExprType::of(econd, env, variables, inline_prefix)?;
+                    if tcond != ExprType::Bool(*code_ref) {
+                        error!("");
+                        return Err(TypeError::TypeMismatch {
+                            c: *code_ref,
+                            expected: ExprType::Bool(*code_ref),
+                            actual: tcond,
+                        });
+                    }
+                    let body_type = body
+                        .iter()
+                        .map(|e| ExprType::of(e, env, variables, inline_prefix))
+                        .collect::<Result<Vec<_>, _>>()?
+                        .last()
+                        .cloned()
+                        .unwrap_or(ExprType::Void(*code_ref));
+                    if let Some(slast_body_type) = last_body_type {
+                        if body_type == slast_body_type {
+                            last_body_type = Some(body_type)
+                        } else {
+                            error!("");
+                            return Err(TypeError::TypeMismatch {
+                                c: *code_ref,
+                                expected: slast_body_type,
+                                actual: body_type,
+                            });
+                        }
+                    } else {
+                        last_body_type = Some(body_type)
+                    }
+                }
+                if let Some(slast_body_type) = last_body_type {
+                    let else_body_type = else_body
+                        .iter()
+                        .map(|e| ExprType::of(e, env, variables, inline_prefix))
+                        .collect::<Result<Vec<_>, _>>()?
+                        .last()
+                        .cloned()
+                        .unwrap_or(ExprType::Void(*code_ref));
+                    if else_body_type != slast_body_type {
+                        error!("");
+                        return Err(TypeError::TypeMismatch {
+                            c: *code_ref,
+                            expected: slast_body_type,
+                            actual: else_body_type,
+                        });
+                    }
+                    slast_body_type
+                } else {
+                    ExprType::Void(*code_ref)
+                }
+            }
             Expr::IfElse(code_ref, econd, etrue, efalse) => {
+                //TODO should we check ExprType::of of every line of body?
                 let tcond = ExprType::of(econd, env, variables, inline_prefix)?;
                 if tcond != ExprType::Bool(*code_ref) {
                     error!("");
@@ -679,8 +755,8 @@ impl ExprType {
                     }
 
                     for (i, (targ, param)) in targs.iter().zip(func.params.iter()).enumerate() {
-                        let param_type = param.expr_type.clone();
-                        if param_type == *targ {
+                        let param_type = &param.expr_type;
+                        if param_type == targ {
                             continue;
                         } else {
                             error!("");

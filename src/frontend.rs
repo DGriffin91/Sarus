@@ -113,6 +113,8 @@ pub enum Expr {
     Unaryop(CodeRef, Unaryop, Box<Expr>),
     Compare(CodeRef, Cmp, Box<Expr>, Box<Expr>),
     IfThen(CodeRef, Box<Expr>, Vec<Expr>),
+    IfThenElseIf(CodeRef, Vec<(Expr, Vec<Expr>)>),
+    IfThenElseIfElse(CodeRef, Vec<(Expr, Vec<Expr>)>, Vec<Expr>),
     IfElse(CodeRef, Box<Expr>, Vec<Expr>, Vec<Expr>),
     Assign(CodeRef, NV<Expr>, NV<Expr>),
     AssignOp(CodeRef, Binop, Box<String>, Box<Expr>),
@@ -145,6 +147,8 @@ impl Expr {
             Expr::Unaryop(code_ref, ..) => code_ref,
             Expr::Compare(code_ref, ..) => code_ref,
             Expr::IfThen(code_ref, ..) => code_ref,
+            Expr::IfThenElseIf(code_ref, ..) => code_ref,
+            Expr::IfThenElseIfElse(code_ref, ..) => code_ref,
             Expr::IfElse(code_ref, ..) => code_ref,
             Expr::Assign(code_ref, ..) => code_ref,
             Expr::AssignOp(code_ref, ..) => code_ref,
@@ -170,6 +174,8 @@ impl Expr {
             Expr::Unaryop(code_ref, ..) => code_ref,
             Expr::Compare(code_ref, ..) => code_ref,
             Expr::IfThen(code_ref, ..) => code_ref,
+            Expr::IfThenElseIf(code_ref, ..) => code_ref,
+            Expr::IfThenElseIfElse(code_ref, ..) => code_ref,
             Expr::IfElse(code_ref, ..) => code_ref,
             Expr::Assign(code_ref, ..) => code_ref,
             Expr::AssignOp(code_ref, ..) => code_ref,
@@ -207,6 +213,25 @@ impl Expr {
             Expr::IfThen(_, a, bv) => {
                 a.setup_ref(src_code);
                 for b in bv {
+                    b.setup_ref(src_code);
+                }
+            }
+            Expr::IfThenElseIf(_, a) => {
+                for (e, body) in a {
+                    e.setup_ref(src_code);
+                    for b in body {
+                        b.setup_ref(src_code);
+                    }
+                }
+            }
+            Expr::IfThenElseIfElse(_, a, b) => {
+                for (e, body) in a {
+                    e.setup_ref(src_code);
+                    for b in body {
+                        b.setup_ref(src_code);
+                    }
+                }
+                for b in b {
                     b.setup_ref(src_code);
                 }
             }
@@ -286,6 +311,42 @@ impl Display for Expr {
                     writeln!(f, "{}", expr)?;
                 }
                 write!(f, "}}")?;
+                Ok(())
+            }
+            Expr::IfThenElseIf(_, a) => {
+                write!(f, "if ")?;
+                for (i, (e, body)) in a.iter().enumerate() {
+                    writeln!(f, "{} {{", e)?;
+                    for expr in body {
+                        writeln!(f, "{}", expr)?;
+                    }
+                    write!(f, "}}")?;
+                    if i < a.len() - 1 {
+                        write!(f, " else if ")?;
+                    } else {
+                        writeln!(f, "")?;
+                    }
+                }
+                Ok(())
+            }
+            Expr::IfThenElseIfElse(_, a, else_body) => {
+                write!(f, "if ")?;
+                for (i, (e, body)) in a.iter().enumerate() {
+                    writeln!(f, "{} {{", e)?;
+                    for expr in body {
+                        writeln!(f, "{}", expr)?;
+                    }
+                    write!(f, "}}")?;
+                    if i < a.len() - 1 {
+                        write!(f, " else if ")?;
+                    }
+                }
+                writeln!(f, " else {{")?;
+                for expr in else_body {
+                    writeln!(f, "{}", expr)?;
+                }
+                writeln!(f, "}}")?;
+
                 Ok(())
             }
             Expr::IfElse(_, e, body, else_body) => {
@@ -647,6 +708,8 @@ peg::parser!(pub grammar parser() for str {
     rule expression() -> Expr
         = if_then()
         / if_else()
+        / if_then_else_if_else()
+        / if_then_else_if()
         / while_loop()
         / assignment()
         / op_assignment()
@@ -659,6 +722,14 @@ peg::parser!(pub grammar parser() for str {
     rule if_else() -> Expr
         = _ pos:position!() "if" e:expression() _ when_true:block() _ "else" when_false:block()
         { Expr::IfElse(CodeRef::new(pos), Box::new(e), when_true, when_false) }
+
+    rule if_then_else_if() -> Expr
+        = _ pos:position!() "if" _ expr_bodies:((_ e:expression() _ b:block() _ {(e, b)}) ** "else if" )
+        { Expr::IfThenElseIf(CodeRef::new(pos), expr_bodies) }
+
+    rule if_then_else_if_else() -> Expr
+        = _ pos:position!() "if" _ expr_bodies:((_ e:expression() _ b:block() _ {(e, b)}) ** "else if" ) _ "else" when_false:block()
+        { Expr::IfThenElseIfElse(CodeRef::new(pos), expr_bodies, when_false) }
 
     rule while_loop() -> Expr
         = _ pos:position!() "while" e:expression() body:block()

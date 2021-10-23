@@ -565,6 +565,7 @@ fn float_as_bool_error() -> anyhow::Result<()> {
 
 #[test]
 fn if_else_multi() -> anyhow::Result<()> {
+    //setup_logging();
     let code = r#"
 fn main() -> () {   
     a = 0
@@ -3036,5 +3037,113 @@ struct SarusDSPModelParams { p1: &[f32], p2: &[f32], p3: &[f32], p4: &[f32], p5:
 
 "#;
     default_std_jit_from_code(&code)?;
+    Ok(())
+}
+
+#[test]
+fn if_then_else_if() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+fn float_to_int(a: f32) -> (c: i64) {
+    c = 0
+    n = 0
+    if a == 1.0 {
+        n = 1
+        c = 1
+    } else if a == 2.0 {
+        n = 2
+        c = 2
+    } else if a == 3.0 {
+        n = 3
+        c = 3
+    } else if a == 4.0 {
+        n = 4
+        c = 4
+    } else if a == 5.0 {
+        n = 5
+        c = 5
+    }
+    c.assert_eq(n)
+}
+fn main(a: f32) -> (c: i64) {
+    float_to_int(0.0).assert_eq(0)
+    float_to_int(1.0).assert_eq(1)
+    float_to_int(2.0).assert_eq(2)
+    float_to_int(3.0).assert_eq(3)
+    float_to_int(4.0).assert_eq(4)
+    float_to_int(5.0).assert_eq(5)
+    float_to_int(6.0).assert_eq(0)
+}
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn if_then_else_if_else() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+fn float_to_int(a: f32) -> (c: i64) {
+    c = if a == 1.0 {
+        1
+    } else if a == 2.0 {
+        2
+    } else if a == 3.0 {
+        3
+    } else if a == 4.0 {
+        4
+    } else if a == 5.0 {
+        5
+    } else { 
+        0
+    }
+}
+fn float_to_int2(a: f32) -> (c: i64) {
+    n = 0
+    c = if a == 1.0 {
+        n = 1
+        1
+    } else if a == 2.0 {
+        n = 2
+        2
+    } else if a == 3.0 {
+        n = 3
+        3
+    } else if a == 4.0 {
+        n = 4
+        4
+    } else if a == 5.0 {
+        n = 5
+        5
+    } else { 
+        n = 0
+        0
+    }
+    c.assert_eq(n)
+}
+fn main(a: f32) -> (c: i64) {
+    float_to_int(0.0).assert_eq(0)
+    float_to_int(1.0).assert_eq(1)
+    float_to_int(2.0).assert_eq(2)
+    float_to_int(3.0).assert_eq(3)
+    float_to_int(4.0).assert_eq(4)
+    float_to_int(5.0).assert_eq(5)
+    float_to_int(6.0).assert_eq(0)
+    float_to_int2(0.0).assert_eq(0)
+    float_to_int2(1.0).assert_eq(1)
+    float_to_int2(2.0).assert_eq(2)
+    float_to_int2(3.0).assert_eq(3)
+    float_to_int2(4.0).assert_eq(4)
+    float_to_int2(5.0).assert_eq(5)
+    float_to_int2(6.0).assert_eq(0)
+}
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
     Ok(())
 }

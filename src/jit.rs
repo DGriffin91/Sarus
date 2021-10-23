@@ -59,12 +59,30 @@ impl Default for JIT {
 }
 
 pub fn new_jit_builder() -> JITBuilder {
-    JITBuilder::new(cranelift_module::default_libcall_names())
+    //let builder = JITBuilder::new(cranelift_module::default_libcall_names());
+
+    //https://github.com/bytecodealliance/wasmtime/issues/2735
+    //https://github.com/bytecodealliance/wasmtime-go/issues/53
+
+    //JITBuilder::new(cranelift_module::default_libcall_names())
+    let mut flag_builder = settings::builder();
+    // On at least AArch64, "colocated" calls use shorter-range relocations,
+    // which might not reach all definitions; we can't handle that here, so
+    // we require long-range relocation types.
+    flag_builder.set("use_colocated_libcalls", "false").unwrap();
+    flag_builder.set("is_pic", "true").unwrap();
+    //flag_builder.set("opt_level", "speed").unwrap();
+    let isa_builder = cranelift_native::builder().unwrap_or_else(|msg| {
+        panic!("host machine is not supported: {}", msg);
+    });
+    let isa = isa_builder.finish(settings::Flags::new(flag_builder));
+    JITBuilder::with_isa(isa, cranelift_module::default_libcall_names())
 }
 
 impl JIT {
     pub fn from(jit_builder: JITBuilder) -> Self {
         let module = JITModule::new(jit_builder);
+
         Self {
             builder_context: FunctionBuilderContext::new(),
             ctx: module.make_context(),
@@ -279,7 +297,7 @@ impl JIT {
         // predecessors.
         builder.seal_block(entry_block);
 
-        // The toy language allows variables to be declared implicitly.
+        // The Sarus allows variables to be declared implicitly.
         // Walk the AST and declare all implicitly-declared variables.
 
         let mut env = Env {
@@ -377,15 +395,16 @@ impl JIT {
         // Emit the return instruction.
         trans.builder.ins().return_(&return_values);
 
-        // Tell the builder we're done with this function.
-        trans.builder.finalize();
-
         //Keep clif around for later debug/print
         self.clif.insert(
             func.name.to_string(),
             trans.builder.func.display(None).to_string(),
         );
         trace!("{}", trans.builder.func.display(None).to_string());
+
+        // Tell the builder we're done with this function.
+        trans.builder.finalize();
+
         Ok(())
     }
 
@@ -677,6 +696,13 @@ impl<'a> FunctionTranslator<'a> {
             Expr::IfElse(_code_ref, condition, then_body, else_body) => {
                 self.translate_if_else(condition, then_body, else_body)
             }
+            Expr::IfThenElseIf(code_ref, expr_bodies) => {
+                self.translate_if_then_else_if(code_ref, expr_bodies)?;
+                Ok(SValue::Void)
+            }
+            Expr::IfThenElseIfElse(code_ref, expr_bodies, else_body) => {
+                self.translate_if_then_else_if_else(code_ref, expr_bodies, else_body)
+            }
             Expr::WhileLoop(_code_ref, condition, loop_body) => {
                 self.translate_while_loop(condition, loop_body)?;
                 Ok(SValue::Void)
@@ -920,7 +946,9 @@ impl<'a> FunctionTranslator<'a> {
                         Expr::Unaryop(_code_ref, _, _) => todo!(),
                         Expr::Compare(_code_ref, _, _, _) => todo!(),
                         Expr::IfThen(_code_ref, _, _) => todo!(),
-                        Expr::IfElse(_code_ref, _, _, _) => todo!(),
+                        Expr::IfElse(_code_ref, _, _, _) => todo!(), //TODO, this should actually be possible
+                        Expr::IfThenElseIf(_code_ref, _) => todo!(),
+                        Expr::IfThenElseIfElse(_code_ref, _, _) => todo!(), //TODO, this should actually be possible
                         Expr::Assign(_code_ref, _, _) => todo!(),
                         Expr::AssignOp(_code_ref, _, _, _) => todo!(),
                         Expr::NewStruct(_code_ref, _, _) => todo!(),
@@ -1669,7 +1697,7 @@ impl<'a> FunctionTranslator<'a> {
         let else_block = self.builder.create_block();
         let merge_block = self.builder.create_block();
 
-        // If-else constructs in the toy language have a return value.
+        // If-else constructs in the Sarus have a return value.
         // In traditional SSA form, this would produce a PHI between
         // the then and else bodies. Cranelift uses block parameters,
         // so set up a parameter in the merge block, and we'll pass
@@ -1694,17 +1722,13 @@ impl<'a> FunctionTranslator<'a> {
             SValue::Tuple(t) => {
                 let mut vals = Vec::new();
                 for v in &t {
-                    self.builder
-                        .append_block_param(merge_block, self.value_type(v.inner("then_return")?));
-                    vals.push(v.clone().inner("then_return")?);
+                    vals.push(v.inner("then_return")?);
                 }
                 vals
             }
             SValue::Void => vec![],
             sv => {
                 let v = sv.inner("then_return")?;
-                self.builder
-                    .append_block_param(merge_block, self.value_type(v));
                 vec![v]
             }
         };
@@ -1725,19 +1749,21 @@ impl<'a> FunctionTranslator<'a> {
         let else_return = match else_value.clone() {
             SValue::Tuple(t) => {
                 let mut vals = Vec::new();
-                for v in &t {
-                    vals.push(v.clone().inner("else_return")?);
+                for sval in &t {
+                    let v = sval.inner("else_return")?;
+                    self.builder
+                        .append_block_param(merge_block, self.value_type(v));
+                    vals.push(v);
                 }
                 vals
             }
             SValue::Void => vec![],
-            SValue::Unknown(v) => vec![v],
-            SValue::Bool(v) => vec![v],
-            SValue::F32(v) => vec![v],
-            SValue::I64(v) => vec![v],
-            SValue::Array(sval, _len) => vec![sval.inner("translate_if_else")?],
-            SValue::Address(v) => vec![v],
-            SValue::Struct(_, v) => vec![v],
+            sval => {
+                let v = sval.inner("else_return")?;
+                self.builder
+                    .append_block_param(merge_block, self.value_type(v));
+                vec![v]
+            }
         };
 
         // Jump to the merge block, passing it the block return value.
@@ -1774,6 +1800,213 @@ impl<'a> FunctionTranslator<'a> {
             }
         } else if phi.len() == 1 {
             then_value.replace_value(*phi.first().unwrap())
+        } else {
+            Ok(SValue::Void)
+        }
+    }
+
+    fn translate_if_then_else_if(
+        &mut self,
+        code_ref: &CodeRef,
+        condition_bodies: &Vec<(Expr, Vec<Expr>)>,
+    ) -> anyhow::Result<SValue> {
+        //TODO see how rust or other languages do this, there may be a more efficient way
+        trace!(
+            "{}: translate_if_then_else_if {:?}",
+            code_ref,
+            condition_bodies
+        );
+
+        let mut b_condition_value;
+
+        let mut eval_blocks = Vec::new();
+        let mut branch_blocks = Vec::new();
+
+        for _ in 0..condition_bodies.len() {
+            eval_blocks.push(self.builder.create_block());
+            branch_blocks.push(self.builder.create_block());
+        }
+
+        let merge_block = self.builder.create_block();
+
+        self.builder.ins().jump(eval_blocks[0], &[]);
+
+        for i in 0..condition_bodies.len() {
+            self.builder.switch_to_block(eval_blocks[i]);
+            self.builder.seal_block(eval_blocks[i]);
+            b_condition_value = self
+                .translate_expr(&condition_bodies[i].0)?
+                .inner("translate_if_then_else_if")?;
+
+            if i < condition_bodies.len() - 1 {
+                self.builder
+                    .ins()
+                    .brz(b_condition_value, eval_blocks[i + 1], &[]);
+            } else {
+                self.builder.ins().brz(b_condition_value, merge_block, &[]);
+            }
+            self.builder.ins().jump(branch_blocks[i], &[]);
+
+            self.builder.switch_to_block(branch_blocks[i]);
+            self.builder.seal_block(branch_blocks[i]);
+            let body = &condition_bodies[i].1;
+            for expr in body {
+                self.translate_expr(expr).unwrap();
+            }
+            self.builder.ins().jump(merge_block, &[]);
+        }
+
+        // Switch to the merge block for subsequent statements.
+        self.builder.switch_to_block(merge_block);
+        // We've now seen all the predecessors of the merge block.
+        self.builder.seal_block(merge_block);
+
+        Ok(SValue::Void)
+    }
+
+    fn translate_if_then_else_if_else(
+        &mut self,
+        code_ref: &CodeRef,
+        condition_bodies: &Vec<(Expr, Vec<Expr>)>,
+        else_body: &Vec<Expr>,
+    ) -> anyhow::Result<SValue> {
+        //TODO see how rust or other languages do this, there may be a more efficient way
+        trace!(
+            "{}: translate_if_then_else_if_else {:?}",
+            code_ref,
+            condition_bodies
+        );
+
+        let mut b_condition_value;
+
+        let mut eval_blocks = Vec::new();
+        let mut branch_blocks = Vec::new();
+        let mut first_branch_block_value: Option<SValue> = None;
+
+        for _ in 0..condition_bodies.len() {
+            eval_blocks.push(self.builder.create_block());
+            branch_blocks.push(self.builder.create_block());
+        }
+
+        let merge_block = self.builder.create_block();
+        let else_block = self.builder.create_block();
+
+        self.builder.ins().jump(eval_blocks[0], &[]);
+
+        for i in 0..condition_bodies.len() {
+            //Don't make eval block for else
+            self.builder.switch_to_block(eval_blocks[i]);
+            self.builder.seal_block(eval_blocks[i]);
+            b_condition_value = self
+                .translate_expr(&condition_bodies[i].0)?
+                .inner("translate_if_then_else_if")?;
+
+            if i < condition_bodies.len() - 1 {
+                self.builder
+                    .ins()
+                    .brz(b_condition_value, eval_blocks[i + 1], &[]);
+            } else {
+                self.builder.ins().brz(b_condition_value, else_block, &[]);
+            }
+
+            self.builder.ins().jump(branch_blocks[i], &[]);
+
+            self.builder.switch_to_block(branch_blocks[i]);
+            self.builder.seal_block(branch_blocks[i]);
+            let body = &condition_bodies[i].1;
+            for (i, expr) in body.iter().enumerate() {
+                if i != body.len() - 1 {
+                    self.translate_expr(expr).unwrap();
+                }
+            }
+            let branch_block_value = self.translate_expr(body.last().unwrap())?;
+            let branch_block_return = match branch_block_value.clone() {
+                SValue::Tuple(t) => {
+                    let mut vals = Vec::new();
+                    for v in &t {
+                        vals.push(v.inner("then_return")?);
+                    }
+                    vals
+                }
+                SValue::Void => vec![],
+                sv => {
+                    let v = sv.inner("then_return")?;
+                    vec![v]
+                }
+            };
+            if let Some(first_branch_block_value) = &first_branch_block_value {
+                if first_branch_block_value.to_string() != branch_block_value.to_string() {
+                    anyhow::bail!(
+                        "if_else return types don't match {:?} {:?}",
+                        first_branch_block_value.to_string(),
+                        branch_block_value.to_string()
+                    )
+                }
+            } else {
+                first_branch_block_value = Some(branch_block_value)
+            }
+            self.builder.ins().jump(merge_block, &branch_block_return);
+        }
+
+        // ELSE BLOCK //
+
+        self.builder.switch_to_block(else_block);
+        self.builder.seal_block(else_block);
+        for (i, expr) in else_body.iter().enumerate() {
+            if i != else_body.len() - 1 {
+                self.translate_expr(expr).unwrap();
+            }
+        }
+        let else_value = self.translate_expr(else_body.last().unwrap())?;
+        let else_return = match else_value.clone() {
+            SValue::Tuple(t) => {
+                let mut vals = Vec::new();
+                for sval in &t {
+                    let v = sval.inner("translate_if_else_if_else")?;
+                    self.builder
+                        .append_block_param(merge_block, self.value_type(v));
+                    vals.push(v);
+                }
+                vals
+            }
+            SValue::Void => vec![],
+            sval => {
+                let v = sval.inner("translate_if_else_if_else")?;
+                self.builder
+                    .append_block_param(merge_block, self.value_type(v));
+                vec![v]
+            }
+        };
+
+        // Jump to the merge block, passing it the block return value.
+        self.builder.ins().jump(merge_block, &else_return);
+
+        // Switch to the merge block for subsequent statements.
+        self.builder.switch_to_block(merge_block);
+        // We've now seen all the predecessors of the merge block.
+        self.builder.seal_block(merge_block);
+
+        // Read the value of the if-else by reading the merge block
+        // parameter.
+        let phi = self.builder.block_params(merge_block);
+
+        trace!("{:?} | {:?}", phi, first_branch_block_value);
+
+        if phi.len() > 1 {
+            //TODO the frontend doesn't have the syntax support for this yet
+            if let SValue::Tuple(then_tuple) = first_branch_block_value.unwrap() {
+                let mut ret_tuple = Vec::new();
+                for (phi_val, sval) in phi.iter().zip(then_tuple.iter()) {
+                    ret_tuple.push(sval.replace_value(*phi_val)?)
+                }
+                Ok(SValue::Tuple(ret_tuple))
+            } else {
+                anyhow::bail!("expected tuple")
+            }
+        } else if phi.len() == 1 {
+            first_branch_block_value
+                .unwrap()
+                .replace_value(*phi.first().unwrap())
         } else {
             Ok(SValue::Void)
         }
@@ -3108,10 +3341,10 @@ fn declare_variable_from_type(
                 *index += 1;
             }
         }
-        ExprType::Tuple(code_ref, expr_types) => {
+        ExprType::Tuple(_code_ref, expr_types) => {
             if expr_types.len() == 1 {
                 //Single nested tuple
-                if let ExprType::Tuple(code_ref, expr_types) = expr_types.first().unwrap() {
+                if let ExprType::Tuple(_code_ref, expr_types) = expr_types.first().unwrap() {
                     for (expr_type, sname) in expr_types.iter().zip(names.iter()) {
                         declare_variable_from_type(
                             ptr_type,
