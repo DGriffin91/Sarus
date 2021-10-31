@@ -76,6 +76,10 @@ pub fn struct_t(name: &str) -> ExprType {
     ExprType::Struct(CodeRef::z(), Box::new(name.to_string()))
 }
 
+pub fn array_t(ty: ExprType, size_type: ArraySizedExpr) -> ExprType {
+    ExprType::Array(CodeRef::z(), Box::new(ty), size_type)
+}
+
 impl PartialEq for ExprType {
     fn eq(&self, other: &Self) -> bool {
         match self {
