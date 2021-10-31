@@ -6,7 +6,7 @@ use crate::{
 };
 use cranelift::prelude::types;
 use thiserror::Error;
-use tracing::error;
+use tracing::{error, trace};
 
 //TODO Make errors more information rich, also: show line in this file, and line in source
 #[derive(Debug, Clone, Error)]
@@ -303,6 +303,7 @@ impl ExprType {
         variables: &HashMap<String, SVariable>,
         inline_prefix: &str,
     ) -> Result<ExprType, TypeError> {
+        trace!("of {}", expr);
         let res = match expr {
             Expr::Identifier(code_ref, orig_id_name) => {
                 let id_name_s;
@@ -446,7 +447,7 @@ impl ExprType {
                                     }
                                     Expr::LiteralArray(_code_ref, _, _) => {
                                         lhs_val = Some(ExprType::of(
-                                            &expr,
+                                            &rhs_expr,
                                             env,
                                             variables,
                                             inline_prefix,
@@ -761,6 +762,29 @@ impl ExprType {
                     todo!()
                     // Here the macro can check if the args works and will return
                     // returns = (macros[fn_name])(code_ref, args, env)
+                }
+                if fn_name == "unsized" {
+                    if args.len() != 1 {
+                        return Err(TypeError::TupleLengthMismatch {
+                            c: code_ref.s(&env.file_idx),
+                            actual: args.len(),
+                            expected: 1,
+                        });
+                    }
+
+                    let targ = ExprType::of(&args[0], env, variables, inline_prefix)?;
+                    return match targ {
+                        ExprType::Array(c, expr, _) => {
+                            Ok(ExprType::Array(c, expr, ArraySizedExpr::Unsized))
+                        }
+                        ExprType::Address(c) => {
+                            Ok(ExprType::Array(c, Box::new(targ), ArraySizedExpr::Unsized))
+                        }
+                        sv => Err(TypeError::TypeMismatchSpecific {
+                            c: code_ref.s(&env.file_idx),
+                            s: format!("function unsized does not support {}", sv),
+                        }),
+                    };
                 }
                 if let Some(func) = env.funcs.get(fn_name) {
                     let mut targs = Vec::new();

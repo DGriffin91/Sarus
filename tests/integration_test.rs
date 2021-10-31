@@ -2868,6 +2868,8 @@ fn modifies_an_array(arr: [[i64; 10]; 10]) -> () {
 fn struct_macro() -> anyhow::Result<()> {
     //setup_logging();
     let code = r#"
+
+
 Slice for &[i64]
 fn modifies_an_array(arr: &[i64], len: i64) -> () {   
     arr_slice = arr.into_slice(len)
@@ -2876,14 +2878,12 @@ fn modifies_an_array(arr: &[i64], len: i64) -> () {
     arr_slice.set(9, 5)
 }
 
-//TODO make a way to get the address of the fixed array
-//Slice for [i64; 10]
-//fn modifies_a_fixed_array(arr: [i64; 10], len: i64) -> () {   
-//    arr_slice = arr.into_slice()
-//    a = arr_slice.get(0)
-//    arr_slice.set(0, 5)
-//    arr_slice.set(9, 5)
-//}
+fn modifies_a_fixed_array(arr: [i64; 10], len: i64) -> () {   
+    arr_slice = unsized(arr).into_slice(10)
+    a = arr_slice.get(0)
+    arr_slice.set(0, 5)
+    arr_slice.set(9, 5)
+}
 "#;
     let mut jit = default_std_jit_from_code(&code)?;
     let mut arr = [1i64; 10];
@@ -2892,11 +2892,11 @@ fn modifies_an_array(arr: &[i64], len: i64) -> () {
     let len = arr.len() as i64;
     func(&mut arr, len);
     assert_eq!(arr, [5, 1, 1, 1, 1, 1, 1, 1, 1, 5,]);
-    //let func_ptr = jit.get_func("modifies_a_fixed_array")?;
-    //let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [i64; 10], i64)>(func_ptr) };
-    //let len = arr.len() as i64;
-    //func(&mut arr, len);
-    //assert_eq!(arr, [5, 1, 1, 1, 1, 1, 1, 1, 1, 5,]);
+    let func_ptr = jit.get_func("modifies_a_fixed_array")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [i64; 10], i64)>(func_ptr) };
+    let len = arr.len() as i64;
+    func(&mut arr, len);
+    assert_eq!(arr, [5, 1, 1, 1, 1, 1, 1, 1, 1, 5,]);
     Ok(())
 }
 

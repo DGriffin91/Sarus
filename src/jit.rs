@@ -499,7 +499,7 @@ impl Display for SValue {
 }
 
 impl SValue {
-    fn from(
+    pub fn from(
         builder: &mut FunctionBuilder,
         expr_type: &ExprType,
         value: Value,
@@ -576,7 +576,7 @@ impl SValue {
             SValue::Tuple(_) => todo!(),
         })
     }
-    fn inner(&self, ctx: &str) -> anyhow::Result<Value> {
+    pub fn inner(&self, ctx: &str) -> anyhow::Result<Value> {
         match self {
             SValue::Unknown(v) => Ok(*v),
             SValue::Bool(v) => Ok(*v),
@@ -2116,6 +2116,10 @@ impl<'a> FunctionTranslator<'a> {
             // returns = (macros[fn_name])(code_ref, arg_values, self.env)
         }
 
+        if fn_name == "unsized" {
+            return self.call_with_svalues(&code_ref, &fn_name, arg_values, None);
+        }
+
         if !self.env.funcs.contains_key(&fn_name) {
             anyhow::bail!(
                 "{} function {} not found",
@@ -2584,6 +2588,18 @@ impl<'a> FunctionTranslator<'a> {
     ) -> anyhow::Result<SValue> {
         let fn_name = &fn_name.to_string();
 
+        if fn_name == "unsized" {
+            if let Some(v) = sarus_std_lib::translate_std(
+                self.module.target_config().pointer_type(),
+                &mut self.builder,
+                code_ref,
+                fn_name,
+                &arg_svalues,
+            )? {
+                return Ok(v);
+            }
+        }
+
         if !self.env.funcs.contains_key(fn_name) {
             anyhow::bail!(
                 "{} function {} not found",
@@ -2611,22 +2627,22 @@ impl<'a> FunctionTranslator<'a> {
             )
         }
 
-        let mut arg_values = Vec::new();
-
-        for arg_svalue in &arg_svalues {
-            arg_values.push(arg_svalue.inner("call_with_svalues")?)
-        }
-
         if func.extern_func {
             if let Some(v) = sarus_std_lib::translate_std(
                 self.module.target_config().pointer_type(),
                 &mut self.builder,
                 code_ref,
                 fn_name,
-                &arg_values,
+                &arg_svalues,
             )? {
                 return Ok(v);
             }
+        }
+
+        let mut arg_values = Vec::new();
+
+        for arg_svalue in &arg_svalues {
+            arg_values.push(arg_svalue.inner("call_with_svalues")?)
         }
 
         let mut sig = self.module.make_signature();

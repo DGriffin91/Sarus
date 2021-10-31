@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 
 use cranelift::frontend::FunctionBuilder;
-use cranelift::prelude::{types, InstBuilder, Value};
+use cranelift::prelude::{types, InstBuilder};
 use cranelift_jit::JITBuilder;
 use tracing::trace;
 
-use crate::jit::{SValue, StructDef};
+use crate::jit::{ArraySized, SValue, StructDef};
 use crate::validator::{address_t, bool_t, f32_t, i64_t, ArraySizedExpr, ExprType};
 use crate::{
     decl,
@@ -224,35 +224,48 @@ pub(crate) fn translate_std(
     builder: &mut FunctionBuilder,
     code_ref: &CodeRef,
     name: &str,
-    args: &[Value],
+    args: &[SValue],
 ) -> anyhow::Result<Option<SValue>> {
-    match name {
-        "f32.trunc" => Ok(Some(SValue::F32(builder.ins().trunc(args[0])))),
-        "f32.floor" => Ok(Some(SValue::F32(builder.ins().floor(args[0])))),
-        "f32.ceil" => Ok(Some(SValue::F32(builder.ins().ceil(args[0])))),
+    macro_rules! v {
+        ($e:expr) => {
+            $e.inner("translate_std")?
+        };
+    }
+    Ok(match name {
+        "unsized" => match &args[0] {
+            SValue::Array(sval, _) => Some(SValue::Array(sval.clone(), ArraySized::Unsized)),
+            SValue::Address(_) => Some(SValue::Array(
+                Box::new(args[0].clone()),
+                ArraySized::Unsized,
+            )),
+            sv => anyhow::bail!("unsized does not support {}", sv),
+        },
+        "f32.trunc" => Some(SValue::F32(builder.ins().trunc(v!(args[0])))),
+        "f32.floor" => Some(SValue::F32(builder.ins().floor(v!(args[0])))),
+        "f32.ceil" => Some(SValue::F32(builder.ins().ceil(v!(args[0])))),
         "f32.fract" => {
-            let v_int = builder.ins().trunc(args[0]);
-            let v = builder.ins().fsub(args[0], v_int);
-            Ok(Some(SValue::F32(v)))
+            let v_int = builder.ins().trunc(v!(args[0]));
+            let v = builder.ins().fsub(v!(args[0]), v_int);
+            Some(SValue::F32(v))
         }
-        "f32.abs" => Ok(Some(SValue::F32(builder.ins().fabs(args[0])))),
-        "f32.round" => Ok(Some(SValue::F32(builder.ins().nearest(args[0])))),
-        "f32.i64" => Ok(Some(SValue::I64(
-            builder.ins().fcvt_to_sint(types::I64, args[0]),
-        ))),
-        "i64.f32" => Ok(Some(SValue::F32(
-            builder.ins().fcvt_from_sint(types::F32, args[0]),
-        ))),
-        "f32.min" => Ok(Some(SValue::F32(builder.ins().fmin(args[0], args[1])))),
-        "f32.max" => Ok(Some(SValue::F32(builder.ins().fmax(args[0], args[1])))),
-        "i64.min" => Ok(Some(SValue::I64(builder.ins().imin(args[0], args[1])))),
-        "i64.max" => Ok(Some(SValue::I64(builder.ins().imax(args[0], args[1])))),
+        "f32.abs" => Some(SValue::F32(builder.ins().fabs(v!(args[0])))),
+        "f32.round" => Some(SValue::F32(builder.ins().nearest(v!(args[0])))),
+        "f32.i64" => Some(SValue::I64(
+            builder.ins().fcvt_to_sint(types::I64, v!(args[0])),
+        )),
+        "i64.f32" => Some(SValue::F32(
+            builder.ins().fcvt_from_sint(types::F32, v!(args[0])),
+        )),
+        "f32.min" => Some(SValue::F32(builder.ins().fmin(v!(args[0]), v!(args[1])))),
+        "f32.max" => Some(SValue::F32(builder.ins().fmax(v!(args[0]), v!(args[1])))),
+        "i64.min" => Some(SValue::I64(builder.ins().imin(v!(args[0]), v!(args[1])))),
+        "i64.max" => Some(SValue::I64(builder.ins().imax(v!(args[0]), v!(args[1])))),
         "src_line" => {
             let line = code_ref.line.unwrap_or(0) as i64;
-            Ok(Some(SValue::I64(builder.ins().iconst(types::I64, line))))
+            Some(SValue::I64(builder.ins().iconst(types::I64, line)))
         }
-        _ => Ok(None),
-    }
+        _ => None,
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
