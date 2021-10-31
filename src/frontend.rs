@@ -1,9 +1,16 @@
+use tracing::error;
+use tracing::trace;
+
 use crate::validator::ArraySizedExpr;
 use crate::validator::ExprType;
 
+use std::collections::HashSet;
 use std::fmt::Display;
 
 use std::fmt::Write;
+use std::fs;
+use std::path::Path;
+use std::path::PathBuf;
 
 #[derive(Debug, Copy, Clone)]
 pub enum Unaryop {
@@ -72,18 +79,48 @@ impl Display for Cmp {
 pub struct CodeRef {
     pub pos: usize,
     pub line: Option<usize>,
+    pub file_index: Option<u64>, //Index that holds the file name / path
 }
 
 impl CodeRef {
-    pub fn new(pos: usize) -> Self {
-        CodeRef { pos, line: None }
+    pub fn new(pos: usize, code_ctx: &CodeContext) -> Self {
+        let line = if pos < code_ctx.code.len() {
+            Some(code_ctx.code[..pos].matches("\n").count() + 1)
+        } else {
+            None
+        };
+        CodeRef {
+            pos,
+            line,
+            file_index: code_ctx.file_index,
+        }
     }
     pub fn z() -> Self {
-        CodeRef { pos: 0, line: None }
+        CodeRef {
+            pos: 0,
+            line: None,
+            file_index: None,
+        }
     }
-    pub fn setup(&mut self, code: &String) {
-        if self.line.is_none() && self.pos < code.len() {
-            self.line = Some(code[..self.pos].matches("\n").count());
+    pub fn s(&self, t: &Option<Vec<PathBuf>>) -> String {
+        let s = if let Some(file_index) = self.file_index {
+            if let Some(file_index_table) = t {
+                if let Some(file) = file_index_table.get(file_index as usize) {
+                    file.to_string_lossy().to_string()
+                } else {
+                    error!("{} CodeRef File Index out of bounds {}", self, file_index);
+                    "".to_string()
+                }
+            } else {
+                "".to_string()
+            }
+        } else {
+            "".to_string()
+        };
+        if let Some(line) = self.line {
+            format!("line {}:{}", s, line)
+        } else {
+            format!("pos {}:{}", s, self.pos)
         }
     }
 }
@@ -187,109 +224,6 @@ impl Expr {
             Expr::Parentheses(code_ref, ..) => code_ref,
             Expr::ArrayAccess(code_ref, ..) => code_ref,
         }
-    }
-
-    pub fn setup_ref(&mut self, src_code: &String) {
-        //Walk the AST and Set line numbers, etc.. in code ref
-        self.get_code_ref_mut().setup(src_code);
-        match self {
-            Expr::LiteralFloat(_, _) => (),
-            Expr::LiteralInt(_, _) => (),
-            Expr::LiteralBool(_, _) => (),
-            Expr::LiteralString(_, _) => (),
-            Expr::LiteralArray(_, _, _) => (),
-            Expr::Identifier(_, _) => (),
-            Expr::Binop(_, _, a, b) => {
-                a.setup_ref(src_code);
-                b.setup_ref(src_code);
-            }
-            Expr::Unaryop(_, _, a) => {
-                a.setup_ref(src_code);
-            }
-            Expr::Compare(_, _, a, b) => {
-                a.setup_ref(src_code);
-                b.setup_ref(src_code);
-            }
-            Expr::IfThen(_, a, bv) => {
-                a.setup_ref(src_code);
-                for b in bv {
-                    b.setup_ref(src_code);
-                }
-            }
-            Expr::IfThenElseIf(_, a) => {
-                for (e, body) in a {
-                    e.setup_ref(src_code);
-                    for b in body {
-                        b.setup_ref(src_code);
-                    }
-                }
-            }
-            Expr::IfThenElseIfElse(_, a, b) => {
-                for (e, body) in a {
-                    e.setup_ref(src_code);
-                    for b in body {
-                        b.setup_ref(src_code);
-                    }
-                }
-                for b in b {
-                    b.setup_ref(src_code);
-                }
-            }
-            Expr::IfElse(_, a, bv, cv) => {
-                a.setup_ref(src_code);
-                for b in bv {
-                    b.setup_ref(src_code);
-                }
-                for c in cv {
-                    c.setup_ref(src_code);
-                }
-            }
-            Expr::Assign(_, bv, cv) => {
-                for b in bv.as_mut_slice() {
-                    b.setup_ref(src_code);
-                }
-                for c in cv.as_mut_slice() {
-                    c.setup_ref(src_code);
-                }
-            }
-            Expr::AssignOp(_, _, _, a) => {
-                a.setup_ref(src_code);
-            }
-            Expr::NewStruct(_, _, fields) => {
-                for field in fields {
-                    field.expr.setup_ref(src_code);
-                }
-            }
-            Expr::WhileLoop(_, a, bv) => {
-                a.setup_ref(src_code);
-                for b in bv {
-                    b.setup_ref(src_code);
-                }
-            }
-            Expr::Block(_, bv) => {
-                for b in bv {
-                    b.setup_ref(src_code);
-                }
-            }
-            Expr::Call(_, _, bv, _) => {
-                for b in bv {
-                    b.setup_ref(src_code);
-                }
-            }
-            Expr::GlobalDataAddr(_, _) => (),
-            Expr::Parentheses(_, a) => {
-                a.setup_ref(src_code);
-            }
-            Expr::ArrayAccess(_, _, a) => {
-                a.setup_ref(src_code);
-            }
-        }
-    }
-}
-
-pub fn setup_coderef(stmts: &mut Vec<Expr>, src_code: &String) {
-    for expr in stmts.iter_mut() {
-        expr.setup_ref(src_code);
     }
 }
 
@@ -436,6 +370,7 @@ pub enum Declaration {
     Metadata(Vec<String>, String),
     Struct(Struct),
     StructMacro(String, Box<ExprType>), //Will probably change significantly or be removed
+    Include(String),                    //Naive implementation that will change significantly.
 }
 
 impl Display for Declaration {
@@ -452,6 +387,7 @@ impl Display for Declaration {
             }
             Declaration::Struct(e) => write!(f, "{}", e),
             Declaration::StructMacro(name, e) => write!(f, "{}({})", name, e),
+            Declaration::Include(path) => writeln!(f, "include {}", path),
         }
     }
 }
@@ -631,7 +567,7 @@ pub fn pretty_indent(code: &str) -> String {
     f
 }
 
-peg::parser!(pub grammar parser() for str {
+peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
     pub rule program() -> Vec<Declaration>
         = (d:declaration() _ { d })*
 
@@ -640,6 +576,10 @@ peg::parser!(pub grammar parser() for str {
         / metadata()
         / structdef()
         / structmacro()
+        / include()
+
+    rule include() -> Declaration
+        = _ "include" _ "\"" body:$[^'"']* "\"" { Declaration::Include(body.join("")) }
 
     rule structdef() -> Declaration
         = _ ext:("extern")? _ "struct" _ name:$(s:identifier() ("::" (ty:type_label() ** "::"))?) _ "{" _ fields:(a:arg() comma() {a})* _ "}" _ {Declaration::Struct(Struct{name: name.to_string(), fields, extern_struct: if ext.is_some() {true} else {false}})}
@@ -684,18 +624,18 @@ peg::parser!(pub grammar parser() for str {
 
     rule arg() -> Arg
         = _ i:identifier() _ ":" _ t:type_label() _ { Arg {name: i.into(), expr_type: t.into(), default_to_float: false } }
-        / _ pos:position!() i:identifier() _ { Arg {name: i.into(), expr_type: ExprType::F32(CodeRef::new(pos)), default_to_float: true } }
+        / _ pos:position!() i:identifier() _ { Arg {name: i.into(), expr_type: ExprType::F32(CodeRef::new(pos, code_ctx)), default_to_float: true } }
 
     rule type_label() -> ExprType
-        = _ pos:position!() "f32" _ { ExprType::F32(CodeRef::new(pos)) }
-        / _ pos:position!() "i64" _ { ExprType::I64(CodeRef::new(pos)) }
-        / _ pos:position!() "&[" ty:type_label() "]" _ { ExprType::Array(CodeRef::new(pos), Box::new(ty), ArraySizedExpr::Unsized) }
-        / _ pos:position!() "&" _ { ExprType::Address(CodeRef::new(pos)) }
-        / _ pos:position!() "bool" _ { ExprType::Bool(CodeRef::new(pos)) }
-        / _ pos:position!() n:$(identifier() "::" (type_label() ** "::")) _ { ExprType::Struct(CodeRef::new(pos), Box::new(n.to_string())) }
-        / _ pos:position!() n:identifier() _ { ExprType::Struct(CodeRef::new(pos), Box::new(n)) }
+        = _ pos:position!() "f32" _ { ExprType::F32(CodeRef::new(pos, code_ctx)) }
+        / _ pos:position!() "i64" _ { ExprType::I64(CodeRef::new(pos, code_ctx)) }
+        / _ pos:position!() "&[" ty:type_label() "]" _ { ExprType::Array(CodeRef::new(pos, code_ctx), Box::new(ty), ArraySizedExpr::Unsized) }
+        / _ pos:position!() "&" _ { ExprType::Address(CodeRef::new(pos, code_ctx)) }
+        / _ pos:position!() "bool" _ { ExprType::Bool(CodeRef::new(pos, code_ctx)) }
+        / _ pos:position!() n:$(identifier() "::" (type_label() ** "::")) _ { ExprType::Struct(CodeRef::new(pos, code_ctx), Box::new(n.to_string())) }
+        / _ pos:position!() n:identifier() _ { ExprType::Struct(CodeRef::new(pos, code_ctx), Box::new(n)) }
         / _ pos:position!() "[" _  ty:type_label()  _ ";" _ len:$(['0'..='9']+) _ "]" _ {
-            ExprType::Array(CodeRef::new(pos), Box::new(ty), ArraySizedExpr::Fixed(len.parse::<usize>().unwrap()))
+            ExprType::Array(CodeRef::new(pos, code_ctx), Box::new(ty), ArraySizedExpr::Fixed(len.parse::<usize>().unwrap()))
         }
 
     rule block() -> Vec<Expr>
@@ -717,29 +657,29 @@ peg::parser!(pub grammar parser() for str {
 
     rule if_then() -> Expr
         = _ pos:position!() "if" _ e:expression() then_body:block() "\n"
-        { Expr::IfThen(CodeRef::new(pos), Box::new(e), then_body) }
+        { Expr::IfThen(CodeRef::new(pos, code_ctx), Box::new(e), then_body) }
 
     rule if_else() -> Expr
         = _ pos:position!() "if" e:expression() _ when_true:block() _ "else" when_false:block()
-        { Expr::IfElse(CodeRef::new(pos), Box::new(e), when_true, when_false) }
+        { Expr::IfElse(CodeRef::new(pos, code_ctx), Box::new(e), when_true, when_false) }
 
     rule if_then_else_if() -> Expr
         = _ pos:position!() "if" _ expr_bodies:((_ e:expression() _ b:block() _ {(e, b)}) ** "else if" )
-        { Expr::IfThenElseIf(CodeRef::new(pos), expr_bodies) }
+        { Expr::IfThenElseIf(CodeRef::new(pos, code_ctx), expr_bodies) }
 
     rule if_then_else_if_else() -> Expr
         = _ pos:position!() "if" _ expr_bodies:((_ e:expression() _ b:block() _ {(e, b)}) ** "else if" ) _ "else" when_false:block()
-        { Expr::IfThenElseIfElse(CodeRef::new(pos), expr_bodies, when_false) }
+        { Expr::IfThenElseIfElse(CodeRef::new(pos, code_ctx), expr_bodies, when_false) }
 
     rule while_loop() -> Expr
         = _ pos:position!() "while" e:expression() body:block()
-        { Expr::WhileLoop(CodeRef::new(pos), Box::new(e), body) }
+        { Expr::WhileLoop(CodeRef::new(pos, code_ctx), Box::new(e), body) }
 
     rule assignment() -> Expr
         = assignments:((binary_op()) ** comma()) _ pos:position!() "=" args:((_ e:expression() _ {e}) ** comma()) {?
             make_nonempty(assignments)
                 .and_then(|assignments| make_nonempty(args)
-                .map(|args| Expr::Assign(CodeRef::new(pos), assignments, args)))
+                .map(|args| Expr::Assign(CodeRef::new(pos, code_ctx), assignments, args)))
                 .ok_or("Cannot assign to/from empty tuple")
         }
 
@@ -751,25 +691,25 @@ peg::parser!(pub grammar parser() for str {
     / a:(binary_op()) _ "/=" _ b:expression() {assign_op_to_assign(Binop::Div, a, b)}
 
     rule binary_op() -> Expr = precedence!{
-        a:@ _ pos:position!() "&&" _ b:(@) { Expr::Binop(CodeRef::new(pos), Binop::LogicalAnd, Box::new(a), Box::new(b)) }
-        a:@ _ pos:position!() "||" _ b:(@) { Expr::Binop(CodeRef::new(pos), Binop::LogicalOr, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "&&" _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::LogicalAnd, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "||" _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::LogicalOr, Box::new(a), Box::new(b)) }
         --
-        a:@ _ pos:position!() "==" b:(@) { Expr::Compare(CodeRef::new(pos), Cmp::Eq, Box::new(a), Box::new(b)) }
-        a:@ _ pos:position!() "!=" b:(@) { Expr::Compare(CodeRef::new(pos), Cmp::Ne, Box::new(a), Box::new(b)) }
-        a:@ _ pos:position!() "<"  b:(@) { Expr::Compare(CodeRef::new(pos), Cmp::Lt, Box::new(a), Box::new(b)) }
-        a:@ _ pos:position!() "<=" b:(@) { Expr::Compare(CodeRef::new(pos), Cmp::Le, Box::new(a), Box::new(b)) }
-        a:@ _ pos:position!() ">"  b:(@) { Expr::Compare(CodeRef::new(pos), Cmp::Gt, Box::new(a), Box::new(b)) }
-        a:@ _ pos:position!() ">=" b:(@) { Expr::Compare(CodeRef::new(pos), Cmp::Ge, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "==" b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Eq, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "!=" b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Ne, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "<"  b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Lt, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "<=" b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Le, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() ">"  b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Gt, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() ">=" b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Ge, Box::new(a), Box::new(b)) }
         --
-        a:@ _ pos:position!() "+" _ b:(@) { Expr::Binop(CodeRef::new(pos), Binop::Add, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "+" _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::Add, Box::new(a), Box::new(b)) }
         --
-        a:@ _ pos:position!() "-" _ b:(@) { Expr::Binop(CodeRef::new(pos), Binop::Sub, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "-" _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::Sub, Box::new(a), Box::new(b)) }
         --
-        a:@ _ pos:position!() "*" _ b:(@) { Expr::Binop(CodeRef::new(pos), Binop::Mul, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "*" _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::Mul, Box::new(a), Box::new(b)) }
         --
-        a:@ _ pos:position!() "/" _ b:(@) { Expr::Binop(CodeRef::new(pos), Binop::Div, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "/" _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::Div, Box::new(a), Box::new(b)) }
         --
-        a:@ pos:position!() _ "." b:(@) { Expr::Binop(CodeRef::new(pos), Binop::DotAccess, Box::new(a), Box::new(b)) }
+        a:@ pos:position!() _ "." b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::DotAccess, Box::new(a), Box::new(b)) }
         --
         u:unary_op()  { u }
     }
@@ -779,34 +719,34 @@ peg::parser!(pub grammar parser() for str {
         //c = p.x + p.y + p.z
         //(p.x).print()
         pos:position!() i:identifier() _macro:("!")? "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
-            Expr::Call(CodeRef::new(pos), i, args, _macro.is_some())
+            Expr::Call(CodeRef::new(pos, code_ctx), i, args, _macro.is_some())
         }
-        pos:position!() i:identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" { Expr::NewStruct(CodeRef::new(pos), i, args) }
-        pos:position!() i:identifier() _ "[" idx:expression() "]" { Expr::ArrayAccess(CodeRef::new(pos), i, Box::new(idx)) }
-        pos:position!() i:identifier() { Expr::Identifier(CodeRef::new(pos), i) }
+        pos:position!() i:identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" { Expr::NewStruct(CodeRef::new(pos, code_ctx), i, args) }
+        pos:position!() i:identifier() _ "[" idx:expression() "]" { Expr::ArrayAccess(CodeRef::new(pos, code_ctx), i, Box::new(idx)) }
+        pos:position!() i:identifier() { Expr::Identifier(CodeRef::new(pos, code_ctx), i) }
         l:literal() { l }
-        pos:position!() "!" e:expression() { Expr::Unaryop(CodeRef::new(pos),Unaryop::Not, Box::new(e)) }
+        pos:position!() "!" e:expression() { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Not, Box::new(e)) }
         --
-        pos:position!() "(" e:expression() ")" { Expr::Parentheses(CodeRef::new(pos), Box::new(e)) }
+        pos:position!() "(" e:expression() ")" { Expr::Parentheses(CodeRef::new(pos, code_ctx), Box::new(e)) }
     }
 
     rule identifier() -> String
         = quiet!{ _ n:$((!"true"!"false")['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']* "::"? ['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.into() } }
 
     rule literal() -> Expr
-        = _ pos:position!() n:$(['-']*['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat(CodeRef::new(pos), n.into()) }
-        / _ pos:position!() n:$(['-']*['0'..='9']+) { Expr::LiteralInt(CodeRef::new(pos), n.into()) }
-        / _ pos:position!() "*" i:identifier() { Expr::GlobalDataAddr(CodeRef::new(pos), i) }
-        / _ pos:position!() "true" _ { Expr::LiteralBool(CodeRef::new(pos), true) }
-        / _ pos:position!() "false" _ { Expr::LiteralBool(CodeRef::new(pos), false) }
-        / _ pos:position!() "\"" body:$[^'"']* "\"" _ { Expr::LiteralString(CodeRef::new(pos), body.join("")) }
+        = _ pos:position!() n:$(['-']*['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat(CodeRef::new(pos, code_ctx), n.into()) }
+        / _ pos:position!() n:$(['-']*['0'..='9']+) { Expr::LiteralInt(CodeRef::new(pos, code_ctx), n.into()) }
+        / _ pos:position!() "*" i:identifier() { Expr::GlobalDataAddr(CodeRef::new(pos, code_ctx), i) }
+        / _ pos:position!() "true" _ { Expr::LiteralBool(CodeRef::new(pos, code_ctx), true) }
+        / _ pos:position!() "false" _ { Expr::LiteralBool(CodeRef::new(pos, code_ctx), false) }
+        / _ pos:position!() "\"" body:$[^'"']* "\"" _ { Expr::LiteralString(CodeRef::new(pos, code_ctx), body.join("")) }
         / _ pos:position!() "[" _ "\"" repstr:$[^'\"']* "\"" _ ";" _ len:$(['0'..='9']+) _ "]" _ {
             //Temp solution for creating empty strings
-            Expr::LiteralString(CodeRef::new(pos), repstr.join("").repeat( len.parse().unwrap()))
+            Expr::LiteralString(CodeRef::new(pos, code_ctx), repstr.join("").repeat( len.parse().unwrap()))
         } //[" "; 10]
         / _ pos:position!() "[" _  e:expression()  _ ";" _ len:$(['0'..='9']+) _ "]" _ {
 
-            Expr::LiteralArray(CodeRef::new(pos), Box::new(e), len.parse::<usize>().unwrap())
+            Expr::LiteralArray(CodeRef::new(pos, code_ctx), Box::new(e), len.parse::<usize>().unwrap())
         }
 
     rule struct_assign_field() -> StructAssignField
@@ -834,4 +774,103 @@ pub fn assign_op_to_assign(op: Binop, a: Expr, b: Expr) -> Expr {
         )])
         .unwrap(),
     )
+}
+
+pub struct CodeContext<'a> {
+    pub file_index: Option<u64>,
+    pub code: &'a str,
+}
+
+//Parse file, adding CodeRef and includes
+pub fn parse_with_context(
+    code: &str,
+    file: &Path,
+) -> anyhow::Result<(Vec<Declaration>, Vec<PathBuf>)> {
+    let mut ast = Vec::new();
+    let mut file_index_table = Vec::new();
+    parse_with_context_recursively(
+        &mut ast,
+        &code,
+        file,
+        &mut file_index_table,
+        &mut HashSet::new(),
+    )?;
+    Ok((ast, file_index_table))
+}
+
+//TODO includes here are naive and lack namespaces
+pub fn parse_with_context_recursively(
+    ast: &mut Vec<Declaration>,
+    code: &str,
+    file: &Path,
+    files_index: &mut Vec<PathBuf>,
+    seen_paths: &mut HashSet<String>,
+) -> anyhow::Result<()> {
+    trace!("parse_with_context {}", file.display());
+    files_index.push(file.to_path_buf());
+    let code_ctx = CodeContext {
+        code,
+        file_index: Some((files_index.len() - 1) as u64),
+    };
+    match parser::program(&code, &code_ctx) {
+        Ok(mut new_ast) => {
+            for decl in &new_ast {
+                match decl {
+                    Declaration::Include(path_str) => {
+                        trace!("Found path_str {}", path_str);
+                        let path = Path::new(&path_str);
+                        let (new_code, new_file) = if path.is_absolute() {
+                            if !seen_paths.insert(path.display().to_string()) {
+                                //We have already imported this
+                                continue;
+                            }
+                            trace!("Loading file import at {:?}", path);
+                            let new_code = match fs::read_to_string(path) {
+                                Ok(new_code) => new_code,
+                                Err(e) => {
+                                    anyhow::bail!("File import error {} {}", path.display(), e)
+                                }
+                            };
+                            (new_code, path.to_path_buf())
+                        } else {
+                            let new_path = dunce::canonicalize(file.parent().unwrap().join(path))?;
+                            if !seen_paths.insert(new_path.display().to_string()) {
+                                //We have already imported this
+                                continue;
+                            }
+                            trace!("Loading file import at {}", new_path.display());
+                            let new_code = match fs::read_to_string(new_path.clone()) {
+                                Ok(new_code) => new_code,
+                                Err(e) => {
+                                    anyhow::bail!("File import error {} {}", new_path.display(), e)
+                                }
+                            };
+                            (new_code, new_path)
+                        };
+                        parse_with_context_recursively(
+                            ast,
+                            &new_code,
+                            &new_file,
+                            files_index,
+                            seen_paths,
+                        )?;
+                    }
+                    _ => continue,
+                }
+            }
+            ast.append(&mut new_ast);
+        }
+        Err(err) => anyhow::bail!("{:?} parser {}", file, err),
+    }
+
+    Ok(())
+}
+
+//No imports or file context
+pub fn parse(code: &str) -> anyhow::Result<Vec<Declaration>> {
+    let code_ctx = CodeContext {
+        code,
+        file_index: None,
+    };
+    Ok(parser::program(&code, &code_ctx)?)
 }

@@ -13,26 +13,26 @@ use tracing::error;
 pub enum TypeError {
     #[error("{c} Type mismatch; expected {expected}, found {actual}")]
     TypeMismatch {
-        c: CodeRef,
+        c: String,
         expected: ExprType,
         actual: ExprType,
     },
     #[error("{c} Type mismatch; {s}")]
-    TypeMismatchSpecific { c: CodeRef, s: String },
+    TypeMismatchSpecific { c: String, s: String },
     #[error("{c} Tuple length mismatch; expected {expected} found {actual}")]
     TupleLengthMismatch {
-        c: CodeRef,
+        c: String,
         expected: usize,
         actual: usize,
     },
     #[error("{0} Function \"{1}\" does not exist")]
-    UnknownFunction(CodeRef, String),
+    UnknownFunction(String, String),
     #[error("{0} Variable \"{1}\" does not exist")]
-    UnknownVariable(CodeRef, String),
+    UnknownVariable(String, String),
     #[error("{0} Struct \"{1}\" does not exist")]
-    UnknownStruct(CodeRef, String),
+    UnknownStruct(String, String),
     #[error("{0} Struct \"{1}\" does not have field \"{2}\"")]
-    UnknownField(CodeRef, String, String),
+    UnknownField(String, String, String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,7 +171,10 @@ fn get_struct_field_type(
             (svar.expr_type(code_ref).unwrap(), 1)
         } else {
             error!("");
-            return Err(TypeError::UnknownVariable(*code_ref, parts[0].to_string()));
+            return Err(TypeError::UnknownVariable(
+                code_ref.s(&env.file_idx),
+                parts[0].to_string(),
+            ));
         }
     };
     match lhs_val {
@@ -182,14 +185,17 @@ fn get_struct_field_type(
                     parent_struct_field
                 } else {
                     return Err(TypeError::UnknownField(
-                        *code_ref,
+                        code_ref.s(&env.file_idx),
                         struct_name,
                         parts[start].to_string(),
                     ));
                 }
             } else {
                 dbg!(&env.struct_map);
-                return Err(TypeError::UnknownStruct(*code_ref, struct_name));
+                return Err(TypeError::UnknownStruct(
+                    code_ref.s(&env.file_idx),
+                    struct_name,
+                ));
             };
 
             if parts.len() > 2 {
@@ -201,7 +207,7 @@ fn get_struct_field_type(
                             parent_struct_field
                         } else {
                             return Err(TypeError::UnknownField(
-                                *code_ref,
+                                code_ref.s(&env.file_idx),
                                 struct_name,
                                 parts[start].to_string(),
                             ));
@@ -217,7 +223,7 @@ fn get_struct_field_type(
         v => {
             error!("");
             return Err(TypeError::TypeMismatch {
-                c: v.get_code_ref(),
+                c: v.get_code_ref().s(&env.file_idx),
                 expected: ExprType::Struct(v.get_code_ref(), Box::new("".to_string())),
                 actual: v.clone(),
             });
@@ -300,7 +306,10 @@ impl ExprType {
                 } else {
                     dbg!(&id_name);
                     error!("{:#?}", variables);
-                    return Err(TypeError::UnknownVariable(*code_ref, id_name.to_string()));
+                    return Err(TypeError::UnknownVariable(
+                        code_ref.s(&env.file_idx),
+                        id_name.to_string(),
+                    ));
                 }
             }
             Expr::LiteralFloat(code_ref, _) => ExprType::F32(*code_ref),
@@ -366,7 +375,7 @@ impl ExprType {
 
                                         if !&env.funcs.contains_key(&fn_name) {
                                             return Err(TypeError::UnknownFunction(
-                                                code_ref,
+                                                code_ref.s(&env.file_idx),
                                                 fn_name.to_string(),
                                             ));
                                         }
@@ -376,7 +385,7 @@ impl ExprType {
                                         if params.len() - 1 != args.len() {
                                             return Err(TypeError::TupleLengthMismatch {
                                                 //TODO be more specific: function {} expected {} parameters, but {} were given
-                                                c: code_ref,
+                                                c: code_ref.s(&env.file_idx),
                                                 actual: args.len(),
                                                 expected: params.len() - 1,
                                             });
@@ -389,7 +398,7 @@ impl ExprType {
                                                 ExprType::of(arg, env, variables, inline_prefix)?;
                                             if param.expr_type != targ {
                                                 return Err(TypeError::TypeMismatchSpecific {
-                                                    c: code_ref,
+                                                    c: code_ref.s(&env.file_idx),
                                                     s: format!("function {} expected parameter {} to be of type {} but type {} was found", fn_name, i, param.expr_type , targ)
                                                 });
                                             }
@@ -466,7 +475,7 @@ impl ExprType {
                                             e => {
                                                 error!("");
                                                 return Err(TypeError::TypeMismatch {
-                                                    c: code_ref,
+                                                    c: code_ref.s(&env.file_idx),
                                                     expected: ExprType::I64(code_ref),
                                                     actual: e,
                                                 });
@@ -535,7 +544,7 @@ impl ExprType {
                     } else {
                         error!("");
                         return Err(TypeError::TypeMismatch {
-                            c: *binop_code_ref,
+                            c: binop_code_ref.s(&env.file_idx),
                             expected: lt,
                             actual: rt,
                         });
@@ -550,7 +559,7 @@ impl ExprType {
                 if tcond != ExprType::Bool(*code_ref) {
                     error!("");
                     return Err(TypeError::TypeMismatch {
-                        c: *code_ref,
+                        c: code_ref.s(&env.file_idx),
                         expected: ExprType::Bool(*code_ref),
                         actual: tcond,
                     });
@@ -564,7 +573,7 @@ impl ExprType {
                     if tcond != ExprType::Bool(*code_ref) {
                         error!("");
                         return Err(TypeError::TypeMismatch {
-                            c: *code_ref,
+                            c: code_ref.s(&env.file_idx),
                             expected: ExprType::Bool(*code_ref),
                             actual: tcond,
                         });
@@ -581,7 +590,7 @@ impl ExprType {
                     if tcond != ExprType::Bool(*code_ref) {
                         error!("");
                         return Err(TypeError::TypeMismatch {
-                            c: *code_ref,
+                            c: code_ref.s(&env.file_idx),
                             expected: ExprType::Bool(*code_ref),
                             actual: tcond,
                         });
@@ -599,7 +608,7 @@ impl ExprType {
                         } else {
                             error!("");
                             return Err(TypeError::TypeMismatch {
-                                c: *code_ref,
+                                c: code_ref.s(&env.file_idx),
                                 expected: slast_body_type,
                                 actual: body_type,
                             });
@@ -619,7 +628,7 @@ impl ExprType {
                     if else_body_type != slast_body_type {
                         error!("");
                         return Err(TypeError::TypeMismatch {
-                            c: *code_ref,
+                            c: code_ref.s(&env.file_idx),
                             expected: slast_body_type,
                             actual: else_body_type,
                         });
@@ -635,7 +644,7 @@ impl ExprType {
                 if tcond != ExprType::Bool(*code_ref) {
                     error!("");
                     return Err(TypeError::TypeMismatch {
-                        c: *code_ref,
+                        c: code_ref.s(&env.file_idx),
                         expected: ExprType::Bool(*code_ref),
                         actual: tcond,
                     });
@@ -661,7 +670,7 @@ impl ExprType {
                 } else {
                     error!("");
                     return Err(TypeError::TypeMismatch {
-                        c: *code_ref,
+                        c: code_ref.s(&env.file_idx),
                         expected: ttrue,
                         actual: tfalse,
                     });
@@ -674,7 +683,7 @@ impl ExprType {
                 };
                 if usize::from(lhs_exprs.len()) != tlen {
                     return Err(TypeError::TupleLengthMismatch {
-                        c: *code_ref,
+                        c: code_ref.s(&env.file_idx),
                         actual: usize::from(rhs_exprs.len()),
                         expected: tlen,
                     });
@@ -699,7 +708,7 @@ impl ExprType {
                         if lhs_type != rhs_type {
                             error!("");
                             return Err(TypeError::TypeMismatch {
-                                c: *lhs_expr.clone().get_code_ref(),
+                                c: lhs_expr.clone().get_code_ref().s(&env.file_idx),
                                 expected: lhs_type,
                                 actual: rhs_type,
                             });
@@ -715,7 +724,7 @@ impl ExprType {
                 if idx_type != ExprType::Bool(*code_ref) {
                     error!("");
                     return Err(TypeError::TypeMismatch {
-                        c: *code_ref,
+                        c: code_ref.s(&env.file_idx),
                         expected: ExprType::Bool(*code_ref),
                         actual: idx_type,
                     });
@@ -748,7 +757,7 @@ impl ExprType {
                     if func.params.len() != targs.len() {
                         return Err(TypeError::TupleLengthMismatch {
                             //TODO be more specific: function {} expected {} parameters, but {} were given
-                            c: *code_ref,
+                            c: code_ref.s(&env.file_idx),
                             actual: targs.len(),
                             expected: func.params.len(),
                         });
@@ -761,7 +770,7 @@ impl ExprType {
                         } else {
                             error!("");
                             return Err(TypeError::TypeMismatchSpecific {
-                                    c: *code_ref,
+                                    c: code_ref.s(&env.file_idx),
                                     s: format!("function {} expected parameter {} to be of type {} but type {} was found", fn_name, i, param_type, targ)
                                 });
                         }
@@ -779,7 +788,10 @@ impl ExprType {
                         }
                     }
                 } else {
-                    return Err(TypeError::UnknownFunction(*code_ref, fn_name.to_string()));
+                    return Err(TypeError::UnknownFunction(
+                        code_ref.s(&env.file_idx),
+                        fn_name.to_string(),
+                    ));
                 }
             }
             Expr::GlobalDataAddr(code_ref, _) => ExprType::F32(*code_ref),
@@ -792,7 +804,7 @@ impl ExprType {
                     e => {
                         error!("");
                         return Err(TypeError::TypeMismatch {
-                            c: *code_ref,
+                            c: code_ref.s(&env.file_idx),
                             expected: ExprType::I64(*code_ref),
                             actual: e,
                         });
@@ -809,20 +821,26 @@ impl ExprType {
                     match &variables[id_name] {
                         SVariable::Array(ty, _len) => Ok(ty.expr_type(code_ref).unwrap()),
                         _ => Err(TypeError::TypeMismatchSpecific {
-                            c: *code_ref,
+                            c: code_ref.s(&env.file_idx),
                             s: format!("{} is not an array", id_name),
                         }),
                     }
                 } else {
                     dbg!(&id_name);
-                    return Err(TypeError::UnknownVariable(*code_ref, id_name.to_string()));
+                    return Err(TypeError::UnknownVariable(
+                        code_ref.s(&env.file_idx),
+                        id_name.to_string(),
+                    ));
                 }?
             }
             Expr::NewStruct(code_ref, struct_name, _fields) => {
                 if env.struct_map.contains_key(struct_name) {
                     //Need to check field types
                 } else {
-                    return Err(TypeError::UnknownStruct(*code_ref, struct_name.to_string()));
+                    return Err(TypeError::UnknownStruct(
+                        code_ref.s(&env.file_idx),
+                        struct_name.to_string(),
+                    ));
                 }
                 ExprType::Struct(*code_ref, Box::new(struct_name.to_string()))
             }
@@ -848,9 +866,10 @@ impl ExprType {
         ptr_type: cranelift::prelude::Type,
         struct_access: bool,
     ) -> Result<cranelift::prelude::Type, TypeError> {
+        //TODO add env.file_idx for code_ref errors
         match self {
             ExprType::Void(code_ref) => Err(TypeError::TypeMismatchSpecific {
-                c: *code_ref,
+                c: code_ref.to_string(),
                 s: "Void has no cranelift analog".to_string(),
             }),
             ExprType::Bool(_code_ref) => Ok(if struct_access {
@@ -864,7 +883,7 @@ impl ExprType {
             ExprType::Address(_code_ref) => Ok(ptr_type),
             ExprType::Struct(_code_ref, _) => Ok(ptr_type),
             ExprType::Tuple(code_ref, _) => Err(TypeError::TypeMismatchSpecific {
-                c: *code_ref,
+                c: code_ref.to_string(),
                 s: "Tuple has no cranelift analog".to_string(),
             }),
         }

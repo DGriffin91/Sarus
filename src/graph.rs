@@ -4,7 +4,7 @@ use toposort_scc::IndexGraph;
 
 use crate::{
     frontend::{
-        assign_op_to_assign, make_nonempty, parser, Arg, Binop, Cmp, CodeRef, Declaration, Expr,
+        assign_op_to_assign, make_nonempty, parse, Arg, Binop, Cmp, CodeRef, Declaration, Expr,
         Function, InlineKind,
     },
     jit, sarus_std_lib,
@@ -40,7 +40,7 @@ impl Graph {
         connections: Vec<Connection>,
         block_size: usize,
     ) -> anyhow::Result<Graph> {
-        let mut ast = parser::program(&code)?;
+        let mut ast = parse(&code)?;
         let mut jit_builder = jit::new_jit_builder();
         sarus_std_lib::append_std(&mut ast, &mut jit_builder);
         sarus_std_lib::append_std_math(&mut ast, &mut jit_builder);
@@ -62,7 +62,7 @@ impl Graph {
         ast.push(graph_func_ast);
 
         // Pass the AST to the JIT to compile
-        jit.translate(ast.clone(), code.to_string())?;
+        jit.translate(ast.clone(), None)?;
 
         Ok(Graph {
             code,

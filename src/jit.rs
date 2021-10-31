@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ffi::CString;
 use std::fmt::Display;
+use std::path::PathBuf;
 use std::slice;
 use tracing::info;
 use tracing::instrument;
@@ -94,8 +95,12 @@ impl JIT {
     }
 
     /// Compile the ast into machine code.
-    #[instrument(level = "info", skip(self, prog, src_code))]
-    pub fn translate(&mut self, prog: Vec<Declaration>, src_code: String) -> anyhow::Result<()> {
+    #[instrument(level = "info", skip(self, prog, file_index_table))]
+    pub fn translate(
+        &mut self,
+        prog: Vec<Declaration>,
+        file_index_table: Option<Vec<PathBuf>>,
+    ) -> anyhow::Result<()> {
         info!("--------------- translate ---------------");
 
         let mut prog = prog;
@@ -108,12 +113,9 @@ impl JIT {
         for decl in prog.iter_mut() {
             match decl {
                 Declaration::Function(func) => {
-                    setup_coderef(&mut func.body, &src_code);
                     funcs.insert(func.name.clone(), func.clone());
                 }
-                Declaration::Metadata(_, _) => continue,
-                Declaration::Struct(_) => continue,
-                Declaration::StructMacro(_, _) => continue,
+                _ => continue,
             }
         }
 
@@ -130,7 +132,13 @@ impl JIT {
                     }
 
                     //// Then, translate the AST nodes into Cranelift IR.
-                    self.codegen(&func, funcs.to_owned(), &struct_map, &constant_vars)?;
+                    self.codegen(
+                        &func,
+                        funcs.to_owned(),
+                        &struct_map,
+                        &constant_vars,
+                        &file_index_table,
+                    )?;
                     // Next, declare the function to jit. Functions must be declared
                     // before they can be called, or defined.
                     let id = self
@@ -227,13 +235,17 @@ impl JIT {
     }
 
     // Translate from AST nodes into Cranelift IR.
-    #[instrument(level = "info", skip(self, func, funcs, struct_map, constant_vars))]
+    #[instrument(
+        level = "info",
+        skip(self, func, funcs, struct_map, constant_vars, file_index_table)
+    )]
     fn codegen(
         &mut self,
         func: &Function,
         funcs: HashMap<String, Function>,
         struct_map: &HashMap<String, StructDef>,
         constant_vars: &HashMap<String, SConstant>,
+        file_index_table: &Option<Vec<PathBuf>>,
     ) -> anyhow::Result<()> {
         info!("{}", func.sig_string()?);
         let ptr_ty = self.module.target_config().pointer_type();
@@ -305,6 +317,7 @@ impl JIT {
             struct_map: struct_map.clone(),
             ptr_ty,
             funcs,
+            file_idx: file_index_table.clone(),
         };
 
         //println!("declare_variables {}", func.name);
@@ -595,6 +608,7 @@ pub struct Env {
     pub struct_map: HashMap<String, StructDef>,
     pub ptr_ty: types::Type,
     pub funcs: HashMap<String, Function>,
+    pub file_idx: Option<Vec<PathBuf>>,
 }
 
 /// A collection of state used for translating from Sarus AST nodes
@@ -734,12 +748,20 @@ impl<'a> FunctionTranslator<'a> {
             };
             match self.inline_variables.get(name) {
                 Some(v) => Ok(v),
-                None => anyhow::bail!("{} inline variable {} not found", code_ref, name),
+                None => anyhow::bail!(
+                    "{} inline variable {} not found",
+                    code_ref.s(&self.env.file_idx),
+                    name
+                ),
             }
         } else {
             match self.variables.get(name) {
                 Some(v) => Ok(v),
-                None => anyhow::bail!("{} variable {} not found", code_ref, name),
+                None => anyhow::bail!(
+                    "{} variable {} not found",
+                    code_ref.s(&self.env.file_idx),
+                    name
+                ),
             }
         }
     }
@@ -786,7 +808,11 @@ impl<'a> FunctionTranslator<'a> {
 
         let item_width = match item_expr_type.width(self.ptr_ty, &self.env.struct_map) {
             Some(item_width) => item_width,
-            None => anyhow::bail!("{} expression {} has no size", code_ref, item_expr),
+            None => anyhow::bail!(
+                "{} expression {} has no size",
+                code_ref.s(&self.env.file_idx),
+                item_expr
+            ),
         };
 
         let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
@@ -1308,7 +1334,10 @@ impl<'a> FunctionTranslator<'a> {
                                         self.env.struct_map[&struct_name.to_string()].size,
                                         src_sval.expect_struct(
                                             &struct_name.to_string(),
-                                            &format!("{} translate_assign", code_ref),
+                                            &format!(
+                                                "{} translate_assign",
+                                                code_ref.s(&self.env.file_idx)
+                                            ),
                                         )?,
                                         struct_address,
                                         0,
@@ -1458,7 +1487,10 @@ impl<'a> FunctionTranslator<'a> {
                             sval.inner("translate_array_get_from_var")?,
                         );
                         let merge_block = self.exec_if_start(b_condition_value);
-                        self.call_panic(code_ref, &format!("{} index out of bounds", code_ref))?;
+                        self.call_panic(
+                            code_ref,
+                            &format!("{} index out of bounds", code_ref.s(&self.env.file_idx)),
+                        )?;
                         self.exec_if_end(merge_block);
                         bound_check_at_get = false;
                     }
@@ -1472,7 +1504,11 @@ impl<'a> FunctionTranslator<'a> {
                     bound_check_at_get,
                 )
             }
-            _ => anyhow::bail!("{} variable {} is not an array", code_ref, name),
+            _ => anyhow::bail!(
+                "{} variable {} is not an array",
+                code_ref.s(&self.env.file_idx),
+                name
+            ),
         }
     }
 
@@ -1510,7 +1546,7 @@ impl<'a> FunctionTranslator<'a> {
                             let merge_block = self.exec_if_start(b_condition_value);
                             self.call_panic(
                                 code_ref,
-                                &format!("{} index out of bounds", code_ref),
+                                &format!("{} index out of bounds", code_ref.s(&self.env.file_idx)),
                             )?;
                             self.exec_if_end(merge_block);
                         }
@@ -2081,7 +2117,11 @@ impl<'a> FunctionTranslator<'a> {
         }
 
         if !self.env.funcs.contains_key(&fn_name) {
-            anyhow::bail!("{} function {} not found", code_ref, fn_name)
+            anyhow::bail!(
+                "{} function {} not found",
+                code_ref.s(&self.env.file_idx),
+                fn_name
+            )
         }
         let returns = &self.env.funcs[&fn_name].returns;
 
@@ -2104,7 +2144,11 @@ impl<'a> FunctionTranslator<'a> {
         name: &str,
     ) -> anyhow::Result<Option<SValue>> {
         if let Some(const_var) = self.env.constant_vars.get(name) {
-            trace!("{}: translate_constant {}", code_ref, name);
+            trace!(
+                "{}: translate_constant {}",
+                code_ref.s(&self.env.file_idx),
+                name
+            );
             let expr = const_var.expr_type(None);
             let data_addr =
                 self.translate_global_data_addr(expr.cranelift_type(self.ptr_ty, true)?, name);
@@ -2336,7 +2380,11 @@ impl<'a> FunctionTranslator<'a> {
         let offset_v = self.builder.ins().iconst(self.ptr_ty, offset as i64);
         let address = self.builder.ins().iadd(base_struct_var_ptr, offset_v);
         if let ExprType::Struct(code_ref, name) = &parent_struct_field_def.expr_type {
-            trace!("{}: ExprType::Struct {}", code_ref, name);
+            trace!(
+                "{}: ExprType::Struct {}",
+                code_ref.s(&self.env.file_idx),
+                name
+            );
             //If the struct field is a struct, return address of sub struct
             Ok((
                 SValue::Struct(name.to_string(), address),
@@ -2537,7 +2585,11 @@ impl<'a> FunctionTranslator<'a> {
         let fn_name = &fn_name.to_string();
 
         if !self.env.funcs.contains_key(fn_name) {
-            anyhow::bail!("{} function {} not found", code_ref, fn_name)
+            anyhow::bail!(
+                "{} function {} not found",
+                code_ref.s(&self.env.file_idx),
+                fn_name
+            )
         }
         let func = self.env.funcs[fn_name].clone();
 
@@ -2620,7 +2672,11 @@ impl<'a> FunctionTranslator<'a> {
         }
 
         let res = if inline_function && !func.extern_func {
-            trace!("{} inlining function {}", code_ref, &func.name);
+            trace!(
+                "{} inlining function {}",
+                code_ref.s(&self.env.file_idx),
+                &func.name
+            );
 
             //It seems like this could be done once and the block could be stored, then just jumped to.
             //But, is this really the same as inlining? It seems like it should at worst have the
@@ -3230,7 +3286,7 @@ fn declare_variable_from_expr(
             for from_expr in from_exprs.iter() {
                 trace!(
                     "{} declare_variable_from_expr Expr::Assign {}",
-                    code_ref,
+                    code_ref.s(&env.file_idx),
                     from_expr,
                 );
                 if let Some(inline_data) = inline_data {

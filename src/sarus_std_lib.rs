@@ -10,9 +10,9 @@ use crate::jit::{SValue, StructDef};
 use crate::validator::{address_t, bool_t, f32_t, i64_t, ArraySizedExpr, ExprType};
 use crate::{
     decl,
-    frontend::{parser, Arg, CodeRef, Declaration, Function},
+    frontend::{Arg, CodeRef, Declaration, Function},
 };
-use crate::{hashmap, make_decl};
+use crate::{hashmap, make_decl, parse};
 
 const STD_1ARG_FF: [&str; 6] = [
     "f32.ceil", // built in std
@@ -340,7 +340,7 @@ inline fn set(self: Slice::{1}, i: i64, val: {1}) -> () {{
                         ty, expr_type
                     );
                     trace!("{}: {}", code_ref, &code);
-                    new_decls.append(&mut parser::program(&code).unwrap()); //TODO handle errors
+                    new_decls.append(&mut parse(&code).unwrap()); //TODO handle errors
 
                     let code = match size_type {
                         ArraySizedExpr::Unsized => {
@@ -372,7 +372,8 @@ inline fn into_slice(self: {0}) -> (r: Slice::{1}) {{
                         }
                     };
                     trace!("{}: {}", code_ref, &code);
-                    new_decls.append(&mut parser::program(&code).unwrap()); //TODO handle errors
+                    new_decls.append(&mut parse(&code).unwrap());
+                //TODO handle errors
                 } else {
                     panic!("Slice for type {} is unsupported", ty)
                 }

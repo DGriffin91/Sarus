@@ -1,6 +1,6 @@
 use std::mem;
 
-use sarus::{jit, parser};
+use sarus::{jit, parse};
 
 use mitosis::{self, JoinHandle};
 
@@ -11,11 +11,11 @@ fn subprocess_code<I, O>(input: (String, I)) -> Result<O, String> {
     let (code, values) = input;
 
     // Parse and validate (this could probably happen safely in the same process)
-    let ast = parser::program(&code).map_err(|e| format!("parser failed: {}", e))?;
+    let ast = parse(&code).map_err(|e| format!("parser failed: {}", e))?;
 
     let mut jit = jit::JIT::default();
     // Pass the AST to the JIT to compile
-    jit.translate(ast, code.to_string())
+    jit.translate(ast, None)
         .map_err(|e| format!("jit translate failed: {}", e))?;
 
     // Run compiled code

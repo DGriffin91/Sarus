@@ -15,14 +15,15 @@ cranelift-module = "0.76.0"
 cranelift-native = "0.76.0"
 non-empty-vec = "0.2.0"
 peg = "0.7"
-thiserror = "1.0.29"
+thiserror = "1.0"
 toposort-scc = "0.5.4"
-toml = "0.5.8"
-serde = {version = "1.0.130", features = ["derive"] }
+toml = "0.5"
+serde = {version = "1.0", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = {version = "0.2", features = ["fmt", "json"]}
-tracing-core = "0.1.21"
+tracing-core = "0.1"
 tracing-appender = "0.1"
+dunce = "1.0"
 
 
 [dev-dependencies]

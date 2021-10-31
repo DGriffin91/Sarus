@@ -1,0 +1,6 @@
+
+
+fn mult(x, y) -> (z) {
+    f = x * y
+    z = x + y * f
+}

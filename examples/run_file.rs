@@ -1,4 +1,4 @@
-use sarus::{jit, parser};
+use sarus::{frontend::parse, jit};
 use std::{env, fs, mem};
 
 fn main() -> anyhow::Result<()> {
@@ -10,10 +10,10 @@ fn main() -> anyhow::Result<()> {
         let mut jit = jit::JIT::default();
 
         // Generate AST from string
-        let ast = parser::program(&code)?;
+        let ast = parse(&code)?;
 
         // Pass the AST to the JIT to compile
-        jit.translate(ast, code.to_string())?;
+        jit.translate(ast, None)?;
 
         //Get the function, returns a raw pointer to machine code.
         let func_ptr = jit.get_func("main")?;

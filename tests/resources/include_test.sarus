@@ -1,0 +1,6 @@
+include "./include_test2.sarus"
+
+fn add(x, y) -> (z) {
+    f = mult(x, y)
+    z = x + y * f
+}

@@ -1,6 +1,6 @@
 use std::mem;
 
-use sarus::{jit, parser};
+use sarus::{jit, parse};
 
 fn main() -> anyhow::Result<()> {
     // Create the JIT instance, which manages all generated functions and data.
@@ -13,9 +13,9 @@ fn main() -> anyhow::Result<()> {
     "#;
 
     // Generate AST from string
-    let ast = parser::program(code)?;
+    let ast = parse(&code)?;
     // Pass the AST to the JIT to compile
-    jit.translate(ast, code.to_string())?;
+    jit.translate(ast, None)?;
 
     //Get the function, returns a raw pointer to machine code.
     let func_ptr = jit.get_func("add")?;
@@ -34,9 +34,9 @@ fn main() -> anyhow::Result<()> {
     "#;
 
     // Generate AST from 2nd string
-    let ast = parser::program(code)?;
+    let ast = parse(&code)?;
 
-    jit.translate(ast, code.to_string())?;
+    jit.translate(ast, None)?;
     let func_ptr = jit.get_func("mult")?;
     let func = unsafe { mem::transmute::<_, fn(f32, f32) -> f32>(func_ptr) };
     println!("the answer is: {}", func(3.0f32, 5.0f32));

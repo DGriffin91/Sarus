@@ -4,9 +4,11 @@ use serde::Deserialize;
 use std::{
     alloc::{alloc, dealloc, Layout},
     collections::HashMap,
+    env,
     f32::consts::*,
     ffi::CStr,
     mem,
+    path::PathBuf,
 };
 
 #[allow(unused_imports)]
@@ -452,7 +454,7 @@ fn metadata() -> anyhow::Result<()> {
         }
     }
 "#;
-    let ast = parser::program(&code)?;
+    let ast = parse(&code)?;
     let mut jit = default_std_jit_from_code(&code)?;
 
     let func_meta: Option<Metadata> = ast.iter().find_map(|d| match d {
@@ -929,7 +931,8 @@ fn main(a: f32, b: f32) -> (c: f32) {
 "#;
     let a = 100.0f32;
     let b = 100.0f32;
-    let mut jit = default_std_jit_from_code_with_importer(&code, |_ast, jit_builder| {
+    let ast = parse(&code)?;
+    let mut jit = default_std_jit_from_code_with_importer(ast, None, |_ast, jit_builder| {
         jit_builder.symbols([("mult", mult as *const u8), ("dbg", dbg as *const u8)]);
     })?;
 
@@ -959,7 +962,8 @@ extern fn print(s: &) -> () {}
 "#;
     let a = 100.0f32;
     let b = 100.0f32;
-    let mut jit = default_std_jit_from_code_with_importer(&code, |_ast, jit_builder| {
+    let ast = parse(&code)?;
+    let mut jit = default_std_jit_from_code_with_importer(ast, None, |_ast, jit_builder| {
         jit_builder.symbols([("print", prt2 as *const u8)]);
     })?;
     let func_ptr = jit.get_func("main")?;
@@ -1147,7 +1151,8 @@ fn main(n: f32) -> (c: f32) {
 }
 "#;
     let a = 100.0f32;
-    let mut jit = default_std_jit_from_code_with_importer(&code, |_ast, jit_builder| {
+    let ast = parse(&code)?;
+    let mut jit = default_std_jit_from_code_with_importer(ast, None, |_ast, jit_builder| {
         jit_builder.symbols([("dbgf", dbgf as *const u8), ("dbgi", dbgi as *const u8)]);
     })?;
     let func_ptr = jit.get_func("main")?;
@@ -1195,7 +1200,7 @@ fn main(n: f32) -> (c: f32) {
 }
 "#;
 
-    //let ast = parser::program(&code)?;
+    //let ast = parse(&code)?;
     let a = 100.0f32;
     let mut jit = default_std_jit_from_code(&code)?;
     let func_ptr = jit.get_func("main")?;
@@ -1251,7 +1256,8 @@ fn main(n: f32) -> (c: f32) {
 }
 "#;
     let a = 100.0f32;
-    let mut jit = default_std_jit_from_code_with_importer(&code, |_ast, jit_builder| {
+    let ast = parse(&code)?;
+    let mut jit = default_std_jit_from_code_with_importer(ast, None, |_ast, jit_builder| {
         jit_builder.symbols([("dbgf", dbgf as *const u8), ("dbgi", dbgi as *const u8)]);
     })?;
     let func_ptr = jit.get_func("main")?;
@@ -1315,7 +1321,7 @@ fn main(a: f32) -> (c: bool) {
 //    let a = 100.0f32;
 //    let b = 100.0f32;
 //    let mut jit = jit::JIT::new(&[("print", prt2 as *const u8)]);
-//    let ast = parser::program(&code)?;
+//    let ast = parse(&code)?;
 //    let ast = sarus_std_lib::append_std_funcs( ast);
 //    jit.translate(ast.clone())?;
 //    let func_ptr = jit.get_func("main")?;
@@ -1804,7 +1810,8 @@ fn main5(a: f32) -> (c: Stuff) {
         i: 123,
     };
 
-    let mut jit = default_std_jit_from_code_with_importer(&code, |_ast, jit_builder| {
+    let ast = parse(&code)?;
+    let mut jit = default_std_jit_from_code_with_importer(ast, None, |_ast, jit_builder| {
         jit_builder.symbols([("returns_a_stuff", returns_a_stuff as *const u8)]);
     })?;
 
@@ -2311,11 +2318,11 @@ fn set_val(self: Filter) -> () {
 fn src_line() -> anyhow::Result<()> {
     let code = r#"
 fn main() -> () {
-    src_line().assert_eq(2)
-    src_line().assert_eq(3) src_line().assert_eq(3)
+    src_line().assert_eq(3)
+    src_line().assert_eq(4) src_line().assert_eq(4)
     //
 
-    src_line().assert_eq(6)
+    src_line().assert_eq(7)
 }
 "#;
     let mut jit = default_std_jit_from_code(&code)?;
@@ -3142,6 +3149,66 @@ fn main(a: f32) -> (c: i64) {
 }
 "#;
     let mut jit = default_std_jit_from_code(&code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+fn get_test_dir() -> PathBuf {
+    env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("tests")
+}
+
+#[test]
+fn test_include() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+include "./resources/include_test.sarus"
+
+fn main() -> () {    
+    a = 5.0
+    b = 6.0
+    c = add(a, b)
+    c.println()
+}
+
+"#;
+
+    let (ast, file_index_table) = parse_with_context(&code, &get_test_dir().join("test.sarus"))?;
+    let mut jit = default_std_jit_from_code_with_importer(ast, Some(file_index_table), |_, _| {})?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn test_include_redundant() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+include "./resources/include_test.sarus"
+include "./resources/include_test2.sarus" //Should be skipped
+
+fn main() -> () {    
+    a = 5.0
+    b = 6.0
+    c = add(a, b)
+    c.println()
+}
+
+"#;
+    let (ast, file_index_table) = parse_with_context(&code, &get_test_dir().join("test.sarus"))?;
+    let mut jit = default_std_jit_from_code_with_importer(ast, Some(file_index_table), |_, _| {})?;
     let func_ptr = jit.get_func("main")?;
     let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
     func();

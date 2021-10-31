@@ -1,8 +1,11 @@
+use std::path::PathBuf;
+
 use cranelift_jit::JITBuilder;
 
 use validator::ExprType;
 
-pub use frontend::parser;
+pub use frontend::parse;
+pub use frontend::parse_with_context;
 pub use frontend::{Arg, Declaration, Function};
 
 use crate::frontend::InlineKind;
@@ -24,23 +27,23 @@ macro_rules! hashmap {
 }
 
 pub fn default_std_jit_from_code(code: &str) -> anyhow::Result<jit::JIT> {
-    let mut ast = parser::program(&code)?;
+    let mut ast = parse(&code)?;
     let mut jit_builder = jit::new_jit_builder();
     sarus_std_lib::append_std(&mut ast, &mut jit_builder);
     sarus_std_lib::append_std_math(&mut ast, &mut jit_builder);
 
     let mut jit = jit::JIT::from(jit_builder);
 
-    jit.translate(ast, code.to_string())?;
+    jit.translate(ast, None)?;
     Ok(jit)
 }
 
 //TODO use builder pattern?
 pub fn default_std_jit_from_code_with_importer(
-    code: &str,
+    mut ast: Vec<Declaration>,
+    file_index_table: Option<Vec<PathBuf>>,
     importer: impl FnOnce(&mut Vec<Declaration>, &mut JITBuilder),
 ) -> anyhow::Result<jit::JIT> {
-    let mut ast = parser::program(&code)?;
     let mut jit_builder = jit::new_jit_builder();
     sarus_std_lib::append_std(&mut ast, &mut jit_builder);
     sarus_std_lib::append_std_math(&mut ast, &mut jit_builder);
@@ -49,7 +52,7 @@ pub fn default_std_jit_from_code_with_importer(
 
     let mut jit = jit::JIT::from(jit_builder);
 
-    jit.translate(ast, code.to_string())?;
+    jit.translate(ast, file_index_table)?;
     Ok(jit)
 }
 
