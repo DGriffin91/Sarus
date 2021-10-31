@@ -33,6 +33,8 @@ pub enum TypeError {
     UnknownStruct(String, String),
     #[error("{0} Struct \"{1}\" does not have field \"{2}\"")]
     UnknownField(String, String, String),
+    #[error("{0} Expression \"{1}\" is not supported")]
+    UnsupportedExpr(String, String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -231,6 +233,13 @@ fn get_struct_field_type(
     }
 }
 
+fn usex(e: &Expr, env: &Env) -> Result<ExprType, TypeError> {
+    Err(TypeError::UnsupportedExpr(
+        e.get_code_ref().s(&env.file_idx),
+        e.to_string(),
+    ))
+}
+
 impl ExprType {
     pub fn get_code_ref(&self) -> CodeRef {
         *match self {
@@ -333,10 +342,10 @@ impl ExprType {
                         //println!("curr_expr {:?} next_expr {:?}", &curr_expr, &next_expr);
                         //println!("path {:?}", &path);
                         match curr_expr.clone() {
-                            Some(expr) => {
+                            Some(rhs_expr) => {
                                 curr_expr = next_expr;
                                 next_expr = None;
-                                match expr.clone() {
+                                match rhs_expr.clone() {
                                     Expr::Call(code_ref, fn_name, args, is_macro) => {
                                         if is_macro {
                                             todo!("binop macros not supported yet")
@@ -347,7 +356,7 @@ impl ExprType {
                                             } else {
                                                 //This is a lhs call
                                                 lhs_val = Some(ExprType::of(
-                                                    &expr,
+                                                    &rhs_expr,
                                                     env,
                                                     variables,
                                                     inline_prefix,
@@ -420,12 +429,12 @@ impl ExprType {
 
                                         path = Vec::new();
                                     }
-                                    Expr::LiteralFloat(_code_ref, _) => todo!(),
-                                    Expr::LiteralInt(_code_ref, _) => todo!(),
-                                    Expr::LiteralBool(_code_ref, _) => todo!(),
+                                    Expr::LiteralFloat(_code_ref, _) => return usex(expr, env),
+                                    Expr::LiteralInt(_code_ref, _) => return usex(expr, env),
+                                    Expr::LiteralBool(_code_ref, _) => return usex(expr, env),
                                     Expr::LiteralString(_code_ref, _) => {
                                         lhs_val = Some(ExprType::of(
-                                            &expr,
+                                            &rhs_expr,
                                             env,
                                             variables,
                                             inline_prefix,
@@ -439,27 +448,29 @@ impl ExprType {
                                             inline_prefix,
                                         )?);
                                     }
-                                    Expr::Identifier(_code_ref, _i) => path.push(expr),
+                                    Expr::Identifier(_code_ref, _i) => path.push(rhs_expr),
                                     Expr::Binop(_code_ref, op, lhs, rhs) => {
                                         if let Binop::DotAccess = op {
                                             curr_expr = Some(*lhs.clone());
                                             next_expr = Some(*rhs.clone());
                                         } else {
-                                            todo!();
+                                            return usex(expr, env);
                                         }
                                     }
-                                    Expr::Unaryop(_code_ref, _, _) => todo!(),
-                                    Expr::Compare(_code_ref, _, _, _) => todo!(),
-                                    Expr::IfThen(_code_ref, _, _) => todo!(),
-                                    Expr::IfElse(_code_ref, _, _, _) => todo!(), //TODO, this should actually be possible
-                                    Expr::IfThenElseIf(_code_ref, _) => todo!(),
-                                    Expr::IfThenElseIfElse(_code_ref, _, _) => todo!(), //TODO, this should actually be possible
-                                    Expr::Assign(_code_ref, _, _) => todo!(),
-                                    Expr::AssignOp(_code_ref, _, _, _) => todo!(),
-                                    Expr::NewStruct(_code_ref, _, _) => todo!(),
-                                    Expr::WhileLoop(_code_ref, _, _) => todo!(),
-                                    Expr::Block(_code_ref, _) => todo!(),
-                                    Expr::GlobalDataAddr(_code_ref, _) => todo!(),
+                                    Expr::Unaryop(_code_ref, _, _) => return usex(expr, env),
+                                    Expr::Compare(_code_ref, _, _, _) => return usex(expr, env),
+                                    Expr::IfThen(_code_ref, _, _) => return usex(expr, env),
+                                    Expr::IfElse(_code_ref, _, _, _) => return usex(expr, env), //TODO, this should actually be possible
+                                    Expr::IfThenElseIf(_code_ref, _) => return usex(expr, env),
+                                    Expr::IfThenElseIfElse(_code_ref, _, _) => {
+                                        return usex(expr, env)
+                                    } //TODO, this should actually be possible
+                                    Expr::Assign(_code_ref, _, _) => return usex(expr, env),
+                                    Expr::AssignOp(_code_ref, _, _, _) => return usex(expr, env),
+                                    Expr::NewStruct(_code_ref, _, _) => return usex(expr, env),
+                                    Expr::WhileLoop(_code_ref, _, _) => return usex(expr, env),
+                                    Expr::Block(_code_ref, _) => return usex(expr, env),
+                                    Expr::GlobalDataAddr(_code_ref, _) => return usex(expr, env),
                                     Expr::Parentheses(_code_ref, e) => {
                                         lhs_val =
                                             Some(ExprType::of(&e, env, variables, inline_prefix)?)
@@ -501,7 +512,7 @@ impl ExprType {
                                             }
                                         } else {
                                             lhs_val = Some(ExprType::of(
-                                                &expr,
+                                                &rhs_expr,
                                                 env,
                                                 variables,
                                                 inline_prefix,
