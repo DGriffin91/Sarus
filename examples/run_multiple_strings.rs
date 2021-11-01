@@ -36,6 +36,8 @@ fn main() -> anyhow::Result<()> {
     // Generate AST from 2nd string
     let ast = parse(&code)?;
 
+    //TODO fails here Error: Duplicate definition of identifier: LN_10
+    //Need to only add constants once
     jit.translate(ast, None)?;
     let func_ptr = jit.get_func("mult")?;
     let func = unsafe { mem::transmute::<_, fn(f32, f32) -> f32>(func_ptr) };

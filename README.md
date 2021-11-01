@@ -1,18 +1,23 @@
 # Sarus
 
-## A jit engine
+## A JIT compiled language designed for realtime contexts
+### No hidden allocations or GC
 
-test with `cargo run --example run_file examples/test`
+
+See `tests/integration_test.rs` for a breadth of code examples.
+[sarus-editor-plugin](https://github.com/DGriffin91/sarus-editor-plugin) uses Sarus to JIT compile DSP/UI code in a VST plugin.
 
 Derived from https://github.com/bytecodealliance/cranelift-jit-demo
 
+test with `cargo test`
+
 In Progress: (more or less usable)
-- Base types: bool, f32, i64, &[f32], &[i64] 
-- Structs with impls
-- Functions with multiple return variables
+- Base types: bool, f32, i64, &[f32], &[i64], [100; f32], ...
+- `repr(C)` Structs with impls
+- Functions with multiple return variables, and optional inline
 - Basic branching (if/then, if/then/else)
-- While loop          
-- Calling functions defined in rust
+- While loop   
+- Call Sarus functions from Rust and vice versa with `extern "C"`
 - Custom metadata associated functions/expressions
 
 

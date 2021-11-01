@@ -1,5 +1,5 @@
 [package]
-authors = ["The Sarus Project Developers"]
+authors = ["Sarus Contributors"]
 description = "A jit engine using cranelift"
 edition = "2018"
 license = "Apache-2.0 WITH LLVM-exception"
@@ -29,7 +29,6 @@ dunce = "1.0"
 [dev-dependencies]
 basic-audio-filters = {git = "https://github.com/DGriffin91/rust-basic-audio-filters"}
 hound = "3.4.0"
-mitosis = "0.1.1"
 
 
 [[example]]
