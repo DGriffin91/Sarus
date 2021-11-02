@@ -3,6 +3,7 @@
 ## A JIT compiled language designed for realtime contexts
 ### No hidden allocations or GC
 
+Sarus is in very early stages of development.
 
 See `tests/integration_test.rs` for a breadth of code examples.
 [sarus-editor-plugin](https://github.com/DGriffin91/sarus-editor-plugin) uses Sarus to JIT compile DSP/UI code in a VST plugin.
@@ -60,7 +61,7 @@ fn main(n: f32) -> (c: f32) {
         b: p2,
     }
 
-    d = l1.a //struct is copied
+    d = l1.a
     e = d.x + l1.a.x
     
     p1.y = e * d.z
