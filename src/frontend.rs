@@ -162,6 +162,7 @@ pub enum Expr {
     GlobalDataAddr(CodeRef, String),
     Parentheses(CodeRef, Box<Expr>),
     ArrayAccess(CodeRef, String, Box<Expr>),
+    Declaration(CodeRef, Declaration),
 }
 
 impl Expr {
@@ -196,6 +197,7 @@ impl Expr {
             Expr::GlobalDataAddr(code_ref, ..) => code_ref,
             Expr::Parentheses(code_ref, ..) => code_ref,
             Expr::ArrayAccess(code_ref, ..) => code_ref,
+            Expr::Declaration(code_ref, ..) => code_ref,
         }
     }
 
@@ -223,6 +225,7 @@ impl Expr {
             Expr::GlobalDataAddr(code_ref, ..) => code_ref,
             Expr::Parentheses(code_ref, ..) => code_ref,
             Expr::ArrayAccess(code_ref, ..) => code_ref,
+            Expr::Declaration(code_ref, ..) => code_ref,
         }
     }
 }
@@ -352,6 +355,7 @@ impl Display for Expr {
             Expr::LiteralBool(_, b) => write!(f, "{}", b),
             Expr::Parentheses(_, e) => write!(f, "({})", e),
             Expr::ArrayAccess(_, var, e) => write!(f, "{}[{}]", var, e),
+            Expr::Declaration(_, e) => write!(f, "{}", e),
         }
     }
 }
@@ -397,12 +401,15 @@ pub struct Arg {
     pub name: String,
     pub expr_type: ExprType,
     pub default_to_float: bool,
+    pub closure_arg: Option<Function>,
 }
 
 impl Display for Arg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.default_to_float {
             write!(f, "{}", self.name)
+        } else if let Some(closure_arg) = &self.closure_arg {
+            write!(f, "{}: {}", self.name, closure_arg)
         } else {
             write!(f, "{}: {}", self.name, self.expr_type)
         }
@@ -617,14 +624,44 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
             inline: if let Some(inline) = inline {inline} else {InlineKind::Default},
         }) }
 
+    rule closure_definition(name: String) -> Function
+        = "|" params:(i:arg() ** comma()) "|" _
+         "->" _
+         "(" returns:(i:arg() ** comma()) _ ")"
+         {
+             Function {
+             name,
+             params,
+             returns,
+             body: vec![],
+             extern_func: false,
+             inline: InlineKind::Always,
+        } }
+
+    rule closure_declaration(name: String) -> Declaration
+        = "|" params:(i:arg() ** comma()) "|" _
+        "->" _
+        "(" returns:(i:arg() ** comma()) _ ")"
+        body:block()
+        {
+            Declaration::Function(Function {
+            name,
+            params,
+            returns,
+            body,
+            extern_func: false,
+            inline: InlineKind::Always,
+        }) }
+
     rule function_inline_kind() -> InlineKind
     = "inline" {InlineKind::Often}
     / "never_inline" {InlineKind::Never}
     / "always_inline" {InlineKind::Always}
 
     rule arg() -> Arg
-        = _ i:identifier() _ ":" _ t:type_label() _ { Arg {name: i.into(), expr_type: t.into(), default_to_float: false } }
-        / _ pos:position!() i:identifier() _ { Arg {name: i.into(), expr_type: ExprType::F32(CodeRef::new(pos, code_ctx)), default_to_float: true } }
+        = _ i:identifier() _ ":" _ c:closure_definition(i) _ { Arg {name: c.name.to_string(), expr_type: ExprType::Void(CodeRef::z()), default_to_float: false, closure_arg: Some(c) } }
+        / _ i:identifier() _ ":" _ t:type_label() _ { Arg {name: i.into(), expr_type: t.into(), default_to_float: false, closure_arg: None } }
+        / _ pos:position!() i:identifier() _ { Arg {name: i.into(), expr_type: ExprType::F32(CodeRef::new(pos, code_ctx)), default_to_float: true, closure_arg: None } }
 
     rule type_label() -> ExprType
         = _ pos:position!() "f32" _ { ExprType::F32(CodeRef::new(pos, code_ctx)) }
@@ -643,7 +680,10 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
 
     rule statement() -> Expr
         //TODO allow for multiple expressions like: a, b, c returned from if/then/else, etc...
-        = while_loop() / assignment() / expression()
+        = expression_declaration() / while_loop() / assignment() / expression()
+
+    rule expression_declaration() -> Expr
+        = pos:position!() _ i:identifier()  _ c:closure_declaration(i) { Expr::Declaration(CodeRef::new(pos, code_ctx), c) }
 
     rule expression() -> Expr
         = if_then()
@@ -654,6 +694,10 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         / assignment()
         / op_assignment()
         / binary_op()
+        / anon_closure()
+
+    rule anon_closure() -> Expr
+        = pos:position!() _ c:closure_declaration(("~anon~".to_string())) { Expr::Declaration(CodeRef::new(pos, code_ctx), c) }
 
     rule if_then() -> Expr
         = _ pos:position!() "if" _ e:expression() then_body:block() "\n"

@@ -1,7 +1,7 @@
 use crate::frontend::*;
 use crate::sarus_std_lib;
 use crate::sarus_std_lib::SConstant;
-use crate::validator::validate_program;
+use crate::validator::validate_function;
 use crate::validator::ArraySizedExpr;
 use crate::validator::ExprType;
 use cranelift::codegen::ir::immediates::Offset32;
@@ -10,7 +10,6 @@ use cranelift::prelude::*;
 pub use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataContext, Linkage, Module};
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::ffi::CString;
 use std::fmt::Display;
 use std::path::PathBuf;
@@ -109,11 +108,21 @@ impl JIT {
         let constant_vars = sarus_std_lib::get_constants(&struct_map);
 
         let mut funcs = HashMap::new();
+        let mut inline_closures: HashMap<String, HashMap<String, Closure>> = HashMap::new();
 
         for decl in prog.iter_mut() {
             match decl {
                 Declaration::Function(func) => {
                     funcs.insert(func.name.clone(), func.clone());
+                    setup_inline_closures(&func.name, &func.body, &mut inline_closures);
+                    if let InlineKind::Always = func.inline {
+                    } else {
+                        for param in &func.params {
+                            if param.closure_arg.is_some() {
+                                anyhow::bail!("function {} takes a closure in parameter {} but is not declared as inline_always", func.name, param.name)
+                            }
+                        }
+                    }
                 }
                 _ => continue,
             }
@@ -123,9 +132,18 @@ impl JIT {
             match d {
                 Declaration::Function(func) => {
                     if func.extern_func {
-                        //Don't compile the contents of std func, it will be empty
+                        // Don't compile the contents of std func, it will be empty
                         trace!(
                             "Function {} is an external function, skipping codegen",
+                            func.sig_string()?
+                        );
+                        continue;
+                    }
+                    if let InlineKind::Always = func.inline {
+                        // Don't compile the contents of Inline::Always func
+                        // it should always be inlined
+                        trace!(
+                            "Function {} is Inline::Always, skipping codegen",
                             func.sig_string()?
                         );
                         continue;
@@ -138,6 +156,7 @@ impl JIT {
                         &struct_map,
                         &constant_vars,
                         &file_index_table,
+                        &mut inline_closures,
                     )?;
                     // Next, declare the function to jit. Functions must be declared
                     // before they can be called, or defined.
@@ -237,7 +256,15 @@ impl JIT {
     // Translate from AST nodes into Cranelift IR.
     #[instrument(
         level = "info",
-        skip(self, func, funcs, struct_map, constant_vars, file_index_table)
+        skip(
+            self,
+            func,
+            funcs,
+            struct_map,
+            constant_vars,
+            file_index_table,
+            inline_closures
+        )
     )]
     fn codegen(
         &mut self,
@@ -246,6 +273,7 @@ impl JIT {
         struct_map: &HashMap<String, StructDef>,
         constant_vars: &HashMap<String, SConstant>,
         file_index_table: &Option<Vec<PathBuf>>,
+        inline_closures: &HashMap<String, HashMap<String, Closure>>,
     ) -> anyhow::Result<()> {
         info!("{}", func.sig_string()?);
         let ptr_ty = self.module.target_config().pointer_type();
@@ -318,6 +346,8 @@ impl JIT {
             ptr_ty,
             funcs,
             file_idx: file_index_table.clone(),
+            inline_closures: inline_closures.clone(),
+            temp_inline_closures: HashMap::new(),
         };
 
         //println!("declare_variables {}", func.name);
@@ -329,9 +359,7 @@ impl JIT {
             &mut var_index,
             &mut builder,
             &mut self.module,
-            &func.params,
-            &func.returns,
-            &func.body,
+            &func,
             entry_block,
             &mut env,
             &mut variables,
@@ -345,7 +373,7 @@ impl JIT {
         //println!("validate_program {}", func.name);
 
         //Check every statement, this can catch funcs with no assignment, etc...
-        validate_program(&func.body, &env, &variables)?;
+        validate_function(&func, &env, &variables)?;
 
         //println!("FunctionTranslator {}", func.name);
         let ptr_ty = self.module.target_config().pointer_type();
@@ -353,16 +381,13 @@ impl JIT {
         // Now translate the statements of the function body.
         let mut trans = FunctionTranslator {
             builder,
-            func,
             module: &mut self.module,
             ptr_ty,
             env,
-            inline_outer_var_aliases: HashMap::new(),
-            inline_prefix: Vec::new(),
-            inline_variables: HashMap::new(),
+            func_stack: vec![func.clone()],
             entry_block,
             var_index,
-            variables,
+            variables: vec![variables],
         };
         for expr in &func.body {
             trans.translate_expr(expr)?;
@@ -373,7 +398,7 @@ impl JIT {
         // variable.
         let mut return_values = Vec::new();
         for ret in func.returns.iter() {
-            let return_variable = trans.variables.get(&ret.name).unwrap();
+            let return_variable = trans.variables.last().unwrap().get(&ret.name).unwrap();
             let v = match &ret.expr_type {
                 ExprType::F32(code_ref) => trans
                     .builder
@@ -609,6 +634,44 @@ pub struct Env {
     pub ptr_ty: types::Type,
     pub funcs: HashMap<String, Function>,
     pub file_idx: Option<Vec<PathBuf>>,
+
+    // inline closures are only available in the scope of this function
+    // are not stored in a variable
+    // can only be called directly, or passed to other functions that are inlined
+    // can't be in a branch, because it's all compile time
+    // since it's all inlined can safely act like a closure
+    // These are stored by inline_closures[containing func name][closure name]
+    pub inline_closures: HashMap<String, HashMap<String, Closure>>,
+
+    // temp inline closures are ones that are passed in as arguments
+    // functions that are always::inline can take closures as parameters
+    // the closure gets cloned into temp_inline_closures with an alias
+    // to the parameter name in the function that the closure is being
+    // passed to. These are initialized when the function is inlined
+    // and cleaned up afterward.
+    // TODO make recursively inlining an error
+    // These are stored by temp_inline_closures[containing func name][closure name]
+    pub temp_inline_closures: HashMap<String, HashMap<String, Closure>>,
+}
+
+impl Env {
+    pub fn get_inline_closure(
+        &self,
+        callee_func_name: &str,
+        fn_name: &str,
+    ) -> Option<(Closure, bool)> {
+        if let Some(closures) = self.inline_closures.get(callee_func_name) {
+            if let Some(closure) = closures.get(fn_name) {
+                return Some((closure.clone(), false));
+            }
+        };
+        if let Some(closures) = self.temp_inline_closures.get(callee_func_name) {
+            if let Some(closure) = closures.get(fn_name) {
+                return Some((closure.clone(), true));
+            }
+        };
+        None
+    }
 }
 
 /// A collection of state used for translating from Sarus AST nodes
@@ -617,22 +680,18 @@ struct FunctionTranslator<'a> {
     builder: FunctionBuilder<'a>,
     module: &'a mut JITModule,
     env: Env,
-    func: &'a Function,
     ptr_ty: types::Type,
 
-    pub variables: HashMap<String, SVariable>,
+    // This is a vec where inline calls will push hashmaps of vars as they
+    // are called, and pop off the end when they are done variables.last()
+    // should have the variables for the "current" function (inline or not)
+    pub variables: Vec<HashMap<String, SVariable>>,
 
-    // Aliases to outer vars for use instead of arg/returns
-    pub inline_outer_var_aliases: HashMap<String, String>,
-
-    // Stack of prefixes for inline
+    // Stack of inlined function names. Used as prefixes for inline
     // when entering an inline section the func name will be appended
     // when leaving the inline section the func name will be removed
     // these will be joined with the var names like this "func1->func2->var_name"
-    pub inline_prefix: Vec<String>,
-
-    // Variables that need to be accessed by inline functions
-    pub inline_variables: HashMap<String, SVariable>,
+    pub func_stack: Vec<Function>,
 
     // so that we can add inline vars
     entry_block: Block,
@@ -684,6 +743,13 @@ impl<'a> FunctionTranslator<'a> {
                     SValue::get_from_variable(&mut self.builder, &svar)
                 } else if let Some(sval) = self.translate_constant(code_ref, name)? {
                     Ok(sval)
+                } else if let Some(_) = self
+                    .env
+                    .get_inline_closure(&self.func_stack.last().unwrap().name, name)
+                {
+                    //This is a closure identifier
+                    //TODO if this was in an inline function it would not show up as &self.func.name
+                    Ok(SValue::Void)
                 } else {
                     Ok(SValue::F32(
                         //TODO Don't assume this is a float
@@ -734,35 +800,24 @@ impl<'a> FunctionTranslator<'a> {
                 let idx_val = self.idx_expr_to_val(idx_expr)?;
                 self.translate_array_get_from_var(code_ref, name.to_string(), idx_val, false)
             }
+            Expr::Declaration(_code_ref, declaration) => match &declaration {
+                Declaration::Function(_closure) => Ok(SValue::Void),
+                Declaration::Metadata(_, _) => todo!(),
+                Declaration::Struct(_) => todo!(),
+                Declaration::StructMacro(_, _) => todo!(),
+                Declaration::Include(_) => todo!(),
+            },
         }
     }
 
     fn get_variable(&mut self, code_ref: &CodeRef, name: &str) -> anyhow::Result<&SVariable> {
-        if self.inline_prefix.len() > 0 {
-            //We are in an inline section
-            let name = format!("{}->{}", self.inline_prefix.join("->"), name);
-            let name = if let Some(alias_name) = self.inline_outer_var_aliases.get(&name) {
-                alias_name.as_str()
-            } else {
-                name.as_str()
-            };
-            match self.inline_variables.get(name) {
-                Some(v) => Ok(v),
-                None => anyhow::bail!(
-                    "{} inline variable {} not found",
-                    code_ref.s(&self.env.file_idx),
-                    name
-                ),
-            }
-        } else {
-            match self.variables.get(name) {
-                Some(v) => Ok(v),
-                None => anyhow::bail!(
-                    "{} variable {} not found",
-                    code_ref.s(&self.env.file_idx),
-                    name
-                ),
-            }
+        match self.variables.last().unwrap().get(name) {
+            Some(v) => Ok(v),
+            None => anyhow::bail!(
+                "{} variable {} not found",
+                code_ref.s(&self.env.file_idx),
+                name
+            ),
         }
     }
 
@@ -1021,6 +1076,7 @@ impl<'a> FunctionTranslator<'a> {
 
                             path = Vec::new();
                         }
+                        Expr::Declaration(_code_ref, _) => todo!(),
                     }
                 }
                 None => break,
@@ -1304,7 +1360,7 @@ impl<'a> FunctionTranslator<'a> {
                         //Can this be done without clone?
                         let dst_svar = self.get_variable(code_ref, name)?.clone();
 
-                        for arg in &self.func.params {
+                        for arg in &self.func_stack.last().unwrap().params {
                             if *name == arg.name {
                                 /*
                                 Should this happen also if the var already exists and has already been initialized?
@@ -1314,7 +1370,7 @@ impl<'a> FunctionTranslator<'a> {
                                 src_var won't be freed until after the function returns. This could be another
                                 reason for having scopes work more like they do in other languages. Then if a stack
                                 allocation is being created in a loop, it will be freed on each loop if it hasn't been
-                                stored to a var that is outside of the scope of the loop) (How is works also has
+                                stored to a var that is outside of the scope of the loop) (How it works also has
                                 implications for how aliasing works)
                                 */
                                 if let ExprType::Struct(code_ref, struct_name) = &arg.expr_type {
@@ -1323,7 +1379,7 @@ impl<'a> FunctionTranslator<'a> {
                                         code_ref,
                                         struct_name,
                                         arg.name,
-                                        self.func.name,
+                                        &self.func_stack.last().unwrap().name,
                                         arg.name,
                                     );
                                     //copy to struct that was passed in as parameter
@@ -1355,7 +1411,7 @@ impl<'a> FunctionTranslator<'a> {
                                                 code_ref,
                                                 expr_type,
                                                 arg.name,
-                                                self.func.name,
+                                                &self.func_stack.last().unwrap(),
                                                 arg.name,
                                             );
                                             //copy to array that was passed in as parameter
@@ -1388,7 +1444,7 @@ impl<'a> FunctionTranslator<'a> {
                                     code_ref,
                                     struct_name,
                                     var_name,
-                                    self.func.name,
+                                    &self.func_stack.last().unwrap(),
                                     var_name,
                                 );
                                 //copy to struct, we don't want to return a reference
@@ -2117,17 +2173,154 @@ impl<'a> FunctionTranslator<'a> {
         }
 
         if fn_name == "unsized" {
-            return self.call_with_svalues(&code_ref, &fn_name, arg_values, None);
+            return self.call_with_svalues(
+                &code_ref, &fn_name, None, None, false, false, arg_values, None,
+            );
         }
 
-        if !self.env.funcs.contains_key(&fn_name) {
+        let callee_func_name = &self.func_stack.last().unwrap().name;
+        let mut is_closure = false;
+        let mut is_temp_closure = false;
+        let mut closure_src_scope_name = None;
+        let closure = self.env.get_inline_closure(callee_func_name, &fn_name);
+
+        let func = if let Some((closure, temp_closure)) = closure {
+            is_temp_closure = temp_closure;
+            is_closure = true;
+            closure_src_scope_name = Some(closure.src_scope);
+            Some(closure.func)
+        } else {
+            if let Some(func) = self.env.funcs.get(&fn_name) {
+                Some(func.clone())
+            } else {
+                None
+            }
+        };
+
+        let func = if let Some(func) = func {
+            func.clone()
+        } else {
             anyhow::bail!(
                 "{} function {} not found",
                 code_ref.s(&self.env.file_idx),
                 fn_name
             )
+        };
+
+        let mut closure_args = Vec::new();
+        // Put arg closures into function being called with name from args
+        // closures are currently only passed in as a declaration or identifier
+        // which closures are used for args has to be known at compile time, can't
+        // be behind an if/then, etc... Eventually there may be compile time
+        // execution that would allow this.
+        if let InlineKind::Always = func.inline {
+            let func = func.clone();
+            for (expr, arg) in args.iter().zip(func.params.iter()) {
+                let closure_d = match expr {
+                    Expr::Identifier(_, name) => {
+                        if let Some((closure, temp_closure)) =
+                            self.env.get_inline_closure(callee_func_name, name)
+                        {
+                            Some((closure, temp_closure))
+                        } else {
+                            None
+                        }
+                    }
+                    Expr::Declaration(_, decl) => match decl {
+                        Declaration::Function(closure) => Some((
+                            Closure {
+                                func: closure.clone(),
+                                src_scope: self.func_stack.last().unwrap().name.to_string(),
+                            },
+                            false,
+                        )),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some((closure, temp_closure)) = closure_d.clone() {
+                    trace!(
+                        "{} func {} arg {} is a closure parameter. temp_closure: {}",
+                        code_ref,
+                        &func.name,
+                        &arg.name,
+                        temp_closure
+                    );
+                    if let Some(closure_arg) = &arg.closure_arg {
+                        {
+                            //TODO move to validator
+                            if closure.func.params.len() != closure_arg.params.len() {
+                                anyhow::bail!(
+                                "{} func {} arg {} closure parameter count does not match signature",
+                                code_ref,
+                                &func.name,
+                                &arg.name,
+                            )
+                            }
+                            if closure.func.returns.len() != closure_arg.returns.len() {
+                                anyhow::bail!(
+                                "{} func {} arg {} closure return count does not match signature",
+                                code_ref,
+                                &func.name,
+                                &arg.name,
+                            )
+                            }
+                            for (param, arg_param) in
+                                closure.func.params.iter().zip(closure_arg.params.iter())
+                            {
+                                if param.expr_type != arg_param.expr_type {
+                                    anyhow::bail!(
+                                    "{} func {} arg {} closure parameter types do not match. Expected {} but found {}",
+                                    code_ref,
+                                    &func.name,
+                                    &arg.name,
+                                    arg_param.expr_type,
+                                    param.expr_type,
+                                )
+                                }
+                            }
+                            for (return_, arg_return) in
+                                closure.func.returns.iter().zip(closure_arg.returns.iter())
+                            {
+                                if return_.expr_type != arg_return.expr_type {
+                                    anyhow::bail!(
+                                    "{} func {} arg {} closure returns types do not match. Expected {} but found {}",
+                                    code_ref,
+                                    &func.name,
+                                    &arg.name,
+                                    arg_return.expr_type,
+                                    return_.expr_type,
+                                )
+                                }
+                            }
+                        }
+                        //If func does not have any closures, it wont have a hashmap under its name
+                        if !self.env.temp_inline_closures.contains_key(&func.name) {
+                            self.env
+                                .temp_inline_closures
+                                .insert(func.name.to_string(), HashMap::new());
+                        }
+                        closure_args.push(arg.name.to_string());
+
+                        //alias closure into function being called with name from arg
+                        self.env
+                            .temp_inline_closures
+                            .get_mut(&func.name)
+                            .unwrap()
+                            .insert(arg.name.to_string(), closure);
+                    } else {
+                        anyhow::bail!(
+                            "{} func {} arg {} is not a closure arg",
+                            code_ref,
+                            &func.name,
+                            &arg.name
+                        )
+                    }
+                }
+            }
         }
-        let returns = &self.env.funcs[&fn_name].returns;
+
+        let returns = &func.returns;
 
         let mut stack_slot_return = None;
 
@@ -2138,8 +2331,27 @@ impl<'a> FunctionTranslator<'a> {
                 }
             }
         }
+        let ret = self.call_with_svalues(
+            &code_ref,
+            &fn_name,
+            Some(&func),
+            closure_src_scope_name,
+            is_closure,
+            is_temp_closure,
+            arg_values,
+            stack_slot_return,
+        );
 
-        self.call_with_svalues(&code_ref, &fn_name, arg_values, stack_slot_return)
+        //Clean up temporary closure args
+        for closure_arg in closure_args {
+            self.env
+                .temp_inline_closures
+                .get_mut(&func.name)
+                .unwrap()
+                .remove(&closure_arg);
+        }
+
+        ret
     }
 
     fn translate_constant(
@@ -2334,7 +2546,7 @@ impl<'a> FunctionTranslator<'a> {
                 struct_name = vstruct_name;
                 base_struct_var_ptr
             } else {
-                anyhow::bail!("struct type not found")
+                anyhow::bail!("variable {} is not a struct type {:?}", lhs_val, parts)
             }
         } else {
             let svar = self.get_variable(&CodeRef::z(), &parts[0])?.clone();
@@ -2344,7 +2556,7 @@ impl<'a> FunctionTranslator<'a> {
                 struct_name = vstruct_name.to_string();
                 base_struct_var_ptr
             } else {
-                anyhow::bail!("struct type not found")
+                anyhow::bail!("variable {} is not a struct type {:?}", svar, parts)
             }
         };
 
@@ -2574,8 +2786,8 @@ impl<'a> FunctionTranslator<'a> {
     }
 
     fn call_panic(&mut self, code_ref: &CodeRef, message: &String) -> anyhow::Result<()> {
-        let arg_values = vec![self.translate_string(message)?];
-        self.call_with_svalues(&code_ref, "panic", arg_values, None)?;
+        let arg_values = vec![Expr::LiteralString(*code_ref, message.to_string())];
+        self.translate_call(code_ref, "panic", &arg_values, None, false)?;
         Ok(())
     }
 
@@ -2583,11 +2795,23 @@ impl<'a> FunctionTranslator<'a> {
         &mut self,
         code_ref: &CodeRef,
         fn_name: &str,
+        func: Option<&Function>,
+        closure_src_scope_name: Option<String>,
+        is_closure: bool,
+        is_temp_closure: bool,
         arg_svalues: Vec<SValue>,
         stack_slot_return: Option<(String, usize)>,
     ) -> anyhow::Result<SValue> {
         let fn_name = &fn_name.to_string();
-
+        trace!(
+            "{} call_with_svalues: {} is_closure: {} is_temp_closure: {} closure_src_scope_name: {:?} stack_slot_return: {}",
+            code_ref.s(&self.env.file_idx),
+            &fn_name,
+            is_closure,
+            is_temp_closure,
+            closure_src_scope_name,
+            stack_slot_return.is_some()
+        );
         if fn_name == "unsized" {
             if let Some(v) = sarus_std_lib::translate_std(
                 self.module.target_config().pointer_type(),
@@ -2599,15 +2823,15 @@ impl<'a> FunctionTranslator<'a> {
                 return Ok(v);
             }
         }
-
-        if !self.env.funcs.contains_key(fn_name) {
+        let func = if let Some(func) = func {
+            func
+        } else {
             anyhow::bail!(
                 "{} function {} not found",
                 code_ref.s(&self.env.file_idx),
                 fn_name
             )
-        }
-        let func = self.env.funcs[fn_name].clone();
+        };
 
         let inline_function_requested = match func.inline {
             InlineKind::Default => false, //TODO make default still inline if it seems worth it
@@ -2616,7 +2840,9 @@ impl<'a> FunctionTranslator<'a> {
             InlineKind::Often => true, //TODO make often not inline if it's an issue
         };
 
-        let inline_function = inline_function_requested && !func.extern_func;
+        //let inline_function_requested = true; //make everything that not external inline
+
+        let inline_function = (inline_function_requested && !func.extern_func) || is_closure;
 
         if func.params.len() != arg_svalues.len() {
             anyhow::bail!(
@@ -2642,18 +2868,29 @@ impl<'a> FunctionTranslator<'a> {
         let mut arg_values = Vec::new();
 
         for arg_svalue in &arg_svalues {
-            arg_values.push(arg_svalue.inner("call_with_svalues")?)
+            let v = if let SValue::Void = arg_svalue {
+                continue;
+            } else {
+                arg_svalue.inner("call_with_svalues")?
+            };
+            arg_values.push(v)
         }
 
-        let mut sig = self.module.make_signature();
+        let mut sig = if !inline_function {
+            Some(self.module.make_signature())
+        } else {
+            None
+        };
 
         let ptr_ty = self.module.target_config().pointer_type();
 
         let mut arg_values = Vec::from(arg_values); //in case we need to insert a val for the StructReturnSlot
 
-        for val in arg_values.iter() {
-            sig.params
-                .push(AbiParam::new(self.builder.func.dfg.value_type(*val)));
+        if let Some(sig) = &mut sig {
+            for val in arg_values.iter() {
+                sig.params
+                    .push(AbiParam::new(self.builder.func.dfg.value_type(*val)));
+            }
         }
 
         let stack_slot_address = if let Some((fn_name, size)) = &stack_slot_return {
@@ -2672,22 +2909,26 @@ impl<'a> FunctionTranslator<'a> {
                     .ins()
                     .stack_addr(ptr_ty, stack_slot, Offset32::new(0));
             arg_values.insert(0, stack_slot_address);
-            sig.params
-                .insert(0, AbiParam::special(ptr_ty, ArgumentPurpose::StructReturn));
+            if let Some(sig) = &mut sig {
+                sig.params
+                    .insert(0, AbiParam::special(ptr_ty, ArgumentPurpose::StructReturn));
+            }
             Some((fn_name.clone(), stack_slot_address))
         } else {
             None
         };
 
         if stack_slot_return.is_none() {
-            for ret_arg in &func.returns {
-                sig.returns.push(AbiParam::new(
-                    ret_arg.expr_type.cranelift_type(ptr_ty, false)?,
-                ));
+            if let Some(sig) = &mut sig {
+                for ret_arg in &func.returns {
+                    sig.returns.push(AbiParam::new(
+                        ret_arg.expr_type.cranelift_type(ptr_ty, false)?,
+                    ));
+                }
             }
         }
 
-        let res = if inline_function && !func.extern_func {
+        let res = if inline_function {
             trace!(
                 "{} inlining function {}",
                 code_ref.s(&self.env.file_idx),
@@ -2708,98 +2949,110 @@ impl<'a> FunctionTranslator<'a> {
             //}
             //self.builder.block_params(func_block).to_vec()
 
-            //------------
-            /*
-            TODO: create alias table for func parameter and return var names:
-                (this will only work for explicit var names in the func call
-                 we'll also need a way to actually get these identifiers)
-                a = 5
-                b = 6
-                c = add_and_1(a, b)
+            self.func_stack.push(func.clone()); //push inlined func onto func_stack
+            self.variables.push(HashMap::new()); //new variable scope for inline func
 
-                fn add(x, y) -> (z) {
-                    and_1 = 1
-                    c = x + y + and_1
+            if let Some(closure_src_scope_name) = closure_src_scope_name {
+                //closures need the variables form the the scope they close over to be included
+                let mut vars_to_expose = HashMap::new();
+
+                let mut scope_closure_src_pos = None;
+
+                //Find func in the stack that is the closure src
+                for (i, func) in self.func_stack.iter().enumerate() {
+                    if func.name == closure_src_scope_name {
+                        scope_closure_src_pos = Some(i);
+                        break;
+                    }
                 }
 
-                alias_table = [
-                    "add->x" : "a"
-                    "add->y" : "b"
-                    "add->z" : "c"
-                ]
+                let scope_closure_src_pos = if let Some(s) = scope_closure_src_pos {
+                    s
+                } else {
+                    anyhow::bail!(
+                        "{} could not find closure src scope {}",
+                        code_ref.s(&self.env.file_idx),
+                        closure_src_scope_name
+                    )
+                };
 
-                the alias table needs to work like a stack, removing just the ones added here
-                    because this could already be in an inlined section
-                    also, if an alias already existed, don't add it again, and don't remove it after
-                    just make a local list here that has what needs to be removed
-                no need to declare new vars for things in the alias table
+                // append the closed over scope to the closure's variables
+                for (k, v) in &self.variables[scope_closure_src_pos] {
+                    vars_to_expose.insert(k.to_string(), v.clone());
+                    trace!("adding var {} to closure {}", k, func.name);
+                }
+                for (k, v) in vars_to_expose {
+                    self.variables.last_mut().unwrap().insert(k, v);
+                }
 
-                any new vars will need to have a prefix added to them.
-                    It could be something that isn't allowed in normal var names. currently it's using "->"
-                    "func_name1->var_name"
-                    then two layers deep it would be
-                    "func_name1->func_name2->var_name"
-                    this is kept in self.inline_prefix
+                let scope_src_func_name = &self.func_stack[scope_closure_src_pos].name;
 
-                we also have to include the prefix in the alias table so we don't reference some var 2 layers up
+                // Make any other closures in the callee available to the closure
+                if let Some(scope_src_func_closures) =
+                    self.env.inline_closures.get(scope_src_func_name)
+                {
+                    //If func does not have any closures, it wont have a hashmap under its name
+                    if !self.env.temp_inline_closures.contains_key(&func.name) {
+                        self.env
+                            .temp_inline_closures
+                            .insert(func.name.to_string(), HashMap::new());
+                    }
+                    for (k, closure) in scope_src_func_closures {
+                        self.env
+                            .temp_inline_closures
+                            .get_mut(&func.name)
+                            .unwrap()
+                            .insert(k.clone(), closure.clone());
+                    }
+                }
+            }
 
-            */
-
-            self.inline_prefix.push(fn_name.to_string());
-
-            let existing_vars = self
-                .inline_variables
-                .keys()
-                .map(|v| v.to_string())
-                .collect::<HashSet<_>>();
-
-            let inline_data = InlineVarData {
-                prefix: self.inline_prefix.join("->"),
-                arg_values,
-            };
-
+            // inlined functions will not have variables already declared
             declare_variables(
                 &mut self.var_index,
                 &mut self.builder,
                 &mut self.module,
-                &func.params,
-                &func.returns,
-                func.body.as_slice(),
+                &func,
                 self.entry_block,
                 &mut self.env,
-                &mut self.inline_variables,
-                &mut Some(inline_data),
+                &mut self.variables.last_mut().unwrap(),
+                &Some(arg_values),
             )?;
 
+            // inlined functions (and especially closures) should be checked with included vars
+            validate_function(&func, &self.env, &self.variables.last_mut().unwrap())?;
+
+            // translate inline func body
             for expr in &func.body {
                 self.translate_expr(expr)?;
             }
 
+            // get values from return variables
             let mut _return = Vec::new();
             for ret in &func.returns {
-                let v = self.inline_variables
-                    [&format!("{}->{}", self.inline_prefix.join("->"), &ret.name)]
-                    .inner();
+                let v = self.variables.last().unwrap()[&ret.name].inner();
                 _return.push(self.builder.use_var(v))
             }
 
-            self.inline_prefix.pop();
-
-            //Remove vars from self.inline_variables that are no longer needed
-            self.inline_variables
-                .retain(|k, _| existing_vars.contains(k));
+            //finished with inline scope
+            self.func_stack.pop();
+            self.variables.pop();
 
             _return
         } else {
-            let callee = self
-                .module
-                .declare_function(&fn_name, Linkage::Import, &sig)
-                .expect("problem declaring function");
-            let local_callee = self
-                .module
-                .declare_func_in_func(callee, &mut self.builder.func);
-            let call = self.builder.ins().call(local_callee, &arg_values);
-            self.builder.inst_results(call).to_vec()
+            if let Some(sig) = sig {
+                let callee = self
+                    .module
+                    .declare_function(&fn_name, Linkage::Import, &sig)
+                    .expect("problem declaring function");
+                let local_callee = self
+                    .module
+                    .declare_func_in_func(callee, &mut self.builder.func);
+                let call = self.builder.ins().call(local_callee, &arg_values);
+                self.builder.inst_results(call).to_vec()
+            } else {
+                anyhow::bail!("Expected sig")
+            }
         };
 
         if let Some((fn_name, stack_slot_address)) = stack_slot_address {
@@ -3038,50 +3291,61 @@ impl SVariable {
     }
 }
 
-struct InlineVarData {
-    prefix: String,
-    arg_values: Vec<Value>,
+#[derive(Debug, Clone)]
+pub struct Closure {
+    pub func: Function,
+    pub src_scope: String,
 }
 
-impl InlineVarData {
-    fn get_name(&self, name: &str) -> String {
-        format!("{}->{}", self.prefix, name)
+fn setup_inline_closures(
+    func_name: &str,
+    stmts: &[Expr],
+    inline_closures: &mut HashMap<String, HashMap<String, Closure>>,
+) {
+    for stmt in stmts {
+        match stmt {
+            Expr::Declaration(_coderef, decl) => match decl {
+                Declaration::Function(closure_fn) => {
+                    if !inline_closures.contains_key(func_name) {
+                        inline_closures.insert(func_name.to_string(), HashMap::new());
+                    }
+                    inline_closures.get_mut(func_name).unwrap().insert(
+                        closure_fn.name.clone(),
+                        Closure {
+                            func: closure_fn.clone(),
+                            src_scope: func_name.to_string(),
+                        },
+                    );
+                    setup_inline_closures(&closure_fn.name, &closure_fn.body, inline_closures);
+                }
+                _ => continue,
+            },
+            _ => continue,
+        }
     }
 }
 
 #[instrument(
     level = "info",
-    skip(
-        builder,
-        module,
-        params,
-        returns,
-        stmts,
-        entry_block,
-        env,
-        variables,
-        inline_data
-    )
+    skip(builder, module, func, entry_block, env, variables, inline_arg_values)
 )]
 fn declare_variables(
     index: &mut usize,
     builder: &mut FunctionBuilder,
     module: &mut dyn Module,
-    params: &[Arg],
-    returns: &[Arg],
-    stmts: &[Expr],
+    func: &Function,
     entry_block: Block,
     env: &mut Env,
     variables: &mut HashMap<String, SVariable>,
-    inline_data: &mut Option<InlineVarData>,
+    inline_arg_values: &Option<Vec<Value>>,
 ) -> anyhow::Result<()> {
-    let entry_block_is_offset = if returns.len() > 0 {
-        if let ExprType::Struct(code_ref, struct_name) = &returns[0].expr_type {
+    let entry_block_is_offset = if func.returns.len() > 0 {
+        if let ExprType::Struct(code_ref, struct_name) = &func.returns[0].expr_type {
             trace!(
                 "{}: fn is returning struct {} declaring var {}",
                 code_ref,
                 struct_name,
-                &returns[0].name
+                &func.returns[0].name
             );
             // When calling a function that will return a struct, Rust (or possibly anything using the C ABI),
             // will allocate the stack space needed for the struct that will be returned. This is allocated in
@@ -3090,12 +3354,9 @@ fn declare_variables(
             // https://docs.wasmtime.dev/api/cranelift/prelude/enum.StackSlotKind.html#variant.StructReturnSlot
             // https://docs.wasmtime.dev/api/cranelift_codegen/ir/enum.ArgumentPurpose.html#variant.StructReturn
 
-            let return_struct_arg = &returns[0];
-            let (name, val) = if let Some(inline_data) = inline_data {
-                (
-                    inline_data.get_name(&return_struct_arg.name),
-                    inline_data.arg_values[0],
-                )
+            let return_struct_arg = &func.returns[0];
+            let (name, val) = if let Some(inline_arg_values) = inline_arg_values {
+                (return_struct_arg.name.clone(), inline_arg_values[0])
             } else {
                 let return_struct_param_val = builder.block_params(entry_block)[0];
                 (return_struct_arg.name.clone(), return_struct_param_val)
@@ -3114,18 +3375,13 @@ fn declare_variables(
             }
             true
         } else {
-            for arg in returns {
-                let name = if let Some(inline_data) = inline_data {
-                    inline_data.get_name(&arg.name)
-                } else {
-                    arg.name.clone()
-                };
+            for arg in &func.returns {
                 declare_variable(
                     module,
                     builder,
                     variables,
                     index,
-                    name,
+                    arg.name.clone(),
                     &arg.expr_type,
                     false,
                 )?;
@@ -3136,12 +3392,17 @@ fn declare_variables(
         false
     };
 
-    for (i, arg) in params.iter().enumerate() {
-        let val = if let Some(inline_data) = inline_data {
+    for (i, arg) in func
+        .params
+        .iter()
+        .filter(|a| a.closure_arg.is_none()) //Skip closure args
+        .enumerate()
+    {
+        let val = if let Some(inline_arg_values) = inline_arg_values {
             if entry_block_is_offset {
-                inline_data.arg_values[i + 1]
+                inline_arg_values[i + 1]
             } else {
-                inline_data.arg_values[i]
+                inline_arg_values[i]
             }
         } else {
             if entry_block_is_offset {
@@ -3150,17 +3411,12 @@ fn declare_variables(
                 builder.block_params(entry_block)[i]
             }
         };
-        let name = if let Some(inline_data) = inline_data {
-            inline_data.get_name(&arg.name)
-        } else {
-            arg.name.clone()
-        };
         let var = declare_variable(
             module,
             builder,
             variables,
             index,
-            name,
+            arg.name.clone(),
             &arg.expr_type,
             false,
         )?;
@@ -3169,15 +3425,15 @@ fn declare_variables(
         }
     }
 
-    for expr in stmts {
+    for expr in &func.body {
         declare_variables_in_stmt(
             module.target_config().pointer_type(),
             builder,
             index,
             expr,
+            func,
             env,
             variables,
-            inline_data,
         )?;
     }
 
@@ -3191,9 +3447,9 @@ fn declare_variables_in_stmt(
     builder: &mut FunctionBuilder,
     index: &mut usize,
     expr: &Expr,
+    func: &Function,
     env: &mut Env,
     variables: &mut HashMap<String, SVariable>,
-    inline_data: &mut Option<InlineVarData>,
 ) -> anyhow::Result<()> {
     match *expr {
         Expr::Assign(_code_ref, ref to_exprs, ref from_exprs) => {
@@ -3206,9 +3462,9 @@ fn declare_variables_in_stmt(
                             builder,
                             index,
                             &vec![name.to_string()],
+                            func,
                             env,
                             variables,
-                            inline_data,
                         )?;
                     }
                 }
@@ -3220,52 +3476,21 @@ fn declare_variables_in_stmt(
                     }
                 }
                 declare_variable_from_expr(
-                    ptr_type,
-                    expr,
-                    builder,
-                    index,
-                    &sto_exprs,
-                    env,
-                    variables,
-                    inline_data,
+                    ptr_type, expr, builder, index, &sto_exprs, func, env, variables,
                 )?;
             }
         }
         Expr::IfElse(_code_ref, ref _condition, ref then_body, ref else_body) => {
             for stmt in then_body {
-                declare_variables_in_stmt(
-                    ptr_type,
-                    builder,
-                    index,
-                    &stmt,
-                    env,
-                    variables,
-                    inline_data,
-                )?;
+                declare_variables_in_stmt(ptr_type, builder, index, &stmt, func, env, variables)?;
             }
             for stmt in else_body {
-                declare_variables_in_stmt(
-                    ptr_type,
-                    builder,
-                    index,
-                    &stmt,
-                    env,
-                    variables,
-                    inline_data,
-                )?;
+                declare_variables_in_stmt(ptr_type, builder, index, &stmt, func, env, variables)?;
             }
         }
         Expr::WhileLoop(_code_ref, ref _condition, ref loop_body) => {
             for stmt in loop_body {
-                declare_variables_in_stmt(
-                    ptr_type,
-                    builder,
-                    index,
-                    &stmt,
-                    env,
-                    variables,
-                    inline_data,
-                )?;
+                declare_variables_in_stmt(ptr_type, builder, index, &stmt, func, env, variables)?;
             }
         }
         _ => (),
@@ -3280,9 +3505,9 @@ fn declare_variable_from_expr(
     builder: &mut FunctionBuilder,
     index: &mut usize,
     names: &Vec<String>,
+    func: &Function,
     env: &mut Env,
     variables: &mut HashMap<String, SVariable>,
-    inline_data: &mut Option<InlineVarData>,
 ) -> anyhow::Result<()> {
     match expr {
         Expr::IfElse(_code_ref, _condition, then_body, _else_body) => {
@@ -3293,9 +3518,9 @@ fn declare_variable_from_expr(
                 builder,
                 index,
                 names,
+                func,
                 env,
                 variables,
-                inline_data,
             )?;
         }
         Expr::Assign(code_ref, ref _to_exprs, ref from_exprs) => {
@@ -3305,42 +3530,15 @@ fn declare_variable_from_expr(
                     code_ref.s(&env.file_idx),
                     from_expr,
                 );
-                if let Some(inline_data) = inline_data {
-                    let expr_type = ExprType::of(from_expr, env, &variables, &inline_data.prefix)?;
-                    let mut inline_names = Vec::new();
-                    for name in names {
-                        inline_names.push(inline_data.get_name(name));
-                    }
-                    trace!("{:?}", inline_names);
-                    declare_variable_from_type(
-                        ptr_type,
-                        &expr_type,
-                        builder,
-                        index,
-                        &inline_names,
-                        variables,
-                    )?;
-                } else {
-                    let expr_type = ExprType::of(from_expr, env, &variables, "")?;
-                    trace!("{:?}", names);
-                    declare_variable_from_type(
-                        ptr_type, &expr_type, builder, index, names, variables,
-                    )?;
-                }
+
+                let expr_type = ExprType::of(from_expr, env, &func.name, &variables)?;
+                trace!("{:?}", names);
+                declare_variable_from_type(ptr_type, &expr_type, builder, index, names, variables)?;
             }
         }
         expr => {
-            if let Some(inline_data) = inline_data {
-                let expr_type = ExprType::of(expr, env, variables, &inline_data.prefix)?;
-                let mut inline_names = Vec::new();
-                for name in names {
-                    inline_names.push(inline_data.get_name(name));
-                }
-                declare_variable_from_type(ptr_type, &expr_type, builder, index, names, variables)?;
-            } else {
-                let expr_type = ExprType::of(expr, env, &variables, "")?;
-                declare_variable_from_type(ptr_type, &expr_type, builder, index, names, variables)?;
-            }
+            let expr_type = ExprType::of(expr, env, &func.name, &variables)?;
+            declare_variable_from_type(ptr_type, &expr_type, builder, index, names, variables)?;
         }
     };
     Ok(())

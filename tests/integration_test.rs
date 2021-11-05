@@ -528,7 +528,7 @@ fn float_conversion() -> anyhow::Result<()> {
     fn main(a, b) -> (e) {
         i_a = a.i64()
         e = if i_a < b.i64() {
-            i_a.f32().i64().f32() //TODO chaining not working
+            i_a.f32().i64().f32()
         } else {
             2.0
         }
@@ -1108,7 +1108,7 @@ fn main(n: f32) -> (c: f32) {
     l1.print()
     d = l1.a //struct is copied
     e = d.x + l1.a.x //f32's are copied
-    d.print() //TODO This should work
+    d.print()
     
     p1.y = e * d.z
     p1.y.assert_eq(e * d.z)
@@ -1963,7 +1963,6 @@ struct AudioData {
     len: i64,
 }
 
-//TODO get dot accessing working with arrays
 #[test]
 fn struct_of_slices_of_numbers() -> anyhow::Result<()> {
     let code = r#"
@@ -1977,9 +1976,7 @@ fn process(audio: AudioData) -> () {
     i = 0
     while i < audio.len {
         left = audio.left
-        //left[i] = (audio.left[i] * 10.0).tanh() * 0.1
-        //right[i] = (audio.right[i] * 10.0).tanh() * 0.1
-        left[i] = i.f32() //TODO does not check type
+        left[i] = i.f32()
         audio.right[i] = i.f32()  
         i += 1
     }
@@ -3213,4 +3210,565 @@ fn main() -> () {
     let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
     func();
     Ok(())
+}
+
+//#[cfg(test)]
+mod inline_closures {
+
+    use super::*;
+
+    #[test]
+    fn basic() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+fn main() -> () {
+    add|| -> () {
+        c = c * 2.0
+    }
+    stuff|e| -> (f) {
+        c = c * 2.0 * e
+        f = c * e
+    }
+    a = 5.0
+    b = 6.0
+    c = 5.0 + 6.0
+    c.assert_eq(11.0)
+    add()
+    c.assert_eq(22.0)
+    j = stuff(3.0)
+    c.assert_eq(132.0)
+    j.assert_eq(396.0)
+}
+"#;
+
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        Ok(())
+    }
+
+    #[test]
+    fn nested() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+inline fn stuff1(a, b) -> (c, k) {
+    c = a + b
+    stuff2|d| -> (f) { 
+        c = c * d
+        f = c + 5.0
+    }
+    k = stuff2(3.0)
+}
+
+fn main() -> () {    
+    a = 5.0
+    b = 6.0
+    h, i = stuff1(a, b)
+    h.assert_eq(33.0)
+    i.assert_eq(38.0)
+}
+"#;
+
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        Ok(())
+    }
+
+    #[test]
+    fn nested2() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+fn main() -> () {
+    j = 0.0
+    add|| -> () {
+        c = c * 2.0
+        stuff|e| -> (f) { 
+            c.assert_eq(22.0)
+            c = c * 2.0 * e
+            c.assert_eq(132.0)
+            f = c * e
+        }
+        j = stuff(3.0)
+    }
+    a = 5.0
+    b = 6.0
+    c = 5.0 + 6.0
+    c.assert_eq(11.0)
+    add()
+    c.assert_eq(132.0)
+    j.assert_eq(396.0)
+}
+"#;
+
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        Ok(())
+    }
+
+    #[test]
+    fn nested3() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+inline fn stuff1(a, b) -> (c, k) {
+    c = a + b
+    stuff2|d| -> (f) { 
+        c = c * d
+        f = c + 5.0
+    }
+    k = stuff2(3.0)
+}
+
+fn main() -> () {
+    j = 0.0
+    add|| -> () {
+        c = c * 2.0
+        stuff|e| -> (f) { 
+            c.assert_eq(22.0)
+            c = c * 2.0 * e
+            c.assert_eq(132.0)
+            f = c * e
+            u, l = stuff1(c, e)
+            u.assert_eq(405.0)
+            l.assert_eq(410.0)
+        }
+        j = stuff(3.0)
+    }
+    a = 5.0
+    b = 6.0
+    c = 5.0 + 6.0
+    c.assert_eq(11.0)
+    add()
+    c.assert_eq(132.0)
+    j.assert_eq(396.0)
+}
+"#;
+
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        Ok(())
+    }
+
+    #[test]
+    fn passing() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+always_inline fn run_some_closure(n, some_closure: |e| -> ()) -> () {
+    some_closure(n * 5.0)
+}
+fn main() -> () {
+    stuff|e| -> () {
+        c *= e
+    }
+    c = 5.0 + 6.0
+    run_some_closure(2.0, stuff)
+    c.assert_eq(110.0)
+}
+"#;
+
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        Ok(())
+    }
+
+    #[test]
+    fn passing_with_return() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+always_inline fn run_some_closure(n, some_closure: |e| -> (f)) -> (f) {
+    f = some_closure(n * 5.0)
+}
+fn main() -> () {
+    stuff|e| -> (f) {
+        c *= e
+        f = c * 2.0
+    }
+    c = 5.0 + 6.0
+    j = run_some_closure(2.0, stuff)
+    c.assert_eq(110.0)
+    j.assert_eq(220.0)
+}
+"#;
+
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        Ok(())
+    }
+
+    #[test]
+    fn passing_no_param() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+always_inline fn run_some_closure(some_closure: || -> ()) -> (f) {
+    some_closure()
+}
+fn main() -> () {
+    stuff|| -> () {
+        c *= 2.0
+    }
+    c = 5.0 + 6.0
+    run_some_closure(stuff)
+    c.assert_eq(22.0)
+}
+"#;
+
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        Ok(())
+    }
+
+    #[test]
+    fn anonymous_passing() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+always_inline fn run_some_closure(n, some_closure: |f32| -> ()) -> () {
+    some_closure(n * 5.0)
+}
+fn main() -> () {
+    c = 5.0 + 6.0
+    run_some_closure(2.0, |e| -> () {c *= e})
+    c.assert_eq(110.0)
+}
+"#;
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        Ok(())
+    }
+
+    #[test]
+    fn anonymous_passing_with_return() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+always_inline fn run_some_closure(n, some_closure: |e| -> (f)) -> (f) {
+    f = some_closure(n * 5.0)
+}
+fn main() -> () {
+    c = 5.0 + 6.0
+    j = run_some_closure(2.0, |e| -> (f) {
+        c *= e
+        f = c * 2.0
+    })
+    c.assert_eq(110.0)
+    j.assert_eq(220.0)
+}
+"#;
+
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        Ok(())
+    }
+
+    #[test]
+    fn anonymous_passing_with_return_calls_inline() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+inline fn mult(a, b) -> (c) {
+    c = a * b
+}
+
+inline fn multj(a, b) -> (c) {
+    j = 6.0
+    c = mult(a, b) + j
+    c -= j
+}
+
+always_inline fn run_some_closure(n, some_closure: |e| -> (f)) -> (f) {
+    f = some_closure(n * 5.0)
+}
+
+fn main() -> () {
+    c = 5.0 + 6.0
+    j = run_some_closure(2.0, |e| -> (f) {
+        c *= e
+        f = multj(c, 2.0)
+    })
+    c.assert_eq(110.0)
+    j.assert_eq(220.0)
+}
+"#;
+
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        Ok(())
+    }
+
+    #[test]
+    fn anonymous_passing2() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+always_inline fn run_some_closure(n, some_closure: |e| -> ()) -> () {
+    some_closure(n * 5.0)
+}
+
+always_inline fn stuff(n, some_closure2: |e| -> ()) -> () {
+    run_some_closure(n, some_closure2)
+}
+
+fn main() -> () {
+    c = 5.0 + 6.0
+    stuff(2.0, |e| -> () {c *= e})
+    c.assert_eq(110.0)
+}
+"#;
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        Ok(())
+    }
+
+    #[test]
+    fn inline_func_has_anonymous_passing() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+always_inline fn run_some_closure(n, some_closure: |e| -> ()) -> () {
+    some_closure(n * 5.0)
+}
+
+inline fn stuff() -> () {
+    c = 5.0 + 6.0
+    run_some_closure(2.0, |e| -> () {c *= e})
+    c.assert_eq(110.0)
+}
+
+fn main() -> () {
+    stuff()
+}
+"#;
+
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        Ok(())
+    }
+
+    #[test]
+    fn inline_func_has_anonymous_passing_with_return_calls_inline() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+inline fn mult(a, b) -> (c) {
+    c = a * b
+}
+
+inline fn multj(a, b) -> (c) {
+    j = 6.0
+    c = mult(a, b) + j
+    c -= j
+}
+
+always_inline fn run_some_closure(n, some_closure: |e| -> (f)) -> (f) {
+    f = some_closure(n * 5.0)
+}
+
+fn stuff() -> () {
+    c = 5.0 + 6.0
+    j = run_some_closure(2.0, |e| -> (f) {
+        c *= e
+        f = multj(c, 2.0)
+    })
+    c.assert_eq(110.0)
+    j.assert_eq(220.0)
+}
+
+fn main() -> () {
+    stuff()
+}
+"#;
+
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        Ok(())
+    }
+
+    #[test]
+    fn closure_in_closure() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+inline fn mult(a, b) -> (c) {
+    c = a * b
+}
+
+always_inline fn run_some_closure2(n, some_closure: |e| -> ()) -> () {
+    some_closure(mult(n, 5.0))
+}
+
+always_inline fn run_some_closure(n, some_closure: |e| -> ()) -> () {
+    some_closure(n * 5.0)
+}
+
+inline fn stuff() -> () {
+    c = 5.0 + 6.0
+    run_some_closure(2.0, |e| -> () {
+        run_some_closure2(3.0, |f| -> () {c *= f})
+        c *= e
+    })
+    c.assert_eq(1650.0)
+}
+
+fn main() -> () {
+    stuff()
+}
+"#;
+
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        Ok(())
+    }
+
+    #[test]
+    fn closure_in_closure_struct() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+struct FloatVal {
+    val: f32,
+}
+
+inline fn mult(a: FloatVal, b: FloatVal) -> (c: FloatVal) {
+    c = FloatVal{ val: a.val * b.val, }
+}
+
+always_inline fn run_some_closure2(n: FloatVal, some_closure: |e: FloatVal| -> ()) -> () {
+    some_closure( mult(n, FloatVal{ val: 5.0, }) )
+}
+
+always_inline fn run_some_closure(n: FloatVal, some_closure: |e: FloatVal| -> ()) -> () {
+    n.val *= 5.0
+    some_closure(n)
+}
+
+inline fn stuff() -> () {
+    c = FloatVal { val: 5.0 + 6.0, }
+    c.val.assert_eq(11.0)
+    run_some_closure(FloatVal{ val: 2.0, }, |e: FloatVal| -> () {
+        c.val.assert_eq(11.0)
+        run_some_closure2(FloatVal{ val: 3.0, }, |f: FloatVal| -> () {
+            c.val.assert_eq(11.0) //"cl2 c ".print() 
+            e.val.assert_eq(10.0) //"cl2 e ".print() 
+            f.val.assert_eq(15.0) //"cl2 f ".print() 
+            c.val *= f.val
+        })
+        c.val.assert_eq(165.0)
+        c.val *= e.val
+        c.val.assert_eq(1650.0)
+    })
+    c.val.assert_eq(1650.0)
+}
+
+fn main() -> () {
+    stuff()
+}
+"#;
+
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        Ok(())
+    }
+
+    #[test]
+    fn closure_takes_closure() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+always_inline fn run_some_closure(n, some_closure: |e, cl: |f| -> (j)| -> ()) -> () {
+    a = 1.0
+    some_closure(n * 5.0, |f| -> (j) {j = f + a})
+}
+
+inline fn stuff() -> () {
+    c = 5.0 + 6.0
+    run_some_closure(2.0, |e, cl: |f| -> (j)| -> () {
+        cl(3.0).assert_eq(4.0)
+        e.assert_eq(10.0)
+        c.assert_eq(11.0)
+        c *= e + cl(3.0)
+    })
+    c.assert_eq(154.0)
+}
+
+fn main() -> () {
+    stuff()
+}
+"#;
+
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        Ok(())
+    }
+
+    #[test]
+    fn use_closure_from_parent_closure_scope() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+always_inline fn run_some_closure(n, some_closure: |e| -> ()) -> () {
+    some_closure(n * 5.0)
+}
+
+fn main() -> () {
+    c = 5.0 + 6.0
+    add1|| -> () {c += 1.0}
+    run_some_closure(2.0, |e| -> () {c *= e add1()})
+    c.assert_eq(111.0)
+}
+"#;
+
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        Ok(())
+    }
+
+    #[test]
+    fn use_closure_from_parent_closure_scope2() -> anyhow::Result<()> {
+        //setup_logging();
+        let code = r#"
+fn main() -> () {
+    a = 1.0
+    single_proc|| -> () {
+        a += 1.0
+    }
+
+    while_proc | get_coeffs: ||->(c: f32) |->() {
+        coeffs = get_coeffs()
+        single_proc()        
+    }
+    
+    while_proc(||->(c: f32) {
+        c = 5.0
+    })
+}
+"#;
+
+        let mut jit = default_std_jit_from_code(&code)?;
+        let func_ptr = jit.get_func("main")?;
+        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+        func();
+        Ok(())
+    }
 }

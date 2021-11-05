@@ -4,7 +4,6 @@ extern crate test; //rust-analyser complains, but this should work in nightly
 use std::mem;
 
 use basic_audio_filters::second_order_iir::{IIR2Coefficients, IIR2};
-use mitosis::JoinHandle;
 use sarus::*;
 use test::Bencher;
 
@@ -127,7 +126,6 @@ fn get_eq_jit() -> jit::JIT {
             i += 1
             f_i += 1.0
         }
-        f3_a1, f3_a2, f3_a3, f3_m0, f3_m1, f3_m2 = highshelf(2000.0, 6.0, 1.0, fs)
     }
 
 "#;
@@ -212,38 +210,4 @@ fn write_wav(samples: &[f32], path: &str) {
         writer.write_sample(*sample as f32).unwrap();
     }
     writer.finalize().unwrap();
-}
-
-// NOTE: this method won't work in a VST plugin.
-// It will try to open the whole DAW in a second instance
-
-fn subprocess_code(_: Option<()>) -> Result<f32, String> {
-    //let mut jit = jit::JIT::default();
-    //// Pass the AST to the JIT to compile
-    //jit.translate(ast)
-    //    .map_err(|e| format!("jit translate failed: {}", e))?;
-    let mut jit = get_eq_jit();
-    let mut output_arr = [0.0f32; 128];
-
-    // Run compiled code
-
-    let func_ptr = jit
-        .get_func("main")
-        .map_err(|e| format!("get_func main failed: {}", e))?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(i64, *mut f32) -> f32>(func_ptr) };
-    Ok(func(output_arr.len() as i64, output_arr.as_mut_ptr()))
-}
-
-#[bench]
-fn subprocess_eq_compile(b: &mut Bencher) {
-    let mut sum = 0.0;
-    b.iter(|| {
-        test::black_box({
-            mitosis::init();
-            // Spawn separate process that will jit compile code, returning result
-            let runner: JoinHandle<Result<f32, String>> = mitosis::spawn(None, subprocess_code);
-            sum += runner.join().unwrap().unwrap()
-        });
-    });
-    dbg!(sum);
 }

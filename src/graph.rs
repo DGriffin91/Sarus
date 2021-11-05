@@ -269,6 +269,7 @@ fn build_graph_func(
                 ArraySizedExpr::Unsized,
             ),
             default_to_float: false,
+            closure_arg: None,
         }],
         returns: vec![],
         body: main_body,

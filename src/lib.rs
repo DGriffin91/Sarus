@@ -69,6 +69,7 @@ macro_rules! decl {
                         name: format!("in{}", params.len()),
                         expr_type: $param,
                         default_to_float: false,
+                        closure_arg: None,
                     });
                 )*
 
@@ -79,6 +80,7 @@ macro_rules! decl {
                         name: format!("out{}", returns.len()),
                         expr_type: $ret,
                         default_to_float: false,
+                        closure_arg: None,
                     });
                 )*
 
@@ -103,6 +105,7 @@ fn make_decl(
                 name: name.to_string(),
                 expr_type: expr,
                 default_to_float: false,
+                closure_arg: None,
             })
             .collect(),
         returns: returns
@@ -111,6 +114,7 @@ fn make_decl(
                 name: name.to_string(),
                 expr_type: expr,
                 default_to_float: false,
+                closure_arg: None,
             })
             .collect(),
         body: vec![],
