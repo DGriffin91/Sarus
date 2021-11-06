@@ -902,6 +902,9 @@ fn ifthen3() -> (c: bool) {
         c = false
     }
 }
+fn nested() -> (c: bool) {
+    c = !(!(1.0 < 2.0) && !(2.0 < 3.0))
+}
 fn parenassign() -> (c: bool) {
     c = !((1.0 < 2.0) && (2.0 < 3.0) && true)
 }
@@ -918,11 +921,20 @@ fn parenassign() -> (c: bool) {
     let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("ifthen")?) };
     assert_eq!(true, f());
     let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("ifthen2")?) };
-    assert_eq!(true, f());
+    assert_eq!(if !(!(false || !false)) { true } else { false }, f());
     let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("ifthen3")?) };
-    assert_eq!(true, f());
+    assert_eq!(
+        if !(!(1.0 < 2.0) && !(2.0 < 3.0)) {
+            false
+        } else {
+            true
+        },
+        f()
+    );
+    let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("nested")?) };
+    assert_eq!(!(!(1.0 < 2.0) && !(2.0 < 3.0)), f());
     let f = unsafe { mem::transmute::<_, extern "C" fn() -> bool>(jit.get_func("parenassign")?) };
-    assert_eq!(false, f());
+    assert_eq!(!((1.0 < 2.0) && (2.0 < 3.0) && true), f());
     Ok(())
 }
 
@@ -1809,7 +1821,9 @@ fn main4(a: f32) -> (c: Stuff) {
 }
 fn main5(a: f32) -> (c: Stuff) {
     s = returns_a_stuff(a)
-    s.w = !s.w
+    //TODO !s.w is not supported because unary ! and - only work with unary exprs as operand
+    //This was required to get the order of operations to be correct for things like two + -four + two
+    s.w = !(s.w) 
     s.x *= s.x
     s.y *= s.y
     s.z *= s.z
@@ -3869,8 +3883,8 @@ fn unary_negative() -> anyhow::Result<()> {
 fn number() -> (y) {
     y = 2.0
 }
-fn main() -> () { 
-    a = 5 
+fn main() -> () {
+    a = 5
     b = -a
     b.assert_eq(-5)
     (-b).assert_eq(5)
@@ -3886,6 +3900,29 @@ fn main() -> () {
     (2 + -4 + 2).assert_eq(0)
     ((2 + -4) + 2).assert_eq(0)
     (2 + (-4 + 2)).assert_eq(0)
+    four = 4
+    two = 2
+    (four + -four).assert_eq(0)
+    (two + -four + two).assert_eq(0)
+    ((two + -four) + two).assert_eq(0)
+    (two + (-four + two)).assert_eq(0)
+}
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn unary_negative2() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+fn main() -> () { 
+    four = 4
+    two = 2
+    (two + -four + two).println()
 }
 "#;
     let mut jit = default_std_jit_from_code(&code)?;

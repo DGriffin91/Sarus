@@ -42,12 +42,12 @@ pub enum Binop {
 impl Display for Binop {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Binop::Add => write!(f, "+"),
-            Binop::Sub => write!(f, "-"),
-            Binop::Mul => write!(f, "*"),
-            Binop::Div => write!(f, "/"),
-            Binop::LogicalAnd => write!(f, "&&"),
-            Binop::LogicalOr => write!(f, "||"),
+            Binop::Add => write!(f, " + "),
+            Binop::Sub => write!(f, " - "),
+            Binop::Mul => write!(f, " * "),
+            Binop::Div => write!(f, " / "),
+            Binop::LogicalAnd => write!(f, " && "),
+            Binop::LogicalOr => write!(f, " || "),
             Binop::DotAccess => write!(f, "."),
         }
     }
@@ -604,7 +604,7 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         / expected!("identifier")
 
     rule function() -> Declaration
-        = _ ext:("extern")? _ inline:function_inline_kind()? _  "fn" name:identifier() _
+        = _ ext:("extern")? _ inline:function_inline_kind()? _  "fn" _ name:identifier() _
         "(" params:(i:arg() ** comma()) ")" _
         "->" _
         "(" returns:(i:arg() ** comma()) _ ")"
@@ -740,12 +740,12 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         a:@ _ pos:position!() "&&" _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::LogicalAnd, Box::new(a), Box::new(b)) }
         a:@ _ pos:position!() "||" _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::LogicalOr, Box::new(a), Box::new(b)) }
         --
-        a:@ _ pos:position!() "==" b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Eq, Box::new(a), Box::new(b)) }
-        a:@ _ pos:position!() "!=" b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Ne, Box::new(a), Box::new(b)) }
-        a:@ _ pos:position!() "<"  b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Lt, Box::new(a), Box::new(b)) }
-        a:@ _ pos:position!() "<=" b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Le, Box::new(a), Box::new(b)) }
-        a:@ _ pos:position!() ">"  b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Gt, Box::new(a), Box::new(b)) }
-        a:@ _ pos:position!() ">=" b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Ge, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "==" _ b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Eq, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "!=" _ b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Ne, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "<"  _ b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Lt, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "<=" _ b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Le, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() ">"  _ b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Gt, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() ">=" _ b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Ge, Box::new(a), Box::new(b)) }
         --
         a:@ _ pos:position!() "+" _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::Add, Box::new(a), Box::new(b)) }
         --
@@ -755,7 +755,7 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         --
         a:@ _ pos:position!() "/" _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::Div, Box::new(a), Box::new(b)) }
         --
-        a:@ pos:position!() _ "." b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::DotAccess, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "." _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::DotAccess, Box::new(a), Box::new(b)) }
         --
         u:unary_op()  { u }
     }
@@ -764,25 +764,26 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         //Having a _ before the () breaks in this case:
         //c = p.x + p.y + p.z
         //(p.x).print()
-        pos:position!() i:identifier() _macro:("!")? "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
+        pos:position!() _ i:identifier() _macro:("!")? "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
             Expr::Call(CodeRef::new(pos, code_ctx), i, args, _macro.is_some())
         }
-        pos:position!() i:identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" { Expr::NewStruct(CodeRef::new(pos, code_ctx), i, args) }
-        pos:position!() i:identifier() _ "[" idx:expression() "]" { Expr::ArrayAccess(CodeRef::new(pos, code_ctx), i, Box::new(idx)) }
-        pos:position!() i:identifier() { Expr::Identifier(CodeRef::new(pos, code_ctx), i) }
+        pos:position!() _ i:identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" { Expr::NewStruct(CodeRef::new(pos, code_ctx), i, args) }
+        pos:position!() _ i:identifier() _ "[" idx:expression() "]" { Expr::ArrayAccess(CodeRef::new(pos, code_ctx), i, Box::new(idx)) }
+        pos:position!() _ i:identifier() { Expr::Identifier(CodeRef::new(pos, code_ctx), i) }
         l:literal() { l }
-        pos:position!() "!" e:expression() { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Not, Box::new(e)) }
-        pos:position!() "-" e:expression() { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Negative, Box::new(e)) }
         --
-        pos:position!() "(" e:expression() ")" { Expr::Parentheses(CodeRef::new(pos, code_ctx), Box::new(e)) }
+        pos:position!() _ "!" e:unary_op() _ { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Not, Box::new(e)) }
+        pos:position!() _ "-" e:unary_op() _ { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Negative, Box::new(e)) }
+        --
+        pos:position!() _ "(" _ e:expression() _ ")" _ { Expr::Parentheses(CodeRef::new(pos, code_ctx), Box::new(e)) }
     }
 
     rule identifier() -> String
-        = quiet!{ _ n:$((!"true"!"false")['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']* "::"? ['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.into() } }
+        = n:$((!"true"!"false")['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']* "::"? ['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.into() }
 
     rule literal() -> Expr
-        = _ pos:position!() n:$(['-']*['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat(CodeRef::new(pos, code_ctx), n.into()) }
-        / _ pos:position!() n:$(['-']*['0'..='9']+) { Expr::LiteralInt(CodeRef::new(pos, code_ctx), n.into()) }
+        = _ pos:position!() n:$(['-']?['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat(CodeRef::new(pos, code_ctx), n.into()) }
+        / _ pos:position!() n:$(['-']?['0'..='9']+) { Expr::LiteralInt(CodeRef::new(pos, code_ctx), n.into()) }
         / _ pos:position!() "*" i:identifier() { Expr::GlobalDataAddr(CodeRef::new(pos, code_ctx), i) }
         / _ pos:position!() "true" _ { Expr::LiteralBool(CodeRef::new(pos, code_ctx), true) }
         / _ pos:position!() "false" _ { Expr::LiteralBool(CodeRef::new(pos, code_ctx), false) }
