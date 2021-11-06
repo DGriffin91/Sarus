@@ -163,7 +163,7 @@ pub enum Expr {
     Call(CodeRef, String, Vec<Expr>, bool),
     GlobalDataAddr(CodeRef, String),
     Parentheses(CodeRef, Box<Expr>),
-    ArrayAccess(CodeRef, String, Box<Expr>),
+    ArrayAccess(CodeRef, Box<Expr>, Box<Expr>),
     Declaration(CodeRef, Declaration),
 }
 
@@ -757,6 +757,7 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         --
         a:@ _ pos:position!() "." _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::DotAccess, Box::new(a), Box::new(b)) }
         --
+        pos:position!() _ e:unary_op() _ "[" idx:expression() "]" { Expr::ArrayAccess(CodeRef::new(pos, code_ctx), Box::new(e), Box::new(idx)) }
         u:unary_op()  { u }
     }
 
@@ -768,7 +769,6 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
             Expr::Call(CodeRef::new(pos, code_ctx), i, args, _macro.is_some())
         }
         pos:position!() _ i:identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" { Expr::NewStruct(CodeRef::new(pos, code_ctx), i, args) }
-        pos:position!() _ i:identifier() _ "[" idx:expression() "]" { Expr::ArrayAccess(CodeRef::new(pos, code_ctx), i, Box::new(idx)) }
         pos:position!() _ i:identifier() { Expr::Identifier(CodeRef::new(pos, code_ctx), i) }
         l:literal() { l }
         --

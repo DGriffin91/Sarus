@@ -3916,13 +3916,21 @@ fn main() -> () {
 }
 
 #[test]
-fn unary_negative2() -> anyhow::Result<()> {
+fn expr_array_access() -> anyhow::Result<()> {
     //setup_logging();
     let code = r#"
+
+fn arr(n) -> (a: [f32; 10]) {
+    a = [n; 10]
+}
+
 fn main() -> () { 
-    four = 4
-    two = 2
-    (two + -four + two).println()
+    a = [1.0; 10]
+    b = (a)[1]
+    b.assert_eq(1.0)
+    ([2.0; 10])[1].assert_eq(2.0)
+    [3.0; 10][1].assert_eq(3.0)
+    arr(4.0)[1].assert_eq(4.0)
 }
 "#;
     let mut jit = default_std_jit_from_code(&code)?;

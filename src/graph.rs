@@ -135,7 +135,7 @@ fn build_graph_func(
         .unwrap(),
         make_nonempty(vec![Expr::ArrayAccess(
             CodeRef::z(),
-            "audio".to_string(),
+            Box::new(Expr::Identifier(CodeRef::z(), "audio".to_string())),
             Box::new(Expr::Identifier(CodeRef::z(), "i".to_string())),
         )])
         .unwrap(),
@@ -228,7 +228,7 @@ fn build_graph_func(
         CodeRef::z(),
         make_nonempty(vec![Expr::ArrayAccess(
             CodeRef::z(),
-            "audio".to_string(),
+            Box::new(Expr::Identifier(CodeRef::z(), "audio".to_string())),
             Box::new(Expr::Identifier(CodeRef::z(), "i".to_string())),
         )])
         .unwrap(),

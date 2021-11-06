@@ -810,7 +810,7 @@ impl ExprType {
             }
             Expr::GlobalDataAddr(code_ref, _) => ExprType::F32(*code_ref),
             Expr::Parentheses(_code_ref, expr) => ExprType::of(expr, env, func_name, variables)?,
-            Expr::ArrayAccess(code_ref, id_name, idx_expr) => {
+            Expr::ArrayAccess(code_ref, expr, idx_expr) => {
                 match ExprType::of(&*idx_expr, env, func_name, variables)? {
                     ExprType::I64(_code_ref) => (),
                     e => {
@@ -822,21 +822,16 @@ impl ExprType {
                         });
                     }
                 };
-                if variables.contains_key(id_name) {
-                    match &variables[id_name] {
-                        SVariable::Array(ty, _len) => Ok(ty.expr_type(code_ref).unwrap()),
-                        _ => Err(TypeError::TypeMismatchSpecific {
+
+                match ExprType::of(&*expr, env, func_name, variables)? {
+                    ExprType::Array(_code_ref, expr_type, _size_type) => *expr_type,
+                    _ => {
+                        return Err(TypeError::TypeMismatchSpecific {
                             c: code_ref.s(&env.file_idx),
-                            s: format!("{} is not an array", id_name),
-                        }),
+                            s: format!("{} is not an array", expr),
+                        })
                     }
-                } else {
-                    dbg!(&id_name);
-                    return Err(TypeError::UnknownVariable(
-                        code_ref.s(&env.file_idx),
-                        id_name.to_string(),
-                    ));
-                }?
+                }
             }
             Expr::NewStruct(code_ref, struct_name, _fields) => {
                 if env.struct_map.contains_key(struct_name) {

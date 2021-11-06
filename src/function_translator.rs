@@ -139,9 +139,9 @@ impl<'a> FunctionTranslator<'a> {
                 Ok(SValue::Bool(self.builder.ins().bconst(types::B1, *b)))
             }
             Expr::Parentheses(_code_ref, expr) => self.translate_expr(expr),
-            Expr::ArrayAccess(code_ref, name, idx_expr) => {
+            Expr::ArrayAccess(code_ref, expr, idx_expr) => {
                 let idx_val = self.idx_expr_to_val(idx_expr)?;
-                self.translate_array_get_from_var(code_ref, name.to_string(), idx_val, false)
+                self.translate_array_get(code_ref, expr, idx_val, false)
             }
             Expr::Declaration(_code_ref, declaration) => match &declaration {
                 Declaration::Function(_closure) => Ok(SValue::Void),
@@ -380,12 +380,18 @@ impl<'a> FunctionTranslator<'a> {
                         Expr::Block(_code_ref, _) => todo!(),
                         Expr::GlobalDataAddr(_code_ref, _) => todo!(),
                         Expr::Parentheses(_code_ref, e) => lhs_val = Some(self.translate_expr(e)?),
-                        Expr::ArrayAccess(code_ref, name, idx_expr) => {
+                        Expr::ArrayAccess(code_ref, expr, idx_expr) => {
                             if path.len() > 0 {
                                 let mut spath = path
                                     .iter()
                                     .map(|lhs_i: &Expr| lhs_i.to_string())
                                     .collect::<Vec<String>>();
+                                let name = if let Expr::Identifier(_code_ref, name) = *expr.clone()
+                                {
+                                    name
+                                } else {
+                                    anyhow::bail!("{} array access on dot binop of non identifier not supported yet {}", code_ref, expr)
+                                };
                                 spath.push(name.to_string());
                                 let (sval_address, struct_def) =
                                     self.get_struct_field_address(code_ref, spath, lhs_val)?;
@@ -409,9 +415,9 @@ impl<'a> FunctionTranslator<'a> {
                                 )?);
                             } else {
                                 let idx_val = self.idx_expr_to_val(idx_expr)?;
-                                lhs_val = Some(self.translate_array_get_from_var(
+                                lhs_val = Some(self.translate_array_get(
                                     code_ref,
-                                    name.to_string(),
+                                    expr,
                                     idx_val,
                                     get_address,
                                 )?);
@@ -878,18 +884,17 @@ impl<'a> FunctionTranslator<'a> {
         }
     }
 
-    fn translate_array_get_from_var(
+    fn translate_array_get(
         &mut self,
         code_ref: &CodeRef,
-        name: String,
+        expr: &Expr,
         idx_val: Value,
         get_address: bool,
     ) -> anyhow::Result<SValue> {
-        let variable = self.get_variable(code_ref, &name)?.clone();
-        let array_expr_type = &variable.expr_type(code_ref)?;
+        let sval = self.translate_expr(expr)?;
 
-        match variable {
-            SVariable::Array(address, size_type) => {
+        match &sval {
+            SValue::Array(address, size_type) => {
                 let mut bound_check_at_get = true;
                 match size_type {
                     ArraySized::Unsized => (),
@@ -898,7 +903,7 @@ impl<'a> FunctionTranslator<'a> {
                         let b_condition_value = self.builder.ins().icmp(
                             IntCC::SignedGreaterThanOrEqual,
                             idx_val,
-                            sval.inner("translate_array_get_from_var")?,
+                            sval.inner("translate_array_get")?,
                         );
                         let merge_block = self.exec_if_start(b_condition_value);
                         self.call_panic(
@@ -909,19 +914,18 @@ impl<'a> FunctionTranslator<'a> {
                         bound_check_at_get = false;
                     }
                 }
-                let array_address = self.builder.use_var(address.inner());
                 self.array_get(
-                    array_address,
-                    array_expr_type,
+                    address.inner("translate_array_get")?,
+                    &sval.expr_type(code_ref)?,
                     idx_val,
                     get_address,
                     bound_check_at_get,
                 )
             }
             _ => anyhow::bail!(
-                "{} variable {} is not an array",
+                "{} expression {} is not an array",
                 code_ref.s(&self.env.file_idx),
-                name
+                expr
             ),
         }
     }
