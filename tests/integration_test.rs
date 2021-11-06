@@ -741,6 +741,22 @@ fn main(a: f32, b: bool) -> (c: f32) {
 }
 
 #[test]
+fn if_else_return_tuple_assignment() -> anyhow::Result<()> {
+    let code = r#"
+fn main() -> () {  
+    a, b = if true {1.0} else {-1.0}, if true {-1.0} else {1.0}
+    a.assert_eq(1.0)
+    b.assert_eq(-1.0)
+}
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
 fn logical_operators() -> anyhow::Result<()> {
     let code = r#"
 fn and(a: bool, b: bool) -> (c: bool) {
@@ -3771,4 +3787,50 @@ fn main() -> () {
         func();
         Ok(())
     }
+}
+
+#[test]
+fn var_define_checking() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+
+fn main() -> () {  
+    if false {
+        a = 5.0
+    } else {
+        a = 4.0
+    }
+    a.assert_eq(4.0)
+    if false {
+        b = 5.0
+    } else if (true) {
+        b = 4.0
+    } else {
+        b = 3.0
+    }
+    b.assert_eq(4.0)
+}
+
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn dot_access_conditionals() -> anyhow::Result<()> {
+    let code = r#"
+fn main() -> () {  
+    (if true {1.0} else {-1.0}).assert_eq(1.0)
+    (if false {1.0} else {-1.0}).assert_eq(-1.0)
+    (if false {1.0} else if true {-1.0} else {0.0}).assert_eq(-1.0)
+}
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
 }

@@ -11,11 +11,14 @@ pub use frontend::{Arg, Declaration, Function};
 use crate::frontend::InlineKind;
 
 pub mod frontend;
+pub mod function_translator;
 pub mod graph;
 pub mod jit;
 pub mod logging;
 pub mod sarus_std_lib;
+mod structs;
 pub mod validator;
+mod variables;
 
 #[macro_export]
 macro_rules! hashmap {
