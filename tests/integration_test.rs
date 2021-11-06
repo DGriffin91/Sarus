@@ -3838,7 +3838,7 @@ fn main() -> () {
 
 #[test]
 fn recursion() -> anyhow::Result<()> {
-    setup_logging();
+    //setup_logging();
     let code = r#"
 inline fn fib(n: i64) -> (r: i64) {
     r = if n <= 1 {
@@ -3853,6 +3853,39 @@ fn main() -> () {
         fib(i).println()
         i += 1
     }
+}
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn unary_negative() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+fn number() -> (y) {
+    y = 2.0
+}
+fn main() -> () { 
+    a = 5 
+    b = -a
+    b.assert_eq(-5)
+    (-b).assert_eq(5)
+    c = 5.0
+    d = -c
+    d.assert_eq(-5.0)
+    (-d).assert_eq(5.0)
+    e = -number()
+    e.assert_eq(-2.0)
+    (-number()).assert_eq(-2.0)
+    (-(number())).assert_eq(-2.0)
+    (4 + -4).assert_eq(0)
+    (2 + -4 + 2).assert_eq(0)
+    ((2 + -4) + 2).assert_eq(0)
+    (2 + (-4 + 2)).assert_eq(0)
 }
 "#;
     let mut jit = default_std_jit_from_code(&code)?;

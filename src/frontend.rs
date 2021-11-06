@@ -15,12 +15,14 @@ use std::path::PathBuf;
 #[derive(Debug, Copy, Clone)]
 pub enum Unaryop {
     Not,
+    Negative,
 }
 
 impl Display for Unaryop {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Unaryop::Not => write!(f, "!"),
+            Unaryop::Negative => write!(f, "-"),
         }
     }
 }
@@ -770,6 +772,7 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         pos:position!() i:identifier() { Expr::Identifier(CodeRef::new(pos, code_ctx), i) }
         l:literal() { l }
         pos:position!() "!" e:expression() { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Not, Box::new(e)) }
+        pos:position!() "-" e:expression() { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Negative, Box::new(e)) }
         --
         pos:position!() "(" e:expression() ")" { Expr::Parentheses(CodeRef::new(pos, code_ctx), Box::new(e)) }
     }

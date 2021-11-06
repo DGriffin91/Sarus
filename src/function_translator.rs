@@ -496,25 +496,40 @@ impl<'a> FunctionTranslator<'a> {
     fn translate_unaryop(&mut self, op: Unaryop, lhs: &Expr) -> anyhow::Result<SValue> {
         let lhs = self.translate_expr(lhs)?;
 
-        Ok(match lhs {
-            SValue::Bool(lhs) => {
-                //TODO I'm sure this has absolutely terrible performance
-                //thread 'unary_not' panicked at 'not implemented: bool bnot', [...]\cranelift-codegen-0.76.0\src\isa\x64\lower.rs:2375:17
-                //SValue::Bool(self.builder.ins().bnot(lhs))
-                let i_bool = self.builder.ins().bint(types::I64, lhs);
-                let false_const = self.builder.ins().iconst(types::I64, 0);
-                SValue::Bool(self.builder.ins().icmp(IntCC::Equal, i_bool, false_const))
-            }
-            SValue::Void
-            | SValue::F32(_)
-            | SValue::I64(_)
-            | SValue::Unknown(_)
-            | SValue::Array(_, _)
-            | SValue::Address(_)
-            | SValue::Struct(_, _)
-            | SValue::Tuple(_) => {
-                anyhow::bail!("operation not supported: {:?} {}", lhs, op)
-            }
+        Ok(match op {
+            Unaryop::Not => match lhs {
+                SValue::Bool(lhs) => {
+                    //TODO I'm sure this has absolutely terrible performance
+                    //thread 'unary_not' panicked at 'not implemented: bool bnot', [...]\cranelift-codegen-0.76.0\src\isa\x64\lower.rs:2375:17
+                    //SValue::Bool(self.builder.ins().bnot(lhs))
+                    let i_bool = self.builder.ins().bint(types::I64, lhs);
+                    let false_const = self.builder.ins().iconst(types::I64, 0);
+                    SValue::Bool(self.builder.ins().icmp(IntCC::Equal, i_bool, false_const))
+                }
+                SValue::Void
+                | SValue::F32(_)
+                | SValue::I64(_)
+                | SValue::Unknown(_)
+                | SValue::Array(_, _)
+                | SValue::Address(_)
+                | SValue::Struct(_, _)
+                | SValue::Tuple(_) => {
+                    anyhow::bail!("operation not supported: {} {:?}", op, lhs)
+                }
+            },
+            Unaryop::Negative => match lhs {
+                SValue::F32(lhs) => SValue::F32(self.builder.ins().fneg(lhs)),
+                SValue::I64(lhs) => SValue::I64(self.builder.ins().ineg(lhs)),
+                SValue::Void
+                | SValue::Bool(_)
+                | SValue::Unknown(_)
+                | SValue::Array(_, _)
+                | SValue::Address(_)
+                | SValue::Struct(_, _)
+                | SValue::Tuple(_) => {
+                    anyhow::bail!("operation not supported: {} {:?}", op, lhs)
+                }
+            },
         })
     }
 
@@ -2185,7 +2200,7 @@ impl<'a> FunctionTranslator<'a> {
 
         //let inline_function_requested = true; //make everything that not external inline
 
-        if inline_function_requested {
+        if inline_function_requested && func.name != "~anon~" {
             //make sure we aren't recursively inlining this
             for f in &self.func_stack {
                 if f.name == func.name {
