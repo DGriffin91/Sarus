@@ -3821,11 +3821,38 @@ fn main() -> () {
 
 #[test]
 fn dot_access_conditionals() -> anyhow::Result<()> {
+    //setup_logging();
     let code = r#"
 fn main() -> () {  
     (if true {1.0} else {-1.0}).assert_eq(1.0)
     (if false {1.0} else {-1.0}).assert_eq(-1.0)
     (if false {1.0} else if true {-1.0} else {0.0}).assert_eq(-1.0)
+}
+"#;
+    let mut jit = default_std_jit_from_code(&code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn recursion() -> anyhow::Result<()> {
+    setup_logging();
+    let code = r#"
+inline fn fib(n: i64) -> (r: i64) {
+    r = if n <= 1 {
+        n
+    } else {
+        fib(n - 1) + fib(n - 2)
+    }
+}
+fn main() -> () {  
+    i = 0
+    while i < 10 {
+        fib(i).println()
+        i += 1
+    }
 }
 "#;
     let mut jit = default_std_jit_from_code(&code)?;

@@ -16,6 +16,7 @@ use std::ffi::CString;
 use tracing::info;
 use tracing::instrument;
 use tracing::trace;
+use tracing::warn;
 
 /// A collection of state used for translating from Sarus AST nodes
 /// into Cranelift IR.
@@ -2175,7 +2176,7 @@ impl<'a> FunctionTranslator<'a> {
             )
         };
 
-        let inline_function_requested = match func.inline {
+        let mut inline_function_requested = match func.inline {
             InlineKind::Default => false, //TODO make default still inline if it seems worth it
             InlineKind::Never => false,
             InlineKind::Always => true,
@@ -2183,6 +2184,25 @@ impl<'a> FunctionTranslator<'a> {
         };
 
         //let inline_function_requested = true; //make everything that not external inline
+
+        if inline_function_requested {
+            //make sure we aren't recursively inlining this
+            for f in &self.func_stack {
+                if f.name == func.name {
+                    warn!(
+                        "{} function {} is called inline recursively, switching to non-inline call",
+                        code_ref.s(&self.env.file_idx),
+                        func.name
+                    );
+                    if let InlineKind::Always = func.inline {
+                        anyhow::bail!("{} function {} is called always_inline recursively. always_inline recursion is not supported.",
+                        code_ref.s(&self.env.file_idx),
+                        func.name)
+                    }
+                    inline_function_requested = false;
+                }
+            }
+        }
 
         let inline_function = (inline_function_requested && !func.extern_func) || is_closure;
 
@@ -2290,7 +2310,6 @@ impl<'a> FunctionTranslator<'a> {
             //    trans.translate_expr(expr)?;
             //}
             //self.builder.block_params(func_block).to_vec()
-
             self.func_stack.push(func.clone()); //push inlined func onto func_stack
             self.variables.push(HashMap::new()); //new variable scope for inline func
 
