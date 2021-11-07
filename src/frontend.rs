@@ -67,12 +67,12 @@ pub enum Cmp {
 impl Display for Cmp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Cmp::Eq => write!(f, "=="),
-            Cmp::Ne => write!(f, "!="),
-            Cmp::Lt => write!(f, "<"),
-            Cmp::Le => write!(f, "<="),
-            Cmp::Gt => write!(f, ">"),
-            Cmp::Ge => write!(f, ">="),
+            Cmp::Eq => write!(f, " == "),
+            Cmp::Ne => write!(f, " != "),
+            Cmp::Lt => write!(f, " < "),
+            Cmp::Le => write!(f, " <= "),
+            Cmp::Gt => write!(f, " > "),
+            Cmp::Ge => write!(f, " >= "),
         }
     }
 }
@@ -666,14 +666,14 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         / _ pos:position!() i:identifier() _ { Arg {name: i, expr_type: ExprType::F32(CodeRef::new(pos, code_ctx)), default_to_float: true, closure_arg: None } }
 
     rule type_label() -> ExprType
-        = _ pos:position!() "f32" _ { ExprType::F32(CodeRef::new(pos, code_ctx)) }
-        / _ pos:position!() "i64" _ { ExprType::I64(CodeRef::new(pos, code_ctx)) }
-        / _ pos:position!() "&[" ty:type_label() "]" _ { ExprType::Array(CodeRef::new(pos, code_ctx), Box::new(ty), ArraySizedExpr::Unsized) }
-        / _ pos:position!() "&" _ { ExprType::Address(CodeRef::new(pos, code_ctx)) }
-        / _ pos:position!() "bool" _ { ExprType::Bool(CodeRef::new(pos, code_ctx)) }
-        / _ pos:position!() n:$(identifier() "::" (type_label() ** "::")) _ { ExprType::Struct(CodeRef::new(pos, code_ctx), Box::new(n.to_string())) }
-        / _ pos:position!() n:identifier() _ { ExprType::Struct(CodeRef::new(pos, code_ctx), Box::new(n)) }
-        / _ pos:position!() "[" _  ty:type_label()  _ ";" _ len:$(['0'..='9']+) _ "]" _ {
+        = _ pos:position!() "f32" { ExprType::F32(CodeRef::new(pos, code_ctx)) }
+        / _ pos:position!() "i64" { ExprType::I64(CodeRef::new(pos, code_ctx)) }
+        / _ pos:position!() "&[" ty:type_label() "]" { ExprType::Array(CodeRef::new(pos, code_ctx), Box::new(ty), ArraySizedExpr::Unsized) }
+        / _ pos:position!() "&" { ExprType::Address(CodeRef::new(pos, code_ctx)) }
+        / _ pos:position!() "bool" { ExprType::Bool(CodeRef::new(pos, code_ctx)) }
+        / _ pos:position!() n:$(identifier() "::" (type_label() ** "::")) { ExprType::Struct(CodeRef::new(pos, code_ctx), Box::new(n.to_string())) }
+        / _ pos:position!() n:identifier() { ExprType::Struct(CodeRef::new(pos, code_ctx), Box::new(n)) }
+        / _ pos:position!() "[" _  ty:type_label()  _ ";" _ len:$(['0'..='9']+) _ "]" {
             ExprType::Array(CodeRef::new(pos, code_ctx), Box::new(ty), ArraySizedExpr::Fixed(len.parse::<usize>().unwrap()))
         }
 
@@ -763,21 +763,30 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
 
     rule unary_op() -> Expr
         //TODO e:unary() "[" idx:expression() "]" is causing a severe performance regression vs using i:identifier() "[" idx:expression() "]"
-        = pos:position!() e:unary() "[" idx:expression() "]" { Expr::ArrayAccess(CodeRef::new(pos, code_ctx), Box::new(e), Box::new(idx)) }
-        / pos:position!() _ "!" e:unary() _ { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Not, Box::new(e)) }
-        / pos:position!() _ "-" e:unary() _ { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Negative, Box::new(e)) }
+        = _ pos:position!() e:unary() "[" idx:expression() "]" { Expr::ArrayAccess(CodeRef::new(pos, code_ctx), Box::new(e), Box::new(idx)) }
+        / _ pos:position!() "!" e:unary() { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Not, Box::new(e)) }
+        / _ pos:position!() "-" e:unary() { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Negative, Box::new(e)) }
 
     rule unary() -> Expr
         //Having a _ before the () breaks in this case:
         //c = p.x + p.y + p.z
         //(p.x).print()
-        = pos:position!() _ i:identifier() _macro:("!")? "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
+        = _ pos:position!() i:identifier() _macro:("!")? "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
             Expr::Call(CodeRef::new(pos, code_ctx), i, args, _macro.is_some())
         }
-        / pos:position!() _ i:identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" { Expr::NewStruct(CodeRef::new(pos, code_ctx), i, args) }
-        / pos:position!() _ i:identifier() { Expr::Identifier(CodeRef::new(pos, code_ctx), i) }
+        / _ pos:position!() i:identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" { Expr::NewStruct(CodeRef::new(pos, code_ctx), i, args) }
+        / _ pos:position!() i:identifier() { Expr::Identifier(CodeRef::new(pos, code_ctx), i) }
+        / _ pos:position!() "(" _ e:expression() _ ")" { Expr::Parentheses(CodeRef::new(pos, code_ctx), Box::new(e)) }
+        / _ pos:position!() "\"" body:$[^'"']* "\"" { Expr::LiteralString(CodeRef::new(pos, code_ctx), body.join("")) }
+        / _ pos:position!() "[" _ "\"" repstr:$[^'\"']* "\"" _ ";" _ len:$(['0'..='9']+) _ "]" {
+            //Temp solution for creating empty strings
+            Expr::LiteralString(CodeRef::new(pos, code_ctx), repstr.join("").repeat( len.parse().unwrap()))
+        } //[" "; 10]
+        / _ pos:position!() "[" _  e:expression()  _ ";" _ len:$(['0'..='9']+) _ "]" {
+
+            Expr::LiteralArray(CodeRef::new(pos, code_ctx), Box::new(e), len.parse::<usize>().unwrap())
+        }
         / l:literal() { l }
-        / pos:position!() _ "(" _ e:expression() _ ")" _ { Expr::Parentheses(CodeRef::new(pos, code_ctx), Box::new(e)) }
 
 
     rule identifier() -> String
@@ -787,20 +796,11 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         = _ pos:position!() n:$(['-']?['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat(CodeRef::new(pos, code_ctx), n.into()) }
         / _ pos:position!() n:$(['-']?['0'..='9']+) { Expr::LiteralInt(CodeRef::new(pos, code_ctx), n.into()) }
         / _ pos:position!() "*" i:identifier() { Expr::GlobalDataAddr(CodeRef::new(pos, code_ctx), i) }
-        / _ pos:position!() "true" _ { Expr::LiteralBool(CodeRef::new(pos, code_ctx), true) }
-        / _ pos:position!() "false" _ { Expr::LiteralBool(CodeRef::new(pos, code_ctx), false) }
-        / _ pos:position!() "\"" body:$[^'"']* "\"" _ { Expr::LiteralString(CodeRef::new(pos, code_ctx), body.join("")) }
-        / _ pos:position!() "[" _ "\"" repstr:$[^'\"']* "\"" _ ";" _ len:$(['0'..='9']+) _ "]" _ {
-            //Temp solution for creating empty strings
-            Expr::LiteralString(CodeRef::new(pos, code_ctx), repstr.join("").repeat( len.parse().unwrap()))
-        } //[" "; 10]
-        / _ pos:position!() "[" _  e:expression()  _ ";" _ len:$(['0'..='9']+) _ "]" _ {
-
-            Expr::LiteralArray(CodeRef::new(pos, code_ctx), Box::new(e), len.parse::<usize>().unwrap())
-        }
+        / _ pos:position!() "true" { Expr::LiteralBool(CodeRef::new(pos, code_ctx), true) }
+        / _ pos:position!() "false" { Expr::LiteralBool(CodeRef::new(pos, code_ctx), false) }
 
     rule struct_assign_field() -> StructAssignField
-        = _ i:identifier() _ ":" _ e:expression() comma() _ { StructAssignField {field_name: i.into(), expr: e } }
+        = _ i:identifier() _ ":" _ e:expression() comma() { StructAssignField {field_name: i.into(), expr: e } }
 
     rule comment() -> ()
         = quiet!{"//" [^'\n']*"\n"}
