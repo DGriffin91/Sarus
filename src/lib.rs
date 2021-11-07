@@ -30,7 +30,7 @@ macro_rules! hashmap {
 }
 
 pub fn default_std_jit_from_code(code: &str) -> anyhow::Result<jit::JIT> {
-    let mut ast = parse(&code)?;
+    let mut ast = parse(code)?;
     let mut jit_builder = jit::new_jit_builder();
     sarus_std_lib::append_std(&mut ast, &mut jit_builder);
     sarus_std_lib::append_std_math(&mut ast, &mut jit_builder);

@@ -155,7 +155,7 @@ impl JIT {
                         &struct_map,
                         &constant_vars,
                         &file_index_table,
-                        &mut inline_closures,
+                        &inline_closures,
                     )?;
                     // Next, declare the function to jit. Functions must be declared
                     // before they can be called, or defined.
@@ -197,9 +197,9 @@ impl JIT {
 
         for (name, val) in constant_vars.iter() {
             match val {
-                SConstant::I64(n) => self.create_data(&name, (*n).to_ne_bytes().to_vec())?,
-                SConstant::F32(n) => self.create_data(&name, (*n).to_ne_bytes().to_vec())?,
-                SConstant::Bool(n) => self.create_data(&name, (*n as i8).to_ne_bytes().to_vec())?,
+                SConstant::I64(n) => self.create_data(name, (*n).to_ne_bytes().to_vec())?,
+                SConstant::F32(n) => self.create_data(name, (*n).to_ne_bytes().to_vec())?,
+                SConstant::Bool(n) => self.create_data(name, (*n as i8).to_ne_bytes().to_vec())?,
             };
         }
 
@@ -277,7 +277,7 @@ impl JIT {
         info!("{}", func.sig_string()?);
         let ptr_ty = self.module.target_config().pointer_type();
 
-        if func.returns.len() > 0 {
+        if !func.returns.is_empty() {
             if let ExprType::Struct(_code_ref, _struct_name) = &func.returns[0].expr_type {
                 if func.returns.len() > 1 {
                     anyhow::bail!(
@@ -358,11 +358,11 @@ impl JIT {
             &mut var_index,
             &mut builder,
             &mut self.module,
-            &func,
+            func,
             entry_block,
             &mut env,
             &mut variables,
-            &mut None,
+            &None,
         )?;
 
         //Keep function vars around for later debug/print
@@ -372,7 +372,7 @@ impl JIT {
         //println!("validate_program {}", func.name);
 
         //Check every statement, this can catch funcs with no assignment, etc...
-        validate_function(&func, &env, &variables)?;
+        validate_function(func, &env, &variables)?;
 
         //println!("FunctionTranslator {}", func.name);
         let ptr_ty = self.module.target_config().pointer_type();

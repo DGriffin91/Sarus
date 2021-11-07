@@ -30,6 +30,11 @@ dunce = "1.0"
 basic-audio-filters = {git = "https://github.com/DGriffin91/rust-basic-audio-filters"}
 hound = "3.4.0"
 
+[profile.release]
+debug = 1
+
+[rust]
+debuginfo-level = 1
 
 [[example]]
 name = "run_file"

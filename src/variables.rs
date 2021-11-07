@@ -168,7 +168,7 @@ impl SValue {
         match self {
             SValue::Struct(sname, v) => {
                 if sname == name {
-                    return Ok(*v);
+                    Ok(*v)
                 } else {
                     anyhow::bail!("incorrect type {} expected Struct {} {}", v, name, ctx)
                 }
@@ -304,7 +304,7 @@ impl SVariable {
         match self {
             SVariable::Struct(varname, sname, v, _return_struct) => {
                 if sname == name {
-                    return Ok(*v);
+                    Ok(*v)
                 } else {
                     anyhow::bail!(
                         "{} incorrect type {} expected Struct {} {}",
@@ -359,7 +359,7 @@ pub fn declare_variables(
     inline_arg_values: &Option<Vec<Value>>,
 ) -> anyhow::Result<()> {
     //Declare returns
-    let entry_block_is_offset = if func.returns.len() > 0 {
+    let entry_block_is_offset = if !func.returns.is_empty() {
         if let ExprType::Struct(code_ref, struct_name) = &func.returns[0].expr_type {
             trace!(
                 "{}: fn is returning struct {} declaring var {}",
@@ -425,12 +425,10 @@ pub fn declare_variables(
             } else {
                 inline_arg_values[i]
             }
+        } else if entry_block_is_offset {
+            builder.block_params(entry_block)[i + 1]
         } else {
-            if entry_block_is_offset {
-                builder.block_params(entry_block)[i + 1]
-            } else {
-                builder.block_params(entry_block)[i]
-            }
+            builder.block_params(entry_block)[i]
         };
         let var = declare_variable(
             module,
@@ -483,7 +481,7 @@ fn declare_variables_in_stmt(
                             expr,
                             builder,
                             index,
-                            &vec![name.to_string()],
+                            &[name.to_string()],
                             func,
                             env,
                             variables,
@@ -504,27 +502,27 @@ fn declare_variables_in_stmt(
         }
         Expr::IfElse(_code_ref, ref _condition, ref then_body, ref else_body) => {
             for stmt in then_body {
-                declare_variables_in_stmt(ptr_type, builder, index, &stmt, func, env, variables)?;
+                declare_variables_in_stmt(ptr_type, builder, index, stmt, func, env, variables)?;
             }
             for stmt in else_body {
-                declare_variables_in_stmt(ptr_type, builder, index, &stmt, func, env, variables)?;
+                declare_variables_in_stmt(ptr_type, builder, index, stmt, func, env, variables)?;
             }
         }
         Expr::IfThenElseIfElse(_code_ref, ref expr_bodies, ref else_body) => {
             for (_condition, body) in expr_bodies {
                 for stmt in body {
                     declare_variables_in_stmt(
-                        ptr_type, builder, index, &stmt, func, env, variables,
+                        ptr_type, builder, index, stmt, func, env, variables,
                     )?;
                 }
             }
             for stmt in else_body {
-                declare_variables_in_stmt(ptr_type, builder, index, &stmt, func, env, variables)?;
+                declare_variables_in_stmt(ptr_type, builder, index, stmt, func, env, variables)?;
             }
         }
         Expr::WhileLoop(_code_ref, ref _condition, ref loop_body) => {
             for stmt in loop_body {
-                declare_variables_in_stmt(ptr_type, builder, index, &stmt, func, env, variables)?;
+                declare_variables_in_stmt(ptr_type, builder, index, stmt, func, env, variables)?;
             }
         }
         _ => (),
@@ -538,7 +536,7 @@ fn declare_variable_from_expr(
     expr: &Expr,
     builder: &mut FunctionBuilder,
     index: &mut usize,
-    names: &Vec<String>,
+    names: &[String],
     func: &Function,
     env: &mut Env,
     variables: &mut HashMap<String, SVariable>,
@@ -552,7 +550,7 @@ fn declare_variable_from_expr(
                     from_expr,
                 );
 
-                let expr_type = ExprType::of(from_expr, env, &func.name, &variables)?;
+                let expr_type = ExprType::of(from_expr, env, &func.name, variables)?;
                 trace!("{:?}", names);
                 declare_variable_from_type(ptr_type, &expr_type, builder, index, names, variables)?;
             }
@@ -573,11 +571,11 @@ fn declare_variable_from_type(
     expr_type: &ExprType,
     builder: &mut FunctionBuilder,
     index: &mut usize,
-    names: &Vec<String>,
+    names: &[String],
     variables: &mut HashMap<String, SVariable>,
 ) -> anyhow::Result<()> {
     let name = names.first().unwrap();
-    if name.contains(".") && !name.contains("->") {
+    if name.contains('.') {
         return Ok(());
     }
     match expr_type {
@@ -645,7 +643,7 @@ fn declare_variable_from_type(
                             expr_type,
                             builder,
                             index,
-                            &vec![sname.to_string()],
+                            &[sname.to_string()],
                             variables,
                         )?
                     }
@@ -658,7 +656,7 @@ fn declare_variable_from_type(
                     expr_type,
                     builder,
                     index,
-                    &vec![sname.to_string()],
+                    &[sname.to_string()],
                     variables,
                 )?
             }
@@ -732,7 +730,7 @@ fn declare_variable(
                 ptr_ty,
             ),
         };
-        variables.insert(arg_name.clone(), var.clone());
+        variables.insert(arg_name, var.clone());
         builder.declare_var(var.inner(), ty);
         *index += 1;
         Ok(Some(var))

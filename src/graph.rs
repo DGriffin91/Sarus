@@ -53,7 +53,7 @@ impl Graph {
         for node_id in &node_execution_order {
             println!("{}", node_id);
         }
-        println!("");
+        println!();
 
         let graph_func_ast =
             build_graph_func(&connections, &nodes, &ast, block_size, node_execution_order)?;
@@ -74,7 +74,7 @@ impl Graph {
     }
 }
 
-fn order_connections(connections: &Vec<Connection>, nodes: &HashMap<String, Node>) -> Vec<String> {
+fn order_connections(connections: &[Connection], nodes: &HashMap<String, Node>) -> Vec<String> {
     // TODO probably implement our own toposort
     let node_indices = nodes
         .iter()
@@ -102,9 +102,9 @@ fn order_connections(connections: &Vec<Connection>, nodes: &HashMap<String, Node
 }
 
 fn build_graph_func(
-    connections: &Vec<Connection>,
+    connections: &[Connection],
     nodes: &HashMap<String, Node>,
-    ast: &Vec<Declaration>,
+    ast: &[Declaration],
     block_size: usize,
     node_execution_order: Vec<String>,
 ) -> anyhow::Result<Declaration> {
@@ -162,11 +162,11 @@ fn build_graph_func(
         for param in node_src_ast.params.iter() {
             // find the connection that has this node and port as a dst
             let connection = connections
-                .into_iter()
+                .iter()
                 .filter(|c| c.dst_node == *node_id && c.dst_port == *param.name)
                 .collect::<Vec<&Connection>>();
 
-            if connection.len() > 0 {
+            if !connection.is_empty() {
                 // If a connection if found use the appropriate var name
                 let connection = connection.first().unwrap();
                 param_names.push(Expr::Identifier(
@@ -200,7 +200,7 @@ fn build_graph_func(
     let last_node_id = node_execution_order.last().unwrap();
 
     let last_connection = connections
-        .into_iter()
+        .iter()
         .filter(|c| c.dst_node == *last_node_id)
         .collect::<Vec<&Connection>>();
 

@@ -225,7 +225,7 @@ fn process_graph_step(
             .unwrap()
             .set_input(&conn.dst_port, output);
     }
-    for (_, node) in nodes.into_iter() {
+    for (_, node) in nodes.iter_mut() {
         node.mark_process();
     }
     nodes["output"].get_output("audio")

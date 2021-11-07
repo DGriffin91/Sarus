@@ -87,7 +87,7 @@ pub struct CodeRef {
 impl CodeRef {
     pub fn new(pos: usize, code_ctx: &CodeContext) -> Self {
         let line = if pos < code_ctx.code.len() {
-            Some(code_ctx.code[..pos].matches("\n").count() + 1)
+            Some(code_ctx.code[..pos].matches('\n').count() + 1)
         } else {
             None
         };
@@ -171,7 +171,7 @@ impl Expr {
     pub fn debug_get_name(&self) -> String {
         //Is this really the easiest way?
         let s = format!("{:?}", self);
-        let end = s.find("(").unwrap_or(s.len());
+        let end = s.find('(').unwrap_or_else(|| s.len());
         s[0..end].to_string()
     }
 
@@ -263,7 +263,7 @@ impl Display for Expr {
                     if i < a.len() - 1 {
                         write!(f, " else if ")?;
                     } else {
-                        writeln!(f, "")?;
+                        writeln!(f)?;
                     }
                 }
                 Ok(())
@@ -387,7 +387,7 @@ impl Display for Declaration {
                 for word in head.iter() {
                     write!(f, "{}", word)?;
                 }
-                writeln!(f, "")?;
+                writeln!(f)?;
                 write!(f, "{}", body)?;
                 Ok(())
             }
@@ -511,14 +511,14 @@ impl Display for Function {
         }
         write!(f, ") {{")?;
         if !self.extern_func {
-            writeln!(f, "")?;
+            writeln!(f)?;
             for expr in self.body.iter() {
                 writeln!(f, "{}", expr)?;
             }
         }
         write!(f, "}}")?;
         if !self.extern_func {
-            writeln!(f, "")?;
+            writeln!(f)?;
         }
         Ok(())
     }
@@ -535,14 +535,14 @@ impl Display for Struct {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "struct {} {{", self.name)?;
         if !self.extern_struct {
-            writeln!(f, "")?;
+            writeln!(f)?;
         }
         for param in &self.fields {
             writeln!(f, "{},", param)?;
         }
         write!(f, "}}")?;
         if !self.extern_struct {
-            writeln!(f, "")?;
+            writeln!(f)?;
         }
         Ok(())
     }
@@ -553,7 +553,7 @@ pub fn pretty_indent(code: &str) -> String {
     let mut f = String::from("");
     let mut depth = 0i32;
     for line in code.lines() {
-        if let Some(b_pos) = line.find("}") {
+        if let Some(b_pos) = line.find('}') {
             if let Some(comment) = line.find("//") {
                 if comment > b_pos {
                     depth -= 1;
@@ -563,7 +563,7 @@ pub fn pretty_indent(code: &str) -> String {
             }
         }
         writeln!(f, "{1:0$}{2:}", depth.max(0) as usize * 4, "", line).unwrap();
-        if let Some(b_pos) = line.find("{") {
+        if let Some(b_pos) = line.find('{') {
             if let Some(comment) = line.find("//") {
                 if comment > b_pos {
                     depth += 1;
@@ -591,7 +591,7 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         = _ "include" _ "\"" body:$[^'"']* "\"" { Declaration::Include(body.join("")) }
 
     rule structdef() -> Declaration
-        = _ ext:("extern")? _ "struct" _ name:$(s:identifier() ("::" (ty:type_label() ** "::"))?) _ "{" _ fields:(a:arg() comma() {a})* _ "}" _ {Declaration::Struct(Struct{name: name.to_string(), fields, extern_struct: if ext.is_some() {true} else {false}})}
+        = _ ext:("extern")? _ "struct" _ name:$(s:identifier() ("::" (ty:type_label() ** "::"))?) _ "{" _ fields:(a:arg() comma() {a})* _ "}" _ {Declaration::Struct(Struct{name: name.to_string(), fields, extern_struct: ext.is_some()})}
 
     rule structmacro() -> Declaration
         = _ name:identifier() _ "for" _ t:type_label() _ {Declaration::StructMacro(name, Box::new(t))}
@@ -662,8 +662,8 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
 
     rule arg() -> Arg
         = _ i:identifier() _ ":" _ c:closure_definition(i) _ { Arg {name: c.name.to_string(), expr_type: ExprType::Void(CodeRef::z()), default_to_float: false, closure_arg: Some(c) } }
-        / _ i:identifier() _ ":" _ t:type_label() _ { Arg {name: i.into(), expr_type: t.into(), default_to_float: false, closure_arg: None } }
-        / _ pos:position!() i:identifier() _ { Arg {name: i.into(), expr_type: ExprType::F32(CodeRef::new(pos, code_ctx)), default_to_float: true, closure_arg: None } }
+        / _ i:identifier() _ ":" _ t:type_label() _ { Arg {name: i, expr_type: t, default_to_float: false, closure_arg: None } }
+        / _ pos:position!() i:identifier() _ { Arg {name: i, expr_type: ExprType::F32(CodeRef::new(pos, code_ctx)), default_to_float: true, closure_arg: None } }
 
     rule type_label() -> ExprType
         = _ pos:position!() "f32" _ { ExprType::F32(CodeRef::new(pos, code_ctx)) }
@@ -757,26 +757,28 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         --
         a:@ _ pos:position!() "." _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::DotAccess, Box::new(a), Box::new(b)) }
         --
-        pos:position!() _ e:unary_op() _ "[" idx:expression() "]" { Expr::ArrayAccess(CodeRef::new(pos, code_ctx), Box::new(e), Box::new(idx)) }
         u:unary_op()  { u }
+        u:unary()  { u }
     }
 
-    rule unary_op() -> Expr = precedence!{
+    rule unary_op() -> Expr
+        //TODO e:unary() "[" idx:expression() "]" is causing a severe performance regression vs using i:identifier() "[" idx:expression() "]"
+        = pos:position!() e:unary() "[" idx:expression() "]" { Expr::ArrayAccess(CodeRef::new(pos, code_ctx), Box::new(e), Box::new(idx)) }
+        / pos:position!() _ "!" e:unary() _ { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Not, Box::new(e)) }
+        / pos:position!() _ "-" e:unary() _ { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Negative, Box::new(e)) }
+
+    rule unary() -> Expr
         //Having a _ before the () breaks in this case:
         //c = p.x + p.y + p.z
         //(p.x).print()
-        pos:position!() _ i:identifier() _macro:("!")? "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
+        = pos:position!() _ i:identifier() _macro:("!")? "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
             Expr::Call(CodeRef::new(pos, code_ctx), i, args, _macro.is_some())
         }
-        pos:position!() _ i:identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" { Expr::NewStruct(CodeRef::new(pos, code_ctx), i, args) }
-        pos:position!() _ i:identifier() { Expr::Identifier(CodeRef::new(pos, code_ctx), i) }
-        l:literal() { l }
-        --
-        pos:position!() _ "!" e:unary_op() _ { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Not, Box::new(e)) }
-        pos:position!() _ "-" e:unary_op() _ { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Negative, Box::new(e)) }
-        --
-        pos:position!() _ "(" _ e:expression() _ ")" _ { Expr::Parentheses(CodeRef::new(pos, code_ctx), Box::new(e)) }
-    }
+        / pos:position!() _ i:identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" { Expr::NewStruct(CodeRef::new(pos, code_ctx), i, args) }
+        / pos:position!() _ i:identifier() { Expr::Identifier(CodeRef::new(pos, code_ctx), i) }
+        / l:literal() { l }
+        / pos:position!() _ "(" _ e:expression() _ ")" _ { Expr::Parentheses(CodeRef::new(pos, code_ctx), Box::new(e)) }
+
 
     rule identifier() -> String
         = n:$((!"true"!"false")['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']* "::"? ['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.into() }
@@ -810,7 +812,7 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
 });
 
 pub fn assign_op_to_assign(op: Binop, a: Expr, b: Expr) -> Expr {
-    let b_code_ref = *b.clone().get_code_ref();
+    let b_code_ref = *b.get_code_ref();
     Expr::Assign(
         *a.clone().get_code_ref(),
         make_nonempty(vec![a.clone()]).unwrap(),
@@ -838,7 +840,7 @@ pub fn parse_with_context(
     let mut file_index_table = Vec::new();
     parse_with_context_recursively(
         &mut ast,
-        &code,
+        code,
         file,
         &mut file_index_table,
         &mut HashSet::new(),
@@ -860,7 +862,7 @@ pub fn parse_with_context_recursively(
         code,
         file_index: Some((files_index.len() - 1) as u64),
     };
-    match parser::program(&code, &code_ctx) {
+    match parser::program(code, &code_ctx) {
         Ok(mut new_ast) => {
             for decl in &new_ast {
                 match decl {
@@ -920,5 +922,5 @@ pub fn parse(code: &str) -> anyhow::Result<Vec<Declaration>> {
         code,
         file_index: None,
     };
-    Ok(parser::program(&code, &code_ctx)?)
+    Ok(parser::program(code, &code_ctx)?)
 }

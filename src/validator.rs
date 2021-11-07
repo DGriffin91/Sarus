@@ -178,7 +178,7 @@ fn get_struct_field_type(
     };
     match lhs_val {
         ExprType::Struct(_code_ref, struct_name) => {
-            let mut struct_name = *struct_name.to_owned();
+            let mut struct_name = *struct_name;
             let mut parent_struct_field = if let Some(s) = env.struct_map.get(&struct_name) {
                 if let Some(parent_struct_field) = s.fields.get(&parts[start]) {
                     parent_struct_field
@@ -221,11 +221,11 @@ fn get_struct_field_type(
         }
         v => {
             error!("");
-            return Err(TypeError::TypeMismatch {
+            Err(TypeError::TypeMismatch {
                 c: v.get_code_ref().s(&env.file_idx),
                 expected: ExprType::Struct(v.get_code_ref(), Box::new("".to_string())),
-                actual: v.clone(),
-            });
+                actual: v,
+            })
         }
     }
 }
@@ -272,13 +272,7 @@ impl ExprType {
             ExprType::Array(_, ty, size_type) => match size_type {
                 ArraySizedExpr::Unsized => None,
                 ArraySizedExpr::Sized => todo!(),
-                ArraySizedExpr::Fixed(len) => {
-                    if let Some(width) = ty.width(ptr_ty, struct_map) {
-                        Some(width * len)
-                    } else {
-                        None
-                    }
-                }
+                ArraySizedExpr::Fixed(len) => ty.width(ptr_ty, struct_map).map(|width| width * len),
             },
             ExprType::Void(_) => Some(0),
             ExprType::Bool(_) => Some(types::I8.bytes() as usize),
@@ -300,7 +294,7 @@ impl ExprType {
         let res = match expr {
             Expr::Identifier(code_ref, id_name) => {
                 if variables.contains_key(id_name) {
-                    variables[id_name].expr_type(&code_ref).unwrap()
+                    variables[id_name].expr_type(code_ref).unwrap()
                 } else if let Some(v) = env.constant_vars.get(id_name) {
                     v.expr_type(Some(*code_ref)) //Constants like PI, TAU...
                 } else if let Some(_closure) = env.get_inline_closure(func_name, id_name) {
@@ -330,176 +324,162 @@ impl ExprType {
                     let mut curr_expr = Some(*lhs.to_owned());
                     let mut next_expr = Some(*rhs.to_owned());
 
-                    loop {
+                    while let Some(rhs_expr) = curr_expr.clone() {
                         //println!("curr_expr {:?} next_expr {:?}", &curr_expr, &next_expr);
                         //println!("path {:?}", &path);
-                        match curr_expr.clone() {
-                            Some(rhs_expr) => {
-                                curr_expr = next_expr;
-                                next_expr = None;
-                                match rhs_expr.clone() {
-                                    Expr::Call(code_ref, fn_name, args, is_macro) => {
-                                        if is_macro {
-                                            todo!("binop macros not supported yet")
-                                        }
-                                        let sval = if path.len() == 0 {
-                                            if let Some(lhs_val) = lhs_val {
-                                                lhs_val
-                                            } else {
-                                                //This is a lhs call
-                                                lhs_val = Some(ExprType::of(
-                                                    &rhs_expr, env, func_name, variables,
-                                                )?);
-                                                continue;
-                                            }
-                                        } else if path.len() > 1 || lhs_val.is_some() {
-                                            let spath = path
-                                                .iter()
-                                                .map(|lhs_i: &Expr| lhs_i.to_string())
-                                                .collect::<Vec<String>>();
-                                            get_struct_field_type(
-                                                &env, spath, &lhs_val, &code_ref, variables,
-                                            )?
-                                        } else {
-                                            ExprType::of(&path[0], env, func_name, variables)?
-                                        };
 
-                                        let fn_name = format!("{}.{}", sval.to_string(), fn_name);
+                        curr_expr = next_expr;
+                        next_expr = None;
+                        match rhs_expr.clone() {
+                            Expr::Call(code_ref, fn_name, args, is_macro) => {
+                                if is_macro {
+                                    todo!("binop macros not supported yet")
+                                }
+                                let sval = if path.is_empty() {
+                                    if let Some(lhs_val) = lhs_val {
+                                        lhs_val
+                                    } else {
+                                        //This is a lhs call
+                                        lhs_val = Some(ExprType::of(
+                                            &rhs_expr, env, func_name, variables,
+                                        )?);
+                                        continue;
+                                    }
+                                } else if path.len() > 1 || lhs_val.is_some() {
+                                    let spath = path
+                                        .iter()
+                                        .map(|lhs_i: &Expr| lhs_i.to_string())
+                                        .collect::<Vec<String>>();
+                                    get_struct_field_type(
+                                        env, spath, &lhs_val, &code_ref, variables,
+                                    )?
+                                } else {
+                                    ExprType::of(&path[0], env, func_name, variables)?
+                                };
 
-                                        if !&env.funcs.contains_key(&fn_name) {
-                                            return Err(TypeError::UnknownFunction(
-                                                code_ref.s(&env.file_idx),
-                                                fn_name.to_string(),
-                                            ));
-                                        }
+                                let fn_name = format!("{}.{}", sval.to_string(), fn_name);
 
-                                        let params = &env.funcs[&fn_name].params;
+                                if !&env.funcs.contains_key(&fn_name) {
+                                    return Err(TypeError::UnknownFunction(
+                                        code_ref.s(&env.file_idx),
+                                        fn_name,
+                                    ));
+                                }
 
-                                        if params.len() - 1 != args.len() {
-                                            return Err(TypeError::TupleLengthMismatch {
-                                                //TODO be more specific: function {} expected {} parameters, but {} were given
-                                                c: code_ref.s(&env.file_idx),
-                                                actual: args.len(),
-                                                expected: params.len() - 1,
-                                            });
-                                        }
+                                let params = &env.funcs[&fn_name].params;
 
-                                        for (i, (param, arg)) in
-                                            params.iter().skip(1).zip(args.iter()).enumerate()
-                                        {
-                                            let targ =
-                                                ExprType::of(arg, env, func_name, variables)?;
-                                            if param.expr_type != targ {
-                                                return Err(TypeError::TypeMismatchSpecific {
+                                if params.len() - 1 != args.len() {
+                                    return Err(TypeError::TupleLengthMismatch {
+                                        //TODO be more specific: function {} expected {} parameters, but {} were given
+                                        c: code_ref.s(&env.file_idx),
+                                        actual: args.len(),
+                                        expected: params.len() - 1,
+                                    });
+                                }
+
+                                for (i, (param, arg)) in
+                                    params.iter().skip(1).zip(args.iter()).enumerate()
+                                {
+                                    let targ = ExprType::of(arg, env, func_name, variables)?;
+                                    if param.expr_type != targ {
+                                        return Err(TypeError::TypeMismatchSpecific {
                                                     c: code_ref.s(&env.file_idx),
                                                     s: format!("function {} expected parameter {} to be of type {} but type {} was found", fn_name, i, param.expr_type , targ)
                                                 });
-                                            }
-                                        }
-
-                                        let returns = &env.funcs[&fn_name].returns;
-
-                                        if returns.len() == 0 {
-                                            lhs_val = Some(ExprType::Void(code_ref))
-                                        } else if returns.len() == 1 {
-                                            lhs_val = Some(returns[0].expr_type.clone())
-                                        } else {
-                                            let mut expr_types = Vec::new();
-                                            for arg in returns {
-                                                expr_types.push(arg.expr_type.clone())
-                                            }
-                                            lhs_val = Some(ExprType::Tuple(code_ref, expr_types))
-                                        }
-
-                                        path = Vec::new();
-                                    }
-                                    Expr::LiteralFloat(_code_ref, _) => return usex(expr, env),
-                                    Expr::LiteralInt(_code_ref, _) => return usex(expr, env),
-                                    Expr::LiteralBool(_code_ref, _) => return usex(expr, env),
-                                    Expr::LiteralString(_code_ref, _) => {
-                                        lhs_val = Some(ExprType::of(
-                                            &rhs_expr, env, func_name, variables,
-                                        )?);
-                                    }
-                                    Expr::LiteralArray(_code_ref, _, _) => {
-                                        lhs_val = Some(ExprType::of(
-                                            &rhs_expr, env, func_name, variables,
-                                        )?);
-                                    }
-                                    Expr::Identifier(_code_ref, _i) => path.push(rhs_expr),
-                                    Expr::Binop(_code_ref, op, lhs, rhs) => {
-                                        if let Binop::DotAccess = op {
-                                            curr_expr = Some(*lhs.clone());
-                                            next_expr = Some(*rhs.clone());
-                                        } else {
-                                            return usex(expr, env);
-                                        }
-                                    }
-                                    Expr::Unaryop(_code_ref, _, _) => return usex(expr, env),
-                                    Expr::Compare(_code_ref, _, _, _) => return usex(expr, env),
-                                    Expr::IfThen(_code_ref, _, _) => return usex(expr, env),
-                                    Expr::IfElse(_code_ref, _, _, _) => return usex(expr, env), //TODO, this should actually be possible
-                                    Expr::IfThenElseIf(_code_ref, _) => return usex(expr, env),
-                                    Expr::IfThenElseIfElse(_code_ref, _, _) => {
-                                        return usex(expr, env)
-                                    } //TODO, this should actually be possible
-                                    Expr::Assign(_code_ref, _, _) => return usex(expr, env),
-                                    Expr::AssignOp(_code_ref, _, _, _) => return usex(expr, env),
-                                    Expr::NewStruct(_code_ref, _, _) => return usex(expr, env),
-                                    Expr::WhileLoop(_code_ref, _, _) => return usex(expr, env),
-                                    Expr::Block(_code_ref, _) => return usex(expr, env),
-                                    Expr::GlobalDataAddr(_code_ref, _) => return usex(expr, env),
-                                    Expr::Parentheses(_code_ref, e) => {
-                                        lhs_val = Some(ExprType::of(&e, env, func_name, variables)?)
-                                    }
-                                    Expr::ArrayAccess(code_ref, name, idx_expr) => {
-                                        match ExprType::of(&idx_expr, env, func_name, variables)? {
-                                            ExprType::I64(_code_ref) => (),
-                                            e => {
-                                                error!("");
-                                                return Err(TypeError::TypeMismatch {
-                                                    c: code_ref.s(&env.file_idx),
-                                                    expected: ExprType::I64(code_ref),
-                                                    actual: e,
-                                                });
-                                            }
-                                        };
-                                        if path.len() > 0 {
-                                            let mut spath = path
-                                                .iter()
-                                                .map(|lhs_i: &Expr| lhs_i.to_string())
-                                                .collect::<Vec<String>>();
-                                            spath.push(name.to_string());
-                                            if let ExprType::Array(_code_ref, ty, _len) =
-                                                get_struct_field_type(
-                                                    &env, spath, &lhs_val, &code_ref, variables,
-                                                )?
-                                            {
-                                                lhs_val = Some(*ty.to_owned());
-                                            }
-                                        } else {
-                                            lhs_val = Some(ExprType::of(
-                                                &rhs_expr, env, func_name, variables,
-                                            )?);
-                                        }
-
-                                        path = Vec::new();
-                                    }
-                                    Expr::Declaration(_code_ref, _declaration) => {
-                                        return usex(expr, env)
                                     }
                                 }
+
+                                let returns = &env.funcs[&fn_name].returns;
+
+                                if returns.is_empty() {
+                                    lhs_val = Some(ExprType::Void(code_ref))
+                                } else if returns.len() == 1 {
+                                    lhs_val = Some(returns[0].expr_type.clone())
+                                } else {
+                                    let mut expr_types = Vec::new();
+                                    for arg in returns {
+                                        expr_types.push(arg.expr_type.clone())
+                                    }
+                                    lhs_val = Some(ExprType::Tuple(code_ref, expr_types))
+                                }
+
+                                path = Vec::new();
                             }
-                            None => break,
+                            Expr::LiteralFloat(_code_ref, _) => return usex(expr, env),
+                            Expr::LiteralInt(_code_ref, _) => return usex(expr, env),
+                            Expr::LiteralBool(_code_ref, _) => return usex(expr, env),
+                            Expr::LiteralString(_code_ref, _) => {
+                                lhs_val = Some(ExprType::of(&rhs_expr, env, func_name, variables)?);
+                            }
+                            Expr::LiteralArray(_code_ref, _, _) => {
+                                lhs_val = Some(ExprType::of(&rhs_expr, env, func_name, variables)?);
+                            }
+                            Expr::Identifier(_code_ref, _i) => path.push(rhs_expr),
+                            Expr::Binop(_code_ref, op, lhs, rhs) => {
+                                if let Binop::DotAccess = op {
+                                    curr_expr = Some(*lhs.clone());
+                                    next_expr = Some(*rhs.clone());
+                                } else {
+                                    return usex(expr, env);
+                                }
+                            }
+                            Expr::Unaryop(_code_ref, _, _) => return usex(expr, env),
+                            Expr::Compare(_code_ref, _, _, _) => return usex(expr, env),
+                            Expr::IfThen(_code_ref, _, _) => return usex(expr, env),
+                            Expr::IfElse(_code_ref, _, _, _) => return usex(expr, env), //TODO, this should actually be possible
+                            Expr::IfThenElseIf(_code_ref, _) => return usex(expr, env),
+                            Expr::IfThenElseIfElse(_code_ref, _, _) => return usex(expr, env), //TODO, this should actually be possible
+                            Expr::Assign(_code_ref, _, _) => return usex(expr, env),
+                            Expr::AssignOp(_code_ref, _, _, _) => return usex(expr, env),
+                            Expr::NewStruct(_code_ref, _, _) => return usex(expr, env),
+                            Expr::WhileLoop(_code_ref, _, _) => return usex(expr, env),
+                            Expr::Block(_code_ref, _) => return usex(expr, env),
+                            Expr::GlobalDataAddr(_code_ref, _) => return usex(expr, env),
+                            Expr::Parentheses(_code_ref, e) => {
+                                lhs_val = Some(ExprType::of(&e, env, func_name, variables)?)
+                            }
+                            Expr::ArrayAccess(code_ref, name, idx_expr) => {
+                                match ExprType::of(&idx_expr, env, func_name, variables)? {
+                                    ExprType::I64(_code_ref) => (),
+                                    e => {
+                                        error!("");
+                                        return Err(TypeError::TypeMismatch {
+                                            c: code_ref.s(&env.file_idx),
+                                            expected: ExprType::I64(code_ref),
+                                            actual: e,
+                                        });
+                                    }
+                                };
+                                if !path.is_empty() {
+                                    let mut spath = path
+                                        .iter()
+                                        .map(|lhs_i: &Expr| lhs_i.to_string())
+                                        .collect::<Vec<String>>();
+                                    spath.push(name.to_string());
+                                    if let ExprType::Array(_code_ref, ty, _len) =
+                                        get_struct_field_type(
+                                            env, spath, &lhs_val, &code_ref, variables,
+                                        )?
+                                    {
+                                        lhs_val = Some(*ty.to_owned());
+                                    }
+                                } else {
+                                    lhs_val =
+                                        Some(ExprType::of(&rhs_expr, env, func_name, variables)?);
+                                }
+
+                                path = Vec::new();
+                            }
+                            Expr::Declaration(_code_ref, _declaration) => return usex(expr, env),
                         }
                     }
-                    if path.len() > 0 {
+                    if !path.is_empty() {
                         let spath = path
                             .iter()
                             .map(|lhs_i: &Expr| lhs_i.to_string())
                             .collect::<Vec<String>>();
                         lhs_val = Some(get_struct_field_type(
-                            &env,
+                            env,
                             spath,
                             &lhs_val,
                             binop_code_ref,
@@ -755,11 +735,7 @@ impl ExprType {
                     //func is a closure
                     Some(closure.func)
                 } else {
-                    if let Some(func) = env.funcs.get(fn_name) {
-                        Some(func.clone())
-                    } else {
-                        None
-                    }
+                    env.funcs.get(fn_name).cloned()
                 };
                 if let Some(func) = func {
                     let mut targs = Vec::new();

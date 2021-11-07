@@ -130,7 +130,7 @@ fn get_eq_jit() -> jit::JIT {
 
 "#;
 
-    let mut ast = frontend::parse(&code).unwrap();
+    let mut ast = frontend::parse(code).unwrap();
     let mut jit_builder = jit::new_jit_builder();
     sarus_std_lib::append_std(&mut ast, &mut jit_builder);
     sarus_std_lib::append_std_math(&mut ast, &mut jit_builder);
@@ -210,4 +210,33 @@ fn write_wav(samples: &[f32], path: &str) {
         writer.write_sample(*sample as f32).unwrap();
     }
     writer.finalize().unwrap();
+}
+
+#[bench]
+fn compile_bench(b: &mut Bencher) {
+    //setup_logging();
+    let code = r#"
+    fn main() -> (c) {
+        if true {
+            c = 7.4 * 2.7
+        } else {
+            c = 7.4 * 2.9
+        }
+    }
+"#;
+    b.iter(|| {
+        test::black_box({
+            let ast = parse(&code).unwrap();
+            let jit_builder = jit::new_jit_builder();
+            //sarus_std_lib::append_std(&mut ast, &mut jit_builder);
+            //sarus_std_lib::append_std_math(&mut ast, &mut jit_builder);
+
+            let mut jit = jit::JIT::from(jit_builder);
+
+            jit.translate(ast, None).unwrap();
+            let func_ptr = jit.get_func("main").unwrap();
+            let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+            func();
+        });
+    });
 }

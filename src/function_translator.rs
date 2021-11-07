@@ -86,9 +86,10 @@ impl<'a> FunctionTranslator<'a> {
                     SValue::get_from_variable(&mut self.builder, &svar)
                 } else if let Some(sval) = self.translate_constant(code_ref, name)? {
                     Ok(sval)
-                } else if let Some(_) = self
+                } else if self
                     .env
                     .get_inline_closure(&self.func_stack.last().unwrap().name, name)
+                    .is_some()
                 {
                     //This is a closure identifier
                     //TODO if this was in an inline function it would not show up as &self.func.name
@@ -130,11 +131,7 @@ impl<'a> FunctionTranslator<'a> {
                 self.translate_while_loop(condition, loop_body)?;
                 Ok(SValue::Void)
             }
-            Expr::Block(_code_ref, b) => b
-                .into_iter()
-                .map(|e| self.translate_expr(e))
-                .last()
-                .unwrap(),
+            Expr::Block(_code_ref, b) => b.iter().map(|e| self.translate_expr(e)).last().unwrap(),
             Expr::LiteralBool(_code_ref, b) => {
                 Ok(SValue::Bool(self.builder.ins().bconst(types::B1, *b)))
             }
@@ -164,8 +161,8 @@ impl<'a> FunctionTranslator<'a> {
         }
     }
 
-    fn translate_string(&mut self, literal: &String) -> anyhow::Result<SValue> {
-        let cstr = CString::new(literal.replace("\\n", "\n").to_string()).unwrap();
+    fn translate_string(&mut self, literal: &str) -> anyhow::Result<SValue> {
+        let cstr = CString::new(literal.replace("\\n", "\n")).unwrap();
         let bytes = cstr.to_bytes_with_nul();
         let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
@@ -299,139 +296,123 @@ impl<'a> FunctionTranslator<'a> {
 
         let mut log_path = Vec::new();
 
-        loop {
+        while let Some(expr) = curr_expr {
             //println!("curr_expr {:?} next_expr {:?}", &curr_expr, &next_expr);
             //println!("path {:?}", &path);
-            match curr_expr {
-                Some(expr) => {
-                    let debug_name = expr.debug_get_name();
-                    if debug_name != "Binop" {
-                        log_path.push(debug_name);
-                    }
-                    curr_expr = next_expr;
-                    next_expr = None;
-                    array_field = false;
-                    match expr {
-                        Expr::Call(code_ref, fn_name, args, is_macro) => {
-                            if path.len() == 0 {
-                                lhs_val =
-                                    Some(self.translate_call(
-                                        code_ref, fn_name, args, lhs_val, *is_macro,
-                                    )?);
-                            } else {
-                                let sval = if path.len() > 1 || lhs_val.is_some() {
-                                    let spath = path
-                                        .iter()
-                                        .map(|lhs_i: &Expr| lhs_i.to_string())
-                                        .collect::<Vec<String>>();
-                                    let (sval_address, struct_def) =
-                                        self.get_struct_field_address(code_ref, spath, lhs_val)?;
-                                    if let ExprType::Struct(_code_ref, _name) =
-                                        struct_def.clone().expr_type
-                                    {
-                                        struct_field_def = Some(struct_def);
-                                        sval_address
-                                    } else {
-                                        //dbg!(&struct_def);
-                                        self.get_struct_field(code_ref, sval_address, &struct_def)?
-                                    }
-                                } else {
-                                    self.translate_expr(&path[0])?
-                                };
-                                //dbg!(&sval);
-                                lhs_val = Some(self.translate_call(
-                                    code_ref,
-                                    fn_name,
-                                    args,
-                                    Some(sval),
-                                    *is_macro,
-                                )?);
-                                path = Vec::new();
-                            }
-                        }
-                        Expr::LiteralFloat(_code_ref, _) => todo!(),
-                        Expr::LiteralInt(_code_ref, _) => todo!(),
-                        Expr::LiteralBool(_code_ref, _) => todo!(),
-                        Expr::LiteralString(_code_ref, _) => {
-                            lhs_val = Some(self.translate_expr(expr)?)
-                        }
-                        Expr::LiteralArray(_code_ref, _, _) => {
-                            lhs_val = Some(self.translate_expr(expr)?)
-                        }
-                        Expr::Identifier(_code_ref, _) => path.push(expr.clone()),
-                        Expr::Binop(_code_ref, op, lhs, rhs) => {
-                            if let Binop::DotAccess = op {
-                                curr_expr = Some(lhs);
-                                next_expr = Some(rhs);
-                            } else {
-                                todo!();
-                            }
-                        }
-                        Expr::Unaryop(_code_ref, _, _) => todo!(),
-                        Expr::Compare(_code_ref, _, _, _) => todo!(),
-                        Expr::IfThen(_code_ref, _, _) => todo!(),
-                        Expr::IfElse(_code_ref, _, _, _) => todo!(), //TODO, this should actually be possible
-                        Expr::IfThenElseIf(_code_ref, _) => todo!(),
-                        Expr::IfThenElseIfElse(_code_ref, _, _) => todo!(), //TODO, this should actually be possible
-                        Expr::Assign(_code_ref, _, _) => todo!(),
-                        Expr::AssignOp(_code_ref, _, _, _) => todo!(),
-                        Expr::NewStruct(_code_ref, _, _) => todo!(),
-                        Expr::WhileLoop(_code_ref, _, _) => todo!(),
-                        Expr::Block(_code_ref, _) => todo!(),
-                        Expr::GlobalDataAddr(_code_ref, _) => todo!(),
-                        Expr::Parentheses(_code_ref, e) => lhs_val = Some(self.translate_expr(e)?),
-                        Expr::ArrayAccess(code_ref, expr, idx_expr) => {
-                            if path.len() > 0 {
-                                let mut spath = path
-                                    .iter()
-                                    .map(|lhs_i: &Expr| lhs_i.to_string())
-                                    .collect::<Vec<String>>();
-                                let name = if let Expr::Identifier(_code_ref, name) = *expr.clone()
-                                {
-                                    name
-                                } else {
-                                    anyhow::bail!("{} array access on dot binop of non identifier not supported yet {}", code_ref, expr)
-                                };
-                                spath.push(name.to_string());
-                                let (sval_address, struct_def) =
-                                    self.get_struct_field_address(code_ref, spath, lhs_val)?;
-                                struct_field_def = Some(struct_def.clone());
-                                let array_address = if let ExprType::Struct(_code_ref, _name) =
-                                    struct_def.clone().expr_type
-                                {
-                                    sval_address //TODO should this also just get the address if it's a fixed array?
-                                } else {
-                                    self.get_struct_field(code_ref, sval_address, &struct_def)?
-                                    //struct_of_slices_of_structs fails if this is always sval_address so this is sometimes wanted
-                                };
-                                array_field = true;
-                                let idx_val = self.idx_expr_to_val(idx_expr)?;
-                                lhs_val = Some(self.array_get(
-                                    array_address.inner("Expr::ArrayAccess")?,
-                                    &struct_def.expr_type,
-                                    idx_val,
-                                    get_address,
-                                    true,
-                                )?);
-                            } else {
-                                let idx_val = self.idx_expr_to_val(idx_expr)?;
-                                lhs_val = Some(self.translate_array_get(
-                                    code_ref,
-                                    expr,
-                                    idx_val,
-                                    get_address,
-                                )?);
-                            }
 
-                            path = Vec::new();
-                        }
-                        Expr::Declaration(_code_ref, _) => todo!(),
+            let debug_name = expr.debug_get_name();
+            if debug_name != "Binop" {
+                log_path.push(debug_name);
+            }
+            curr_expr = next_expr;
+            next_expr = None;
+            array_field = false;
+            match expr {
+                Expr::Call(code_ref, fn_name, args, is_macro) => {
+                    if path.is_empty() {
+                        lhs_val =
+                            Some(self.translate_call(code_ref, fn_name, args, lhs_val, *is_macro)?);
+                    } else {
+                        let sval = if path.len() > 1 || lhs_val.is_some() {
+                            let spath = path
+                                .iter()
+                                .map(|lhs_i: &Expr| lhs_i.to_string())
+                                .collect::<Vec<String>>();
+                            let (sval_address, struct_def) =
+                                self.get_struct_field_address(code_ref, spath, lhs_val)?;
+                            if let ExprType::Struct(_code_ref, _name) = struct_def.clone().expr_type
+                            {
+                                struct_field_def = Some(struct_def);
+                                sval_address
+                            } else {
+                                //dbg!(&struct_def);
+                                self.get_struct_field(code_ref, sval_address, &struct_def)?
+                            }
+                        } else {
+                            self.translate_expr(&path[0])?
+                        };
+                        //dbg!(&sval);
+                        lhs_val = Some(self.translate_call(
+                            code_ref,
+                            fn_name,
+                            args,
+                            Some(sval),
+                            *is_macro,
+                        )?);
+                        path = Vec::new();
                     }
                 }
-                None => break,
+                Expr::LiteralFloat(_code_ref, _) => todo!(),
+                Expr::LiteralInt(_code_ref, _) => todo!(),
+                Expr::LiteralBool(_code_ref, _) => todo!(),
+                Expr::LiteralString(_code_ref, _) => lhs_val = Some(self.translate_expr(expr)?),
+                Expr::LiteralArray(_code_ref, _, _) => lhs_val = Some(self.translate_expr(expr)?),
+                Expr::Identifier(_code_ref, _) => path.push(expr.clone()),
+                Expr::Binop(_code_ref, op, lhs, rhs) => {
+                    if let Binop::DotAccess = op {
+                        curr_expr = Some(lhs);
+                        next_expr = Some(rhs);
+                    } else {
+                        todo!();
+                    }
+                }
+                Expr::Unaryop(_code_ref, _, _) => todo!(),
+                Expr::Compare(_code_ref, _, _, _) => todo!(),
+                Expr::IfThen(_code_ref, _, _) => todo!(),
+                Expr::IfElse(_code_ref, _, _, _) => todo!(), //TODO, this should actually be possible
+                Expr::IfThenElseIf(_code_ref, _) => todo!(),
+                Expr::IfThenElseIfElse(_code_ref, _, _) => todo!(), //TODO, this should actually be possible
+                Expr::Assign(_code_ref, _, _) => todo!(),
+                Expr::AssignOp(_code_ref, _, _, _) => todo!(),
+                Expr::NewStruct(_code_ref, _, _) => todo!(),
+                Expr::WhileLoop(_code_ref, _, _) => todo!(),
+                Expr::Block(_code_ref, _) => todo!(),
+                Expr::GlobalDataAddr(_code_ref, _) => todo!(),
+                Expr::Parentheses(_code_ref, e) => lhs_val = Some(self.translate_expr(e)?),
+                Expr::ArrayAccess(code_ref, expr, idx_expr) => {
+                    if !path.is_empty() {
+                        let mut spath = path
+                            .iter()
+                            .map(|lhs_i: &Expr| lhs_i.to_string())
+                            .collect::<Vec<String>>();
+                        let name = if let Expr::Identifier(_code_ref, name) = *expr.clone() {
+                            name
+                        } else {
+                            anyhow::bail!("{} array access on dot binop of non identifier not supported yet {}", code_ref, expr)
+                        };
+                        spath.push(name.to_string());
+                        let (sval_address, struct_def) =
+                            self.get_struct_field_address(code_ref, spath, lhs_val)?;
+                        struct_field_def = Some(struct_def.clone());
+                        let array_address = if let ExprType::Struct(_code_ref, _name) =
+                            struct_def.clone().expr_type
+                        {
+                            sval_address //TODO should this also just get the address if it's a fixed array?
+                        } else {
+                            self.get_struct_field(code_ref, sval_address, &struct_def)?
+                            //struct_of_slices_of_structs fails if this is always sval_address so this is sometimes wanted
+                        };
+                        array_field = true;
+                        let idx_val = self.idx_expr_to_val(idx_expr)?;
+                        lhs_val = Some(self.array_get(
+                            array_address.inner("Expr::ArrayAccess")?,
+                            &struct_def.expr_type,
+                            idx_val,
+                            get_address,
+                            true,
+                        )?);
+                    } else {
+                        let idx_val = self.idx_expr_to_val(idx_expr)?;
+                        lhs_val =
+                            Some(self.translate_array_get(code_ref, expr, idx_val, get_address)?);
+                    }
+
+                    path = Vec::new();
+                }
+                Expr::Declaration(_code_ref, _) => todo!(),
             }
         }
-        if path.len() > 0 {
+        if !path.is_empty() {
             let spath = path
                 .iter()
                 .map(|lhs_i: &Expr| lhs_i.to_string())
@@ -440,9 +421,6 @@ impl<'a> FunctionTranslator<'a> {
                 self.get_struct_field_address(path[0].get_code_ref(), spath, lhs_val)?;
             let code_ref = struct_def.expr_type.get_code_ref();
             if get_address {
-                struct_field_def = Some(struct_def);
-                lhs_val = Some(sval_address);
-            } else if let ExprType::Struct(_code_ref, _name) = struct_def.clone().expr_type {
                 struct_field_def = Some(struct_def);
                 lhs_val = Some(sval_address);
             } else {
@@ -824,7 +802,7 @@ impl<'a> FunctionTranslator<'a> {
                                     self.module.target_config(),
                                     &mut self.builder,
                                     self.env.struct_map[struct_name].size,
-                                    src_sval.expect_struct(&struct_name, "translate_assign")?,
+                                    src_sval.expect_struct(struct_name, "translate_assign")?,
                                     return_address,
                                     0,
                                 )?;
@@ -1262,7 +1240,7 @@ impl<'a> FunctionTranslator<'a> {
     fn translate_if_then_else_if(
         &mut self,
         code_ref: &CodeRef,
-        condition_bodies: &Vec<(Expr, Vec<Expr>)>,
+        condition_bodies: &[(Expr, Vec<Expr>)],
     ) -> anyhow::Result<SValue> {
         //TODO see how rust or other languages do this, there may be a more efficient way
         trace!(
@@ -1321,8 +1299,8 @@ impl<'a> FunctionTranslator<'a> {
     fn translate_if_then_else_if_else(
         &mut self,
         code_ref: &CodeRef,
-        condition_bodies: &Vec<(Expr, Vec<Expr>)>,
-        else_body: &Vec<Expr>,
+        condition_bodies: &[(Expr, Vec<Expr>)],
+        else_body: &[Expr],
     ) -> anyhow::Result<SValue> {
         //TODO see how rust or other languages do this, there may be a more efficient way
         trace!(
@@ -1412,7 +1390,7 @@ impl<'a> FunctionTranslator<'a> {
             }
         }
         let else_value = self.translate_expr(else_body.last().unwrap())?;
-        let else_return = match else_value.clone() {
+        let else_return = match else_value {
             SValue::Tuple(t) => {
                 let mut vals = Vec::new();
                 for sval in &t {
@@ -1536,7 +1514,7 @@ impl<'a> FunctionTranslator<'a> {
 
         if fn_name == "unsized" {
             return self.call_with_svalues(
-                &code_ref, &fn_name, None, None, false, false, arg_values, None,
+                code_ref, &fn_name, None, None, false, false, arg_values, None,
             );
         }
 
@@ -1552,15 +1530,11 @@ impl<'a> FunctionTranslator<'a> {
             closure_src_scope_name = Some(closure.src_scope);
             Some(closure.func)
         } else {
-            if let Some(func) = self.env.funcs.get(&fn_name) {
-                Some(func.clone())
-            } else {
-                None
-            }
+            self.env.funcs.get(&fn_name).cloned()
         };
 
         let func = if let Some(func) = func {
-            func.clone()
+            func
         } else {
             anyhow::bail!(
                 "{} function {} not found",
@@ -1588,16 +1562,13 @@ impl<'a> FunctionTranslator<'a> {
                             None
                         }
                     }
-                    Expr::Declaration(_, decl) => match decl {
-                        Declaration::Function(closure) => Some((
-                            Closure {
-                                func: closure.clone(),
-                                src_scope: self.func_stack.last().unwrap().name.to_string(),
-                            },
-                            false,
-                        )),
-                        _ => None,
-                    },
+                    Expr::Declaration(_, Declaration::Function(closure)) => Some((
+                        Closure {
+                            func: closure.clone(),
+                            src_scope: self.func_stack.last().unwrap().name.to_string(),
+                        },
+                        false,
+                    )),
                     _ => None,
                 };
                 if let Some((closure, temp_closure)) = closure_d.clone() {
@@ -1686,7 +1657,7 @@ impl<'a> FunctionTranslator<'a> {
 
         let mut stack_slot_return = None;
 
-        if returns.len() > 0 {
+        if !returns.is_empty() {
             if let ExprType::Struct(_code_ref, name) = &returns[0].expr_type {
                 if let Some(s) = self.env.struct_map.get(&name.to_string()) {
                     stack_slot_return = Some((name.to_string(), s.size));
@@ -1694,7 +1665,7 @@ impl<'a> FunctionTranslator<'a> {
             }
         }
         let ret = self.call_with_svalues(
-            &code_ref,
+            code_ref,
             &fn_name,
             Some(&func),
             closure_src_scope_name,
@@ -1739,11 +1710,9 @@ impl<'a> FunctionTranslator<'a> {
     fn translate_global_data_addr(&mut self, data_type: Type, name: &str) -> Value {
         let sym = self
             .module
-            .declare_data(&name, Linkage::Export, true, false)
+            .declare_data(name, Linkage::Export, true, false)
             .expect("problem declaring data object");
-        let local_id = self
-            .module
-            .declare_data_in_func(sym, &mut self.builder.func);
+        let local_id = self.module.declare_data_in_func(sym, self.builder.func);
         let global_val = self.builder.create_global_value(GlobalValueData::Load {
             base: local_id,
             offset: Offset32::new(0),
@@ -1915,7 +1884,7 @@ impl<'a> FunctionTranslator<'a> {
             if let SVariable::Struct(_var_name, vstruct_name, var, _return_struct) = svar {
                 let base_struct_var_ptr = self.builder.use_var(var);
                 start = 1;
-                struct_name = vstruct_name.to_string();
+                struct_name = vstruct_name;
                 base_struct_var_ptr
             } else {
                 anyhow::bail!("variable {} is not a struct type {:?}", svar, parts)
@@ -1926,9 +1895,9 @@ impl<'a> FunctionTranslator<'a> {
         let mut offset = parent_struct_field.offset;
         if parts.len() > 2 {
             offset = 0;
-            for i in start..parts.len() {
+            for part in parts.iter().skip(start) {
                 if let ExprType::Struct(_code_ref, _name) = &parent_struct_field.expr_type {
-                    parent_struct_field = &self.env.struct_map[&struct_name].fields[&parts[i]];
+                    parent_struct_field = &self.env.struct_map[&struct_name].fields[part];
                     offset += parent_struct_field.offset;
                     struct_name = parent_struct_field.expr_type.to_string();
                 } else {
@@ -2147,7 +2116,7 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.seal_block(merge_block);
     }
 
-    fn call_panic(&mut self, code_ref: &CodeRef, message: &String) -> anyhow::Result<()> {
+    fn call_panic(&mut self, code_ref: &CodeRef, message: &str) -> anyhow::Result<()> {
         let arg_values = vec![Expr::LiteralString(*code_ref, message.to_string())];
         self.translate_call(code_ref, "panic", &arg_values, None, false)?;
         Ok(())
@@ -2264,8 +2233,6 @@ impl<'a> FunctionTranslator<'a> {
         };
 
         let ptr_ty = self.module.target_config().pointer_type();
-
-        let mut arg_values = Vec::from(arg_values); //in case we need to insert a val for the StructReturnSlot
 
         if let Some(sig) = &mut sig {
             for val in arg_values.iter() {
@@ -2392,15 +2359,15 @@ impl<'a> FunctionTranslator<'a> {
                 &mut self.var_index,
                 &mut self.builder,
                 &mut self.module,
-                &func,
+                func,
                 self.entry_block,
                 &mut self.env,
-                &mut self.variables.last_mut().unwrap(),
+                self.variables.last_mut().unwrap(),
                 &Some(arg_values),
             )?;
 
             // inlined functions (and especially closures) should be checked with included vars
-            validate_function(&func, &self.env, &self.variables.last_mut().unwrap())?;
+            validate_function(func, &self.env, self.variables.last_mut().unwrap())?;
 
             // translate inline func body
             for expr in &func.body {
@@ -2419,20 +2386,16 @@ impl<'a> FunctionTranslator<'a> {
             self.variables.pop();
 
             _return
+        } else if let Some(sig) = sig {
+            let callee = self
+                .module
+                .declare_function(fn_name, Linkage::Import, &sig)
+                .expect("problem declaring function");
+            let local_callee = self.module.declare_func_in_func(callee, self.builder.func);
+            let call = self.builder.ins().call(local_callee, &arg_values);
+            self.builder.inst_results(call).to_vec()
         } else {
-            if let Some(sig) = sig {
-                let callee = self
-                    .module
-                    .declare_function(&fn_name, Linkage::Import, &sig)
-                    .expect("problem declaring function");
-                let local_callee = self
-                    .module
-                    .declare_func_in_func(callee, &mut self.builder.func);
-                let call = self.builder.ins().call(local_callee, &arg_values);
-                self.builder.inst_results(call).to_vec()
-            } else {
-                anyhow::bail!("Expected sig")
-            }
+            anyhow::bail!("Expected sig")
         };
 
         if let Some((fn_name, stack_slot_address)) = stack_slot_address {
@@ -2499,22 +2462,19 @@ pub fn setup_inline_closures(
 ) {
     for stmt in stmts {
         match stmt {
-            Expr::Declaration(_coderef, decl) => match decl {
-                Declaration::Function(closure_fn) => {
-                    if !inline_closures.contains_key(func_name) {
-                        inline_closures.insert(func_name.to_string(), HashMap::new());
-                    }
-                    inline_closures.get_mut(func_name).unwrap().insert(
-                        closure_fn.name.clone(),
-                        Closure {
-                            func: closure_fn.clone(),
-                            src_scope: func_name.to_string(),
-                        },
-                    );
-                    setup_inline_closures(&closure_fn.name, &closure_fn.body, inline_closures);
+            Expr::Declaration(_coderef, Declaration::Function(closure_fn)) => {
+                if !inline_closures.contains_key(func_name) {
+                    inline_closures.insert(func_name.to_string(), HashMap::new());
                 }
-                _ => continue,
-            },
+                inline_closures.get_mut(func_name).unwrap().insert(
+                    closure_fn.name.clone(),
+                    Closure {
+                        func: closure_fn.clone(),
+                        src_scope: func_name.to_string(),
+                    },
+                );
+                setup_inline_closures(&closure_fn.name, &closure_fn.body, inline_closures);
+            }
             _ => continue,
         }
     }

@@ -151,11 +151,7 @@ fn sin_node(a) -> (c) {
     }
 
     //Flatten output audio chunks for saving as wav
-    let flat = output_arr
-        .iter()
-        .flatten()
-        .map(|x| *x)
-        .collect::<Vec<f32>>();
+    let flat = output_arr.iter().flatten().copied().collect::<Vec<f32>>();
     write_wav(&flat, "graph_test.wav");
     dbg!(flat.iter().sum::<f32>());
 

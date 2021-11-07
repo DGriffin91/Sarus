@@ -23,7 +23,7 @@ pub struct StructField {
 }
 
 pub fn create_struct_map(
-    prog: &Vec<Declaration>,
+    prog: &[Declaration],
     ptr_type: types::Type,
 ) -> anyhow::Result<HashMap<String, StructDef>> {
     let mut in_structs = HashMap::new();
@@ -125,7 +125,7 @@ fn get_field_size(
         ExprType::Struct(_code_ref, name) => {
             if max_base_field {
                 (
-                    get_largest_field_size(0, &expr_type, struct_map, ptr_type)?,
+                    get_largest_field_size(0, expr_type, struct_map, ptr_type)?,
                     true,
                 )
             } else {
@@ -163,7 +163,7 @@ fn get_largest_field_size(
     let mut largest = largest;
     match expr_type {
         ExprType::Struct(_code_ref, name) => {
-            for (_name, field) in &struct_map[&name.to_string()].fields {
+            for field in struct_map[&name.to_string()].fields.values() {
                 let size = get_largest_field_size(largest, &field.expr_type, struct_map, ptr_type)?;
                 if size > largest {
                     largest = size;
@@ -187,7 +187,7 @@ fn can_insert_into_map(
     field_name: &str,
     expr_type: &ExprType,
     in_structs: &HashMap<String, &Struct>,
-    structs_order: &Vec<String>,
+    structs_order: &[String],
     can_insert: bool,
 ) -> anyhow::Result<bool> {
     // if this expr's dependencies (if it has any) are already in the

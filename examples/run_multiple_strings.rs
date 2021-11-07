@@ -13,7 +13,7 @@ fn main() -> anyhow::Result<()> {
     "#;
 
     // Generate AST from string
-    let ast = parse(&code)?;
+    let ast = parse(code)?;
     // Pass the AST to the JIT to compile
     jit.translate(ast, None)?;
 
@@ -34,7 +34,7 @@ fn main() -> anyhow::Result<()> {
     "#;
 
     // Generate AST from 2nd string
-    let ast = parse(&code)?;
+    let ast = parse(code)?;
 
     //TODO fails here Error: Duplicate definition of identifier: LN_10
     //Need to only add constants once
