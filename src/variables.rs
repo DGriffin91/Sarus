@@ -381,28 +381,28 @@ pub fn declare_variables(
                 let return_struct_param_val = builder.block_params(entry_block)[0];
                 (return_struct_arg.name.clone(), return_struct_param_val)
             };
-            let var = declare_variable(
-                module,
-                builder,
-                variables,
-                index,
-                name,
+            declare_variable(
+                module.target_config().pointer_type(),
                 &return_struct_arg.expr_type,
+                builder,
+                index,
+                &[&name],
+                variables,
                 true,
             )?;
-            if let Some(var) = var {
+            if let Some(var) = variables.get(&name) {
                 builder.def_var(var.inner(), val);
             }
             true
         } else {
             for arg in &func.returns {
                 declare_variable(
-                    module,
-                    builder,
-                    variables,
-                    index,
-                    arg.name.clone(),
+                    module.target_config().pointer_type(),
                     &arg.expr_type,
+                    builder,
+                    index,
+                    &[&arg.name],
+                    variables,
                     false,
                 )?;
             }
@@ -430,16 +430,16 @@ pub fn declare_variables(
         } else {
             builder.block_params(entry_block)[i]
         };
-        let var = declare_variable(
-            module,
-            builder,
-            variables,
-            index,
-            arg.name.clone(),
+        declare_variable(
+            module.target_config().pointer_type(),
             &arg.expr_type,
+            builder,
+            index,
+            &[&arg.name],
+            variables,
             false,
         )?;
-        if let Some(var) = var {
+        if let Some(var) = variables.get(&arg.name) {
             builder.def_var(var.inner(), val);
         }
     }
@@ -481,7 +481,7 @@ fn declare_variables_in_stmt(
                             expr,
                             builder,
                             index,
-                            &[name.to_string()],
+                            &[&name],
                             func,
                             env,
                             variables,
@@ -492,7 +492,7 @@ fn declare_variables_in_stmt(
                 let mut sto_exprs = Vec::new();
                 for to_expr in to_exprs.iter() {
                     if let Expr::Identifier(_code_ref, name) = to_expr {
-                        sto_exprs.push(name.to_string());
+                        sto_exprs.push(name.as_str());
                     }
                 }
                 declare_variable_from_expr(
@@ -536,7 +536,7 @@ fn declare_variable_from_expr(
     expr: &Expr,
     builder: &mut FunctionBuilder,
     index: &mut usize,
-    names: &[String],
+    names: &[&str],
     func: &Function,
     env: &mut Env,
     variables: &mut HashMap<String, SVariable>,
@@ -552,7 +552,9 @@ fn declare_variable_from_expr(
 
                 let expr_type = ExprType::of(from_expr, env, &func.name, variables)?;
                 trace!("{:?}", names);
-                declare_variable_from_type(ptr_type, &expr_type, builder, index, names, variables)?;
+                declare_variable(
+                    ptr_type, &expr_type, builder, index, names, variables, false,
+                )?;
             }
         }
         expr => {
@@ -566,15 +568,16 @@ fn declare_variable_from_expr(
     Ok(())
 }
 
-fn declare_variable_from_type(
+fn declare_variable(
     ptr_type: Type,
     expr_type: &ExprType,
     builder: &mut FunctionBuilder,
     index: &mut usize,
-    names: &[String],
+    names: &[&str],
     variables: &mut HashMap<String, SVariable>,
+    return_struct: bool,
 ) -> anyhow::Result<()> {
-    let name = names.first().unwrap();
+    let name = *names.first().unwrap();
     if name.contains('.') {
         return Ok(());
     }
@@ -638,26 +641,28 @@ fn declare_variable_from_type(
                 //Single nested tuple
                 if let ExprType::Tuple(_code_ref, expr_types) = expr_types.first().unwrap() {
                     for (expr_type, sname) in expr_types.iter().zip(names.iter()) {
-                        declare_variable_from_type(
+                        declare_variable(
                             ptr_type,
                             expr_type,
                             builder,
                             index,
-                            &[sname.to_string()],
+                            &[sname],
                             variables,
+                            return_struct,
                         )?
                     }
                     return Ok(());
                 }
             }
             for (expr_type, sname) in expr_types.iter().zip(names.iter()) {
-                declare_variable_from_type(
+                declare_variable(
                     ptr_type,
                     expr_type,
                     builder,
                     index,
-                    &[sname.to_string()],
+                    &[sname],
                     variables,
+                    return_struct,
                 )?
             }
         }
@@ -667,7 +672,7 @@ fn declare_variable_from_type(
                 let var = Variable::new(*index);
                 variables.insert(
                     name.into(),
-                    SVariable::Struct(name.into(), structname.to_string(), var, false),
+                    SVariable::Struct(name.into(), structname.to_string(), var, return_struct),
                 );
                 builder.declare_var(var, ptr_type);
                 *index += 1;
@@ -675,70 +680,4 @@ fn declare_variable_from_type(
         }
     }
     Ok(())
-}
-
-fn declare_variable(
-    module: &mut dyn Module,
-    builder: &mut FunctionBuilder,
-    variables: &mut HashMap<String, SVariable>,
-    index: &mut usize,
-    arg_name: String,
-    expr_type: &ExprType,
-    return_struct: bool,
-) -> anyhow::Result<Option<SVariable>> {
-    let ptr_ty = module.target_config().pointer_type();
-    if !variables.contains_key(&arg_name) {
-        trace!("declaring var {}", arg_name);
-        let (var, ty) = match expr_type {
-            ExprType::F32(_code_ref) => (
-                SVariable::F32(arg_name.clone(), Variable::new(*index)),
-                types::F32,
-            ),
-            ExprType::I64(_code_ref) => (
-                SVariable::I64(arg_name.clone(), Variable::new(*index)),
-                types::I64,
-            ),
-            ExprType::Array(_code_ref, ty, size_type) => (
-                SVariable::Array(
-                    Box::new(SVariable::from(
-                        builder,
-                        ty,
-                        arg_name.clone(),
-                        Variable::new(*index),
-                    )?),
-                    ArraySized::from(builder, size_type),
-                ),
-                ptr_ty,
-            ),
-            ExprType::Address(_code_ref) => (
-                SVariable::Address(arg_name.clone(), Variable::new(*index)),
-                ptr_ty,
-            ),
-            ExprType::Void(_code_ref) => return Ok(None),
-            ExprType::Bool(_code_ref) => (
-                SVariable::Bool(arg_name.clone(), Variable::new(*index)),
-                types::B1,
-            ),
-            ExprType::Tuple(_code_ref, _) => return Ok(None), //anyhow::bail!("single variable tuple not supported"),
-            ExprType::Struct(_code_ref, structname) => (
-                SVariable::Struct(
-                    arg_name.clone(),
-                    structname.to_string(),
-                    Variable::new(*index),
-                    return_struct,
-                ),
-                ptr_ty,
-            ),
-        };
-        variables.insert(arg_name, var.clone());
-        builder.declare_var(var.inner(), ty);
-        *index += 1;
-        Ok(Some(var))
-    } else {
-        trace!(
-            "variables already contains key {} no need to declare",
-            arg_name
-        );
-        Ok(None)
-    }
 }
