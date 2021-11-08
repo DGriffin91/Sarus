@@ -1,5 +1,4 @@
 use crate::frontend::*;
-use crate::jit::*;
 use crate::validator::ArraySizedExpr;
 use crate::validator::ExprType;
 use cranelift::prelude::*;
@@ -346,15 +345,14 @@ impl SVariable {
 
 #[instrument(
     level = "info",
-    skip(builder, module, func, entry_block, env, variables, inline_arg_values)
+    skip(builder, module, func, entry_block, variables, inline_arg_values)
 )]
-pub fn declare_variables(
+pub fn declare_param_and_return_variables(
     index: &mut usize,
     builder: &mut FunctionBuilder,
     module: &mut dyn Module,
     func: &Function,
     entry_block: Block,
-    env: &mut Env,
     variables: &mut HashMap<String, SVariable>,
     inline_arg_values: &Option<Vec<Value>>,
 ) -> anyhow::Result<()> {
@@ -444,131 +442,10 @@ pub fn declare_variables(
         }
     }
 
-    //Declare body
-    for expr in &func.body {
-        declare_variables_in_stmt(
-            module.target_config().pointer_type(),
-            builder,
-            index,
-            expr,
-            func,
-            env,
-            variables,
-        )?;
-    }
-
     Ok(())
 }
 
-/// Recursively descend through the AST, translating all implicit
-/// variable declarations.
-fn declare_variables_in_stmt(
-    ptr_type: types::Type,
-    builder: &mut FunctionBuilder,
-    index: &mut usize,
-    expr: &Expr,
-    func: &Function,
-    env: &mut Env,
-    variables: &mut HashMap<String, SVariable>,
-) -> anyhow::Result<()> {
-    match *expr {
-        Expr::Assign(_code_ref, ref to_exprs, ref from_exprs) => {
-            if to_exprs.len() == from_exprs.len() {
-                for (to_expr, _from_expr) in to_exprs.iter().zip(from_exprs.iter()) {
-                    if let Expr::Identifier(_code_ref, name) = to_expr {
-                        declare_variable_from_expr(
-                            ptr_type,
-                            expr,
-                            builder,
-                            index,
-                            &[&name],
-                            func,
-                            env,
-                            variables,
-                        )?;
-                    }
-                }
-            } else {
-                let mut sto_exprs = Vec::new();
-                for to_expr in to_exprs.iter() {
-                    if let Expr::Identifier(_code_ref, name) = to_expr {
-                        sto_exprs.push(name.as_str());
-                    }
-                }
-                declare_variable_from_expr(
-                    ptr_type, expr, builder, index, &sto_exprs, func, env, variables,
-                )?;
-            }
-        }
-        Expr::IfElse(_code_ref, ref _condition, ref then_body, ref else_body) => {
-            for stmt in then_body {
-                declare_variables_in_stmt(ptr_type, builder, index, stmt, func, env, variables)?;
-            }
-            for stmt in else_body {
-                declare_variables_in_stmt(ptr_type, builder, index, stmt, func, env, variables)?;
-            }
-        }
-        Expr::IfThenElseIfElse(_code_ref, ref expr_bodies, ref else_body) => {
-            for (_condition, body) in expr_bodies {
-                for stmt in body {
-                    declare_variables_in_stmt(
-                        ptr_type, builder, index, stmt, func, env, variables,
-                    )?;
-                }
-            }
-            for stmt in else_body {
-                declare_variables_in_stmt(ptr_type, builder, index, stmt, func, env, variables)?;
-            }
-        }
-        Expr::WhileLoop(_code_ref, ref _condition, ref loop_body) => {
-            for stmt in loop_body {
-                declare_variables_in_stmt(ptr_type, builder, index, stmt, func, env, variables)?;
-            }
-        }
-        _ => (),
-    }
-    Ok(())
-}
-
-/// Declare a single variable declaration.
-fn declare_variable_from_expr(
-    ptr_type: Type,
-    expr: &Expr,
-    builder: &mut FunctionBuilder,
-    index: &mut usize,
-    names: &[&str],
-    func: &Function,
-    env: &mut Env,
-    variables: &mut HashMap<String, SVariable>,
-) -> anyhow::Result<()> {
-    match expr {
-        Expr::Assign(code_ref, ref _to_exprs, ref from_exprs) => {
-            for from_expr in from_exprs.iter() {
-                trace!(
-                    "{} declare_variable_from_expr Expr::Assign {}",
-                    code_ref.s(&env.file_idx),
-                    from_expr,
-                );
-
-                let expr_type = ExprType::of(from_expr, env, &func.name, variables)?;
-                trace!("{:?}", names);
-                declare_variable(
-                    ptr_type, &expr_type, builder, index, names, variables, false,
-                )?;
-            }
-        }
-        expr => {
-            anyhow::bail!(
-                "{} declare_variable_from_expr encountered non assignment, should be unreachable {}",
-                expr.get_code_ref(),
-                expr,
-            );
-        }
-    };
-    Ok(())
-}
-
-fn declare_variable(
+pub fn declare_variable(
     ptr_type: Type,
     expr_type: &ExprType,
     builder: &mut FunctionBuilder,
@@ -622,7 +499,7 @@ fn declare_variable(
                         Box::new(SVariable::from(builder, ty, name.to_string(), var)?),
                         ArraySized::from(builder, size_type),
                     ),
-                ); //name.into(), var));
+                );
                 builder.declare_var(var, ptr_type);
                 *index += 1;
             }

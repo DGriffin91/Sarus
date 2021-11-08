@@ -243,6 +243,29 @@ fn multiple_returns() -> anyhow::Result<()> {
 }
 
 #[test]
+fn multiple_returns_simple() -> anyhow::Result<()> {
+    let code = r#"
+    fn main(a, b) -> (e) {
+        c, d = stuff(a, b)
+        e = c+ d
+    }
+    
+    fn stuff(a, b) -> (c, d) {
+        c = a + 1.0
+        d = c + b + 10.0
+    }
+"#;
+
+    let a = 100.0f32;
+    let b = 200.0f32;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32, f32) -> f32>(func_ptr) };
+    dbg!(func(a, b));
+    Ok(())
+}
+
+#[test]
 fn bools() -> anyhow::Result<()> {
     let code = r#"
     fn main(a, b) -> (c) {
@@ -3931,6 +3954,25 @@ fn main() -> () {
     ([2.0; 10])[1].assert_eq(2.0)
     [3.0; 10][1].assert_eq(3.0)
     arr(4.0)[1].assert_eq(4.0)
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn declare_var_in_if() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+
+fn main() -> () { 
+    if true {
+        a = 5
+        a.assert_eq(5)
+    }
 }
 "#;
     let mut jit = default_std_jit_from_code(code)?;

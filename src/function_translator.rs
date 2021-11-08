@@ -2,7 +2,6 @@ use crate::frontend::*;
 use crate::jit::Env;
 use crate::sarus_std_lib;
 pub use crate::structs::*;
-use crate::validator::validate_function;
 use crate::validator::ArraySizedExpr;
 use crate::validator::ExprType;
 pub use crate::variables::*;
@@ -699,6 +698,15 @@ impl<'a> FunctionTranslator<'a> {
                         }
                     }
                     Expr::Identifier(code_ref, name) => {
+                        declare_variable(
+                            self.ptr_ty,
+                            &src_sval.expr_type(code_ref)?,
+                            &mut self.builder,
+                            &mut self.var_index,
+                            &[&name],
+                            &mut self.variables.last_mut().unwrap(),
+                            false,
+                        )?;
                         //Can this be done without clone?
                         let dst_svar = self.get_variable(code_ref, name)?.clone();
 
@@ -818,6 +826,7 @@ impl<'a> FunctionTranslator<'a> {
                                 dst_svar.expr_type(code_ref)?,
                             )
                         }
+
                         self.builder
                             .def_var(dst_svar.inner(), src_sval.inner("translate_assign")?);
                     }
@@ -840,6 +849,15 @@ impl<'a> FunctionTranslator<'a> {
                             todo!()
                             //self.set_struct_field(dst_expr, values[i].clone())?
                         } else if let Expr::Identifier(code_ref, name) = dst_expr {
+                            declare_variable(
+                                self.ptr_ty,
+                                &values[i].expr_type(code_ref)?,
+                                &mut self.builder,
+                                &mut self.var_index,
+                                &[&name],
+                                &mut self.variables.last_mut().unwrap(),
+                                false,
+                            )?;
                             let var = self.get_variable(code_ref, name)?.inner();
                             self.builder
                                 .def_var(var, values[i].inner("translate_assign")?);
@@ -2355,19 +2373,15 @@ impl<'a> FunctionTranslator<'a> {
             }
 
             // inlined functions will not have variables already declared
-            declare_variables(
+            declare_param_and_return_variables(
                 &mut self.var_index,
                 &mut self.builder,
                 &mut self.module,
                 func,
                 self.entry_block,
-                &mut self.env,
                 self.variables.last_mut().unwrap(),
                 &Some(arg_values),
             )?;
-
-            // inlined functions (and especially closures) should be checked with included vars
-            validate_function(func, &self.env, self.variables.last_mut().unwrap())?;
 
             // translate inline func body
             for expr in &func.body {

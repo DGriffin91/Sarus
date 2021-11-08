@@ -3,7 +3,6 @@ use std::{collections::HashMap, fmt::Display};
 use crate::{
     frontend::{Binop, CodeRef, Expr},
     jit::{Env, SVariable, StructDef},
-    Function,
 };
 use cranelift::prelude::types;
 use thiserror::Error;
@@ -870,15 +869,4 @@ impl ExprType {
             }),
         }
     }
-}
-
-pub fn validate_function(
-    func: &Function,
-    env: &Env,
-    variables: &HashMap<String, SVariable>,
-) -> Result<(), TypeError> {
-    for expr in &func.body {
-        ExprType::of(expr, env, &func.name, variables)?;
-    }
-    Ok(())
 }

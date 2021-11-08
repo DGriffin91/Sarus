@@ -3,7 +3,6 @@ use crate::function_translator::*;
 use crate::sarus_std_lib;
 use crate::sarus_std_lib::SConstant;
 pub use crate::structs::*;
-use crate::validator::validate_function;
 use crate::validator::ExprType;
 pub use crate::variables::*;
 use cranelift::codegen::ir::ArgumentPurpose;
@@ -37,9 +36,6 @@ pub struct JIT {
 
     //CLIF cranelift IR string, by function name
     pub clif: HashMap<String, String>,
-
-    //local variables for each function kept around for later debug/print
-    pub func_variables: HashMap<String, HashMap<String, SVariable>>,
 }
 
 impl Default for JIT {
@@ -52,7 +48,6 @@ impl Default for JIT {
             data_ctx: DataContext::new(),
             module,
             clif: HashMap::new(),
-            func_variables: HashMap::new(),
         }
     }
 }
@@ -88,7 +83,6 @@ impl JIT {
             data_ctx: DataContext::new(),
             module,
             clif: HashMap::new(),
-            func_variables: HashMap::new(),
         }
     }
 
@@ -148,7 +142,7 @@ impl JIT {
                         continue;
                     }
 
-                    //// Then, translate the AST nodes into Cranelift IR.
+                    // Then, translate the AST nodes into Cranelift IR.
                     self.codegen(
                         &func,
                         funcs.to_owned(),
@@ -339,7 +333,7 @@ impl JIT {
         // The Sarus allows variables to be declared implicitly.
         // Walk the AST and declare all implicitly-declared variables.
 
-        let mut env = Env {
+        let env = Env {
             constant_vars: constant_vars.clone(),
             struct_map: struct_map.clone(),
             ptr_ty,
@@ -354,25 +348,15 @@ impl JIT {
         let mut variables = HashMap::new();
 
         let mut var_index = 0;
-        declare_variables(
+        declare_param_and_return_variables(
             &mut var_index,
             &mut builder,
             &mut self.module,
             func,
             entry_block,
-            &mut env,
             &mut variables,
             &None,
         )?;
-
-        //Keep function vars around for later debug/print
-        self.func_variables
-            .insert(func.name.to_string(), variables.clone());
-
-        //println!("validate_program {}", func.name);
-
-        //Check every statement, this can catch funcs with no assignment, etc...
-        validate_function(func, &env, &variables)?;
 
         //println!("FunctionTranslator {}", func.name);
         let ptr_ty = self.module.target_config().pointer_type();
@@ -443,20 +427,6 @@ impl JIT {
         trans.builder.finalize();
 
         Ok(())
-    }
-
-    pub fn print_clif(&self, show_vars: bool) {
-        for (func_name, func_clif) in &self.clif {
-            let mut func_clif = func_clif.clone();
-            if show_vars {
-                for (var_name, var) in &self.func_variables[func_name] {
-                    let clif_var_name = format!("v{}", var.inner().index());
-                    func_clif = func_clif
-                        .replace(&clif_var_name, &format!("{}~{}", clif_var_name, var_name));
-                }
-            }
-            println!("//{}\n{}", func_name, func_clif);
-        }
     }
 }
 
