@@ -3983,31 +3983,37 @@ fn main() -> () {
     Ok(())
 }
 
-//TODO get large array assignment to work (make loop for large arrays)
-//use std::time::Instant;
-//#[test]
-//fn init_process_state() -> anyhow::Result<()> {
-//    //setup_logging();
-//    let code = r#"
-//struct ProcessState {
-//    delay_l: [f32; 48000],
-//    delay_r: [f32; 48000],
-//}
-//fn main() -> () {
-//    state = ProcessState {
-//        delay_l: [0.0; 48000],
-//        delay_r: [0.0; 48000],
-//    }
-//}
-//
-//"#;
-//    let start = Instant::now();
-//    let mut jit = default_std_jit_from_code(code)?;
-//    println!("compile {:?}", start.elapsed());
-//    let func_ptr = jit.get_func("main")?;
-//    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-//    let start = Instant::now();
-//    //func();
-//    println!("run {:?}", start.elapsed());
-//    Ok(())
-//}
+#[test]
+fn init_process_state() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+struct ProcessState {
+    delay_l: [f32; 10000],
+    delay_r: [f32; 10000],
+}
+fn main() -> () {
+    state = ProcessState {
+        delay_l: [1.234; 10000],
+        delay_r: [1.234; 10000],
+    }
+    state.delay_r[0].assert_eq(1.234)
+    state.delay_r[1].assert_eq(1.234)
+    state.delay_r[9999].assert_eq(1.234)
+    state.delay_l[0].assert_eq(1.234)
+    state.delay_l[1].assert_eq(1.234)
+    state.delay_l[9999].assert_eq(1.234)
+
+    a = [1.234; 15] //Test array init that does not use loop
+    a[0].assert_eq(1.234)
+    a[14].assert_eq(1.234)
+}
+
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+//TODO make assignments directly to the heap possible

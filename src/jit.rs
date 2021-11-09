@@ -65,6 +65,10 @@ pub fn new_jit_builder() -> JITBuilder {
     // we require long-range relocation types.
     flag_builder.set("use_colocated_libcalls", "false").unwrap();
     flag_builder.set("is_pic", "true").unwrap();
+
+    // don't emit call to __cranelift_probestack. This is an issue for larger stack allocated arrays
+    flag_builder.set("enable_probestack", "false").unwrap();
+
     //flag_builder.set("opt_level", "speed").unwrap();
     let isa_builder = cranelift_native::builder().unwrap_or_else(|msg| {
         panic!("host machine is not supported: {}", msg);

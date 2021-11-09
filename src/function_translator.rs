@@ -209,34 +209,65 @@ impl<'a> FunctionTranslator<'a> {
             self.builder
                 .ins()
                 .stack_addr(self.ptr_ty, stack_slot, Offset32::new(0));
-        
-        //assign to array with while loop
 
-        for i in 0..len {
-            let val = item_value.inner("translate_array_create")?;
+        let len_val = self.builder.ins().iconst(types::I64, len as i64);
+
+        //if len > 16, fill using while loop
+        if len > 16 {
+            let header_block = self.builder.create_block();
+            let body_block = self.builder.create_block();
+            let exit_block = self.builder.create_block();
+
+            let inc_val = self.builder.ins().iconst(types::I64, 1);
+
+            let i_val = self.builder.ins().iconst(types::I64, 0);
+            let i_var = Variable::new(self.var_index);
+            self.var_index += 1;
+            self.builder.declare_var(i_var, types::I64);
+            self.builder.def_var(i_var, i_val);
+
+            let len_val = self.builder.ins().iconst(types::I64, len as i64);
+            let width_val = self.builder.ins().iconst(types::I64, item_width as i64);
+
+            let set_val = item_value.inner("translate_array_create")?;
+
+            self.builder.ins().jump(header_block, &[]);
+            self.builder.switch_to_block(header_block);
+
+            let i_val = self.builder.use_var(i_var);
+
+            let b_condition_value = self
+                .builder
+                .ins()
+                .icmp(IntCC::SignedLessThan, i_val, len_val);
+
+            self.builder.ins().brz(b_condition_value, exit_block, &[]);
+            self.builder.ins().jump(body_block, &[]);
+
+            self.builder.switch_to_block(body_block);
+            self.builder.seal_block(body_block);
+
+            let i_val = self.builder.use_var(i_var);
+
+            let offset_val = self.builder.ins().imul(i_val, width_val);
+            let stack_slot_address_abs_pos =
+                self.builder.ins().iadd(stack_slot_address, offset_val);
+
+            //Essentially same as below
             match item_expr_type {
                 ExprType::Bool(_) | ExprType::F32(_) | ExprType::I64(_) | ExprType::Address(_) => {
                     self.builder.ins().store(
                         MemFlags::new(),
-                        val,
-                        stack_slot_address,
-                        Offset32::new((i * item_width) as i32),
+                        set_val,
+                        stack_slot_address_abs_pos,
+                        Offset32::new(0),
                     );
                 }
-                ExprType::Struct(code_ref, _) | ExprType::Array(code_ref, _, _) => {
-                    let offset = i * item_width;
-                    let offset_v = self.builder.ins().iconst(self.ptr_ty, offset as i64);
-                    let stack_slot_offset = self.builder.ins().iadd(stack_slot_address, offset_v);
-                    trace!(
-                        "{}: emit_small_memory_copy size {} offset {}",
-                        code_ref,
-                        item_width,
-                        offset
-                    );
+                ExprType::Struct(_code_ref, _) | ExprType::Array(_code_ref, _, _) => {
                     self.builder.emit_small_memory_copy(
                         self.module.target_config(),
-                        stack_slot_offset,
-                        val,
+                        stack_slot_address_abs_pos,
+                        set_val,
                         item_width as u64,
                         1,
                         1,
@@ -250,17 +281,70 @@ impl<'a> FunctionTranslator<'a> {
                     item_expr
                 ),
             }
+
+            let i_val = self.builder.ins().iadd(i_val, inc_val);
+            self.builder.def_var(i_var, i_val);
+
+            self.builder.ins().jump(header_block, &[]);
+
+            self.builder.switch_to_block(exit_block);
+
+            self.builder.seal_block(header_block);
+            self.builder.seal_block(exit_block);
+        } else {
+            for i in 0..len {
+                let val = item_value.inner("translate_array_create")?;
+                match item_expr_type {
+                    ExprType::Bool(_)
+                    | ExprType::F32(_)
+                    | ExprType::I64(_)
+                    | ExprType::Address(_) => {
+                        self.builder.ins().store(
+                            MemFlags::new(),
+                            val,
+                            stack_slot_address,
+                            Offset32::new((i * item_width) as i32),
+                        );
+                    }
+                    ExprType::Struct(code_ref, _) | ExprType::Array(code_ref, _, _) => {
+                        let offset = i * item_width;
+                        let offset_v = self.builder.ins().iconst(self.ptr_ty, offset as i64);
+                        let stack_slot_offset =
+                            self.builder.ins().iadd(stack_slot_address, offset_v);
+                        trace!(
+                            "{}: emit_small_memory_copy size {} offset {}",
+                            code_ref,
+                            item_width,
+                            offset
+                        );
+                        self.builder.emit_small_memory_copy(
+                            self.module.target_config(),
+                            stack_slot_offset,
+                            val,
+                            item_width as u64,
+                            1,
+                            1,
+                            true,
+                            MemFlags::new(),
+                        );
+                    }
+                    ExprType::Tuple(_, _) | ExprType::Void(_) => anyhow::bail!(
+                        "{} cannot assign expression {} to array",
+                        code_ref,
+                        item_expr
+                    ),
+                }
+            }
         }
-        let len_val = Box::new(SValue::I64(
-            self.builder.ins().iconst(types::I64, len as i64),
-        ));
+
+        let len_sval = Box::new(SValue::I64(len_val));
         let ret_val = SValue::Array(
             Box::new(SValue::from(
                 &mut self.builder,
                 &item_value.expr_type(code_ref)?,
                 stack_slot_address,
             )?),
-            ArraySized::Fixed(len_val, len),
+            ArraySized::Fixed(len_sval, len),
         );
 
         Ok(ret_val)
