@@ -53,13 +53,11 @@ impl<'a> FunctionTranslator<'a> {
         );
         //dbg!(&expr);
         match expr {
-            Expr::LiteralFloat(_code_ref, literal) => Ok(SValue::F32(
-                self.builder.ins().f32const::<f32>(literal.parse().unwrap()),
-            )),
+            Expr::LiteralFloat(_code_ref, literal) => {
+                Ok(SValue::F32(self.builder.ins().f32const::<f32>(*literal)))
+            }
             Expr::LiteralInt(_code_ref, literal) => Ok(SValue::I64(
-                self.builder
-                    .ins()
-                    .iconst::<i64>(types::I64, literal.parse().unwrap()),
+                self.builder.ins().iconst::<i64>(types::I64, *literal),
             )),
             Expr::LiteralString(_code_ref, literal) => self.translate_string(literal),
             Expr::LiteralArray(code_ref, item, len) => {
@@ -102,12 +100,6 @@ impl<'a> FunctionTranslator<'a> {
             }
             Expr::Assign(_code_ref, to_exprs, from_exprs) => {
                 self.translate_assign(to_exprs, from_exprs)
-            }
-            Expr::AssignOp(_code_ref, _op, _lhs, _rhs) => {
-                unimplemented!("currently AssignOp is turned into seperate assign and op")
-                //self.translate_math_assign(*op, lhs, rhs),
-                //for what this used to look like see:
-                //https://github.com/DGriffin91/sarus/tree/cd4bf3272bf02f00ea6037d606842ec84d0ff205
             }
             Expr::NewStruct(code_ref, struct_name, fields) => {
                 self.translate_new_struct(code_ref, struct_name, fields)
@@ -217,6 +209,8 @@ impl<'a> FunctionTranslator<'a> {
             self.builder
                 .ins()
                 .stack_addr(self.ptr_ty, stack_slot, Offset32::new(0));
+        
+        //assign to array with while loop
 
         for i in 0..len {
             let val = item_value.inner("translate_array_create")?;
@@ -403,7 +397,6 @@ impl<'a> FunctionTranslator<'a> {
                 | Expr::IfThenElseIf(code_ref, ..)
                 | Expr::IfThenElseIfElse(code_ref, ..)
                 | Expr::Assign(code_ref, ..)
-                | Expr::AssignOp(code_ref, ..)
                 | Expr::WhileLoop(code_ref, ..)
                 | Expr::Block(code_ref, ..)
                 | Expr::GlobalDataAddr(code_ref, ..)

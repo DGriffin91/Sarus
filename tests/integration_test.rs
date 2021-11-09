@@ -3982,3 +3982,32 @@ fn main() -> () {
     func();
     Ok(())
 }
+
+//TODO get large array assignment to work (make loop for large arrays)
+//use std::time::Instant;
+//#[test]
+//fn init_process_state() -> anyhow::Result<()> {
+//    //setup_logging();
+//    let code = r#"
+//struct ProcessState {
+//    delay_l: [f32; 48000],
+//    delay_r: [f32; 48000],
+//}
+//fn main() -> () {
+//    state = ProcessState {
+//        delay_l: [0.0; 48000],
+//        delay_r: [0.0; 48000],
+//    }
+//}
+//
+//"#;
+//    let start = Instant::now();
+//    let mut jit = default_std_jit_from_code(code)?;
+//    println!("compile {:?}", start.elapsed());
+//    let func_ptr = jit.get_func("main")?;
+//    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+//    let start = Instant::now();
+//    //func();
+//    println!("run {:?}", start.elapsed());
+//    Ok(())
+//}

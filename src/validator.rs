@@ -459,7 +459,6 @@ impl ExprType {
                             | Expr::IfThenElseIf(..)
                             | Expr::IfThenElseIfElse(..)
                             | Expr::Assign(..)
-                            | Expr::AssignOp(..)
                             | Expr::NewStruct(..)
                             | Expr::WhileLoop(..)
                             | Expr::Block(..)
@@ -676,7 +675,6 @@ impl ExprType {
                 }
                 ExprType::Void(*code_ref)
             }
-            Expr::AssignOp(_code_ref, _, _, e) => ExprType::of(e, env, func_name, variables)?,
             Expr::WhileLoop(code_ref, idx_expr, stmts) => {
                 let idx_type = ExprType::of(idx_expr, env, func_name, variables)?;
                 if idx_type != ExprType::Bool(*code_ref) {
