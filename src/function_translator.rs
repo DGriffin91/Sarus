@@ -341,9 +341,6 @@ impl<'a> FunctionTranslator<'a> {
                         path = Vec::new();
                     }
                 }
-                Expr::LiteralFloat(_code_ref, _) => todo!(),
-                Expr::LiteralInt(_code_ref, _) => todo!(),
-                Expr::LiteralBool(_code_ref, _) => todo!(),
                 Expr::LiteralString(_code_ref, _) => lhs_val = Some(self.translate_expr(expr)?),
                 Expr::LiteralArray(_code_ref, _, _) => lhs_val = Some(self.translate_expr(expr)?),
                 Expr::Identifier(_code_ref, _) => path.push(expr.clone()),
@@ -355,18 +352,7 @@ impl<'a> FunctionTranslator<'a> {
                         todo!();
                     }
                 }
-                Expr::Unaryop(_code_ref, _, _) => todo!(),
-                Expr::Compare(_code_ref, _, _, _) => todo!(),
-                Expr::IfThen(_code_ref, _, _) => todo!(),
-                Expr::IfElse(_code_ref, _, _, _) => todo!(), //TODO, this should actually be possible
-                Expr::IfThenElseIf(_code_ref, _) => todo!(),
-                Expr::IfThenElseIfElse(_code_ref, _, _) => todo!(), //TODO, this should actually be possible
-                Expr::Assign(_code_ref, _, _) => todo!(),
-                Expr::AssignOp(_code_ref, _, _, _) => todo!(),
-                Expr::NewStruct(_code_ref, _, _) => todo!(),
-                Expr::WhileLoop(_code_ref, _, _) => todo!(),
-                Expr::Block(_code_ref, _) => todo!(),
-                Expr::GlobalDataAddr(_code_ref, _) => todo!(),
+
                 Expr::Parentheses(_code_ref, e) => lhs_val = Some(self.translate_expr(e)?),
                 Expr::ArrayAccess(code_ref, expr, idx_expr) => {
                     if !path.is_empty() {
@@ -408,7 +394,26 @@ impl<'a> FunctionTranslator<'a> {
 
                     path = Vec::new();
                 }
-                Expr::Declaration(_code_ref, _) => todo!(),
+                Expr::NewStruct(_code_ref, _, _) => lhs_val = Some(self.translate_expr(expr)?),
+                Expr::Declaration(code_ref, ..)
+                | Expr::Unaryop(code_ref, ..)
+                | Expr::Compare(code_ref, ..)
+                | Expr::IfThen(code_ref, ..)
+                | Expr::IfElse(code_ref, ..)
+                | Expr::IfThenElseIf(code_ref, ..)
+                | Expr::IfThenElseIfElse(code_ref, ..)
+                | Expr::Assign(code_ref, ..)
+                | Expr::AssignOp(code_ref, ..)
+                | Expr::WhileLoop(code_ref, ..)
+                | Expr::Block(code_ref, ..)
+                | Expr::GlobalDataAddr(code_ref, ..)
+                | Expr::LiteralFloat(code_ref, ..)
+                | Expr::LiteralInt(code_ref, ..)
+                | Expr::LiteralBool(code_ref, ..) => anyhow::bail!(
+                    "{} dot binop not supported, try putting expression in parenthesis: ({})",
+                    code_ref,
+                    expr
+                ),
             }
         }
         if !path.is_empty() {

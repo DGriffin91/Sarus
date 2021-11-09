@@ -229,13 +229,6 @@ fn get_struct_field_type(
     }
 }
 
-fn usex(e: &Expr, env: &Env) -> Result<ExprType, TypeError> {
-    Err(TypeError::UnsupportedExpr(
-        e.get_code_ref().s(&env.file_idx),
-        e.to_string(),
-    ))
-}
-
 impl ExprType {
     pub fn get_code_ref(&self) -> CodeRef {
         *match self {
@@ -404,9 +397,6 @@ impl ExprType {
 
                                 path = Vec::new();
                             }
-                            Expr::LiteralFloat(_code_ref, _) => return usex(expr, env),
-                            Expr::LiteralInt(_code_ref, _) => return usex(expr, env),
-                            Expr::LiteralBool(_code_ref, _) => return usex(expr, env),
                             Expr::LiteralString(_code_ref, _) => {
                                 lhs_val = Some(ExprType::of(&rhs_expr, env, func_name, variables)?);
                             }
@@ -419,21 +409,13 @@ impl ExprType {
                                     curr_expr = Some(*lhs.clone());
                                     next_expr = Some(*rhs.clone());
                                 } else {
-                                    return usex(expr, env);
+                                    return Err(TypeError::UnsupportedExpr(
+                                        expr.get_code_ref().s(&env.file_idx),
+                                        expr.to_string(),
+                                    ));
                                 }
                             }
-                            Expr::Unaryop(_code_ref, _, _) => return usex(expr, env),
-                            Expr::Compare(_code_ref, _, _, _) => return usex(expr, env),
-                            Expr::IfThen(_code_ref, _, _) => return usex(expr, env),
-                            Expr::IfElse(_code_ref, _, _, _) => return usex(expr, env), //TODO, this should actually be possible
-                            Expr::IfThenElseIf(_code_ref, _) => return usex(expr, env),
-                            Expr::IfThenElseIfElse(_code_ref, _, _) => return usex(expr, env), //TODO, this should actually be possible
-                            Expr::Assign(_code_ref, _, _) => return usex(expr, env),
-                            Expr::AssignOp(_code_ref, _, _, _) => return usex(expr, env),
-                            Expr::NewStruct(_code_ref, _, _) => return usex(expr, env),
-                            Expr::WhileLoop(_code_ref, _, _) => return usex(expr, env),
-                            Expr::Block(_code_ref, _) => return usex(expr, env),
-                            Expr::GlobalDataAddr(_code_ref, _) => return usex(expr, env),
+
                             Expr::Parentheses(_code_ref, e) => {
                                 lhs_val = Some(ExprType::of(&e, env, func_name, variables)?)
                             }
@@ -469,7 +451,27 @@ impl ExprType {
 
                                 path = Vec::new();
                             }
-                            Expr::Declaration(_code_ref, _declaration) => return usex(expr, env),
+                            Expr::Declaration(..)
+                            | Expr::Unaryop(..)
+                            | Expr::Compare(..)
+                            | Expr::IfThen(..)
+                            | Expr::IfElse(..)
+                            | Expr::IfThenElseIf(..)
+                            | Expr::IfThenElseIfElse(..)
+                            | Expr::Assign(..)
+                            | Expr::AssignOp(..)
+                            | Expr::NewStruct(..)
+                            | Expr::WhileLoop(..)
+                            | Expr::Block(..)
+                            | Expr::GlobalDataAddr(..)
+                            | Expr::LiteralFloat(..)
+                            | Expr::LiteralInt(..)
+                            | Expr::LiteralBool(..) => {
+                                return Err(TypeError::UnsupportedExpr(
+                                    expr.get_code_ref().s(&env.file_idx),
+                                    expr.to_string(),
+                                ))
+                            }
                         }
                     }
                     if !path.is_empty() {

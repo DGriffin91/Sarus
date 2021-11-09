@@ -3973,6 +3973,7 @@ fn main() -> () {
         a = 5
         a.assert_eq(5)
     }
+    a.assert_eq(5)
 }
 "#;
     let mut jit = default_std_jit_from_code(code)?;
