@@ -4016,4 +4016,27 @@ fn main() -> () {
     Ok(())
 }
 
+#[test]
+fn assign_to_param_address_without_extra_alloc() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+
+fn takes_arr(n: [f32; 5]) -> () {
+    n = [1.0; 5]
+}
+
+fn main() -> () { 
+    a = [0.0; 5]
+    a[1].assert_eq(0.0)
+    takes_arr(a)
+    a[1].assert_eq(1.0)
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
 //TODO make assignments directly to the heap possible

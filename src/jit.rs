@@ -3,6 +3,7 @@ use crate::function_translator::*;
 use crate::sarus_std_lib;
 use crate::sarus_std_lib::SConstant;
 pub use crate::structs::*;
+use crate::validator::ArraySizedExpr;
 use crate::validator::ExprType;
 pub use crate::variables::*;
 use cranelift::codegen::ir::ArgumentPurpose;
@@ -276,24 +277,28 @@ impl JIT {
         let ptr_ty = self.module.target_config().pointer_type();
 
         if !func.returns.is_empty() {
-            if let ExprType::Struct(_code_ref, _struct_name) = &func.returns[0].expr_type {
-                if func.returns.len() > 1 {
-                    anyhow::bail!(
-                        "If returning a struct, only 1 return value is currently supported"
-                    )
+            match &func.returns[0].expr_type {
+                ExprType::Struct(_, ..) | ExprType::Array(_, _, ArraySizedExpr::Fixed(..)) => {
+                    if func.returns.len() > 1 {
+                        anyhow::bail!(
+                            "If returning a fixed length array or struct, only 1 return value is currently supported"
+                        )
+                    }
+                    self.ctx
+                        .func
+                        .signature
+                        .params
+                        .push(AbiParam::special(ptr_ty, ArgumentPurpose::StructReturn));
                 }
-                self.ctx
-                    .func
-                    .signature
-                    .params
-                    .push(AbiParam::special(ptr_ty, ArgumentPurpose::StructReturn));
-            } else {
-                for ret_arg in &func.returns {
-                    self.ctx.func.signature.returns.push(AbiParam::new(
-                        ret_arg
-                            .expr_type
-                            .cranelift_type(self.module.target_config().pointer_type(), false)?,
-                    ));
+                _ => {
+                    for ret_arg in &func.returns {
+                        self.ctx.func.signature.returns.push(AbiParam::new(
+                            ret_arg.expr_type.cranelift_type(
+                                self.module.target_config().pointer_type(),
+                                false,
+                            )?,
+                        ));
+                    }
                 }
             }
         }
@@ -375,6 +380,7 @@ impl JIT {
             entry_block,
             var_index,
             variables: vec![variables],
+            expr_depth: 0,
         };
         for expr in &func.body {
             trans.translate_expr(expr)?;
@@ -393,14 +399,19 @@ impl JIT {
                 ExprType::I64(code_ref) => trans
                     .builder
                     .use_var(return_variable.expect_i64(code_ref, "return_variable")?),
-                ExprType::Array(code_ref, ty, size_type) => {
-                    trans.builder.use_var(return_variable.expect_array(
-                        code_ref,
-                        *ty.clone(),
-                        size_type.clone(),
-                        "return_variable",
-                    )?)
-                }
+                ExprType::Array(code_ref, ty, size_type) => match size_type {
+                    ArraySizedExpr::Unsized => {
+                        trans.builder.use_var(return_variable.expect_array(
+                            code_ref,
+                            *ty.clone(),
+                            size_type.clone(),
+                            "return_variable",
+                        )?)
+                    }
+                    ArraySizedExpr::Sized => todo!(),
+                    // We don't actually return fixed sized arrays, they are passed in as StackSlotKind::StructReturnSlot and written to from there
+                    ArraySizedExpr::Fixed(_) => continue,
+                },
                 ExprType::Address(code_ref) => trans
                     .builder
                     .use_var(return_variable.expect_address(code_ref, "return_variable")?),

@@ -358,53 +358,58 @@ pub fn declare_param_and_return_variables(
 ) -> anyhow::Result<()> {
     //Declare returns
     let entry_block_is_offset = if !func.returns.is_empty() {
-        if let ExprType::Struct(code_ref, struct_name) = &func.returns[0].expr_type {
-            trace!(
-                "{}: fn is returning struct {} declaring var {}",
-                code_ref,
-                struct_name,
-                &func.returns[0].name
-            );
-            // When calling a function that will return a struct, Rust (or possibly anything using the C ABI),
-            // will allocate the stack space needed for the struct that will be returned. This is allocated in
-            // the callers frame, then the stack address is passed as a special argument to the first parameter
-            // of the callee.
-            // https://docs.wasmtime.dev/api/cranelift/prelude/enum.StackSlotKind.html#variant.StructReturnSlot
-            // https://docs.wasmtime.dev/api/cranelift_codegen/ir/enum.ArgumentPurpose.html#variant.StructReturn
+        let expr_type = &func.returns[0].expr_type;
+        match expr_type {
+            ExprType::Struct(code_ref, ..)
+            | ExprType::Array(code_ref, _, ArraySizedExpr::Fixed(..)) => {
+                trace!(
+                    "{}: fn is returning struct/array {} declaring var {}",
+                    code_ref,
+                    expr_type,
+                    &func.returns[0].name
+                );
+                // When calling a function that will return a struct, Rust (or possibly anything using the C ABI),
+                // will allocate the stack space needed for the struct that will be returned. This is allocated in
+                // the callers frame, then the stack address is passed as a special argument to the first parameter
+                // of the callee.
+                // https://docs.wasmtime.dev/api/cranelift/prelude/enum.StackSlotKind.html#variant.StructReturnSlot
+                // https://docs.wasmtime.dev/api/cranelift_codegen/ir/enum.ArgumentPurpose.html#variant.StructReturn
 
-            let return_struct_arg = &func.returns[0];
-            let (name, val) = if let Some(inline_arg_values) = inline_arg_values {
-                (return_struct_arg.name.clone(), inline_arg_values[0])
-            } else {
-                let return_struct_param_val = builder.block_params(entry_block)[0];
-                (return_struct_arg.name.clone(), return_struct_param_val)
-            };
-            declare_variable(
-                module.target_config().pointer_type(),
-                &return_struct_arg.expr_type,
-                builder,
-                index,
-                &[&name],
-                variables,
-                true,
-            )?;
-            if let Some(var) = variables.get(&name) {
-                builder.def_var(var.inner(), val);
-            }
-            true
-        } else {
-            for arg in &func.returns {
+                let return_arg = &func.returns[0];
+                let (name, val) = if let Some(inline_arg_values) = inline_arg_values {
+                    (return_arg.name.clone(), inline_arg_values[0])
+                } else {
+                    let return_param_val = builder.block_params(entry_block)[0];
+                    (return_arg.name.clone(), return_param_val)
+                };
                 declare_variable(
                     module.target_config().pointer_type(),
-                    &arg.expr_type,
+                    &return_arg.expr_type,
                     builder,
                     index,
-                    &[&arg.name],
+                    &[&name],
                     variables,
-                    false,
+                    true,
                 )?;
+                if let Some(var) = variables.get(&name) {
+                    builder.def_var(var.inner(), val);
+                }
+                true
             }
-            false
+            _ => {
+                for arg in &func.returns {
+                    declare_variable(
+                        module.target_config().pointer_type(),
+                        &arg.expr_type,
+                        builder,
+                        index,
+                        &[&arg.name],
+                        variables,
+                        false,
+                    )?;
+                }
+                false
+            }
         }
     } else {
         false

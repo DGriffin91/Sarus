@@ -38,6 +38,9 @@ pub struct FunctionTranslator<'a> {
     // so that we can add inline vars
     pub entry_block: Block,
     pub var_index: usize,
+
+    //incremented when starting to translate an expression, decremented when returning value
+    pub expr_depth: usize,
 }
 
 impl<'a> FunctionTranslator<'a> {
@@ -45,14 +48,16 @@ impl<'a> FunctionTranslator<'a> {
     /// can then use these references in other instructions.
     #[instrument(name = "expr", skip(self, expr))]
     pub fn translate_expr(&mut self, expr: &Expr) -> anyhow::Result<SValue> {
+        self.expr_depth += 1;
         info!(
-            "{}: {} | {}",
+            "{}: {} | {} (expr_depth {})",
             expr.get_code_ref(),
             expr,
             expr.debug_get_name(),
+            self.expr_depth,
         );
         //dbg!(&expr);
-        match expr {
+        let v = match expr {
             Expr::LiteralFloat(_code_ref, literal) => {
                 Ok(SValue::F32(self.builder.ins().f32const::<f32>(*literal)))
             }
@@ -138,7 +143,9 @@ impl<'a> FunctionTranslator<'a> {
                 Declaration::StructMacro(_, _) => todo!(),
                 Declaration::Include(_) => todo!(),
             },
-        }
+        };
+        self.expr_depth -= 1;
+        v
     }
 
     fn get_variable(&mut self, code_ref: &CodeRef, name: &str) -> anyhow::Result<&SVariable> {
@@ -792,7 +799,9 @@ impl<'a> FunctionTranslator<'a> {
                         //Can this be done without clone?
                         let dst_svar = self.get_variable(code_ref, name)?.clone();
 
-                        for arg in &self.func_stack.last().unwrap().params {
+                        let this_func = self.func_stack.last().unwrap();
+
+                        for arg in this_func.params.iter().chain(this_func.returns.iter()) {
                             if *name == arg.name {
                                 /*
                                 Should this happen also if the var already exists and has already been initialized?
@@ -866,39 +875,6 @@ impl<'a> FunctionTranslator<'a> {
                             }
                         }
 
-                        if let SVariable::Struct(var_name, struct_name, var, return_struct) =
-                            &dst_svar
-                        {
-                            //TODO also copy fixed array
-                            if *return_struct {
-                                trace!(
-                                    "{}: struct {} is a return {} of this fn {} copying onto memory at {} on assignment",
-                                    code_ref,
-                                    struct_name,
-                                    var_name,
-                                    &self.func_stack.last().unwrap(),
-                                    var_name,
-                                );
-                                //copy to struct, we don't want to return a reference
-                                let return_address = self.builder.use_var(*var);
-                                if !self.env.struct_map.contains_key(struct_name) {
-                                    anyhow::bail!(
-                                        "{} struct {} does not exist",
-                                        code_ref,
-                                        struct_name
-                                    )
-                                }
-                                copy_to_stack_slot(
-                                    self.module.target_config(),
-                                    &mut self.builder,
-                                    self.env.struct_map[struct_name].size,
-                                    src_sval.expect_struct(struct_name, "translate_assign")?,
-                                    return_address,
-                                    0,
-                                )?;
-                                continue 'expression;
-                            }
-                        }
                         if dst_svar.expr_type(code_ref)? != src_sval.expr_type(code_ref)? {
                             anyhow::bail!(
                                 "{} cannot assign value of type {} to variable {} of type {} ",
@@ -1760,7 +1736,20 @@ impl<'a> FunctionTranslator<'a> {
         if !returns.is_empty() {
             if let ExprType::Struct(_code_ref, name) = &returns[0].expr_type {
                 if let Some(s) = self.env.struct_map.get(&name.to_string()) {
-                    stack_slot_return = Some((name.to_string(), s.size));
+                    stack_slot_return = Some(s.size);
+                }
+            } else if let ExprType::Array(_code_ref, expr_type, size_type) = &returns[0].expr_type {
+                match size_type {
+                    ArraySizedExpr::Unsized => {}
+                    ArraySizedExpr::Sized => todo!(),
+                    ArraySizedExpr::Fixed(len) => {
+                        stack_slot_return = Some(
+                            expr_type
+                                .width(self.ptr_ty, &self.env.struct_map)
+                                .unwrap_or(0)
+                                * len,
+                        )
+                    }
                 }
             }
         }
@@ -1834,6 +1823,24 @@ impl<'a> FunctionTranslator<'a> {
         struct_name: &str,
         fields: &[StructAssignField],
     ) -> anyhow::Result<SValue> {
+        // TODO avoid unnecessary allocation
+        /*
+            if this is the RHS of assignment
+            and the LHS var is already allocated (like in a func param or return)
+                then use that address, and don't create a stack slot here
+            (later we could also look at vars declared higher up in the func
+                and not reallocate for those either)
+
+            additionally, if there are fields in the struct that would
+            create a stack slot (like an array) and those are created when
+            this struct is initialized, then use the space that is already
+            allocated in this struct, instead of allocating it separately
+            and copying. Note that this can only be done with fix sized
+            fields. (like fixed arrays or sub structs)
+
+            eventually, possibly look at expressions that are further down
+            the ast like: if a {[1.0;1000]} else {[2.0;1000]}
+        */
         let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
             self.env.struct_map[struct_name].size as u32,
@@ -1841,6 +1848,13 @@ impl<'a> FunctionTranslator<'a> {
 
         for field in fields.iter() {
             let dst_field_def = &self.env.struct_map[struct_name].fields[&field.field_name].clone();
+
+            let stack_slot_address = self.builder.ins().stack_addr(
+                self.ptr_ty,
+                stack_slot,
+                Offset32::new(dst_field_def.offset as i32),
+            );
+
             let sval = self.translate_expr(&field.expr)?;
 
             let mem_copy = match &sval {
@@ -1901,11 +1915,6 @@ impl<'a> FunctionTranslator<'a> {
                     &field.field_name,
                     &struct_name
                 );
-                let stack_slot_address = self.builder.ins().stack_addr(
-                    self.ptr_ty,
-                    stack_slot,
-                    Offset32::new(dst_field_def.offset as i32),
-                );
                 self.builder.emit_small_memory_copy(
                     self.module.target_config(),
                     stack_slot_address,
@@ -1923,11 +1932,6 @@ impl<'a> FunctionTranslator<'a> {
                     &sval,
                     &field.field_name,
                     &struct_name
-                );
-                let stack_slot_address = self.builder.ins().stack_addr(
-                    self.ptr_ty,
-                    stack_slot,
-                    Offset32::new(dst_field_def.offset as i32),
                 );
 
                 let val = if let SValue::Bool(val) = sval {
@@ -2231,7 +2235,7 @@ impl<'a> FunctionTranslator<'a> {
         is_closure: bool,
         is_temp_closure: bool,
         arg_svalues: Vec<SValue>,
-        stack_slot_return: Option<(String, usize)>,
+        stack_slot_return: Option<usize>,
     ) -> anyhow::Result<SValue> {
         let fn_name = &fn_name.to_string();
         trace!(
@@ -2341,7 +2345,7 @@ impl<'a> FunctionTranslator<'a> {
             }
         }
 
-        let stack_slot_address = if let Some((fn_name, size)) = &stack_slot_return {
+        let stack_slot_address = if let Some(size) = &stack_slot_return {
             //setup StackSlotData to be used as a StructReturnSlot
             let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
                 if inline_function {
@@ -2361,7 +2365,7 @@ impl<'a> FunctionTranslator<'a> {
                 sig.params
                     .insert(0, AbiParam::special(ptr_ty, ArgumentPurpose::StructReturn));
             }
-            Some((fn_name.clone(), stack_slot_address))
+            Some(stack_slot_address)
         } else {
             None
         };
@@ -2494,8 +2498,21 @@ impl<'a> FunctionTranslator<'a> {
             anyhow::bail!("Expected sig")
         };
 
-        if let Some((fn_name, stack_slot_address)) = stack_slot_address {
-            Ok(SValue::Struct(fn_name, stack_slot_address))
+        if let Some(stack_slot_address) = stack_slot_address {
+            let expr_type = &func.returns.first().unwrap().expr_type;
+            match expr_type {
+                ExprType::Array(_, _, ArraySizedExpr::Fixed(..)) => Ok(SValue::from(
+                    &mut self.builder,
+                    expr_type,
+                    stack_slot_address,
+                )?),
+                ExprType::Struct(_, struct_name) => {
+                    Ok(SValue::Struct(struct_name.to_string(), stack_slot_address))
+                }
+                _ => {
+                    anyhow::bail!("expected fixed array or struct return")
+                }
+            }
         } else if res.len() > 1 {
             Ok(SValue::Tuple(
                 res.iter()
