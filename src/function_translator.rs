@@ -64,6 +64,14 @@ impl<'a> FunctionTranslator<'a> {
             expr.debug_get_name(),
             self.expr_depth,
         );
+
+        let _ = ExprType::of(
+            expr,
+            &self.env,
+            &self.func_stack.last().unwrap().name,
+            self.variables.last().unwrap(),
+        )?; //Make sure we check all the expressions
+
         //dbg!(&expr);
         let v = match expr {
             Expr::LiteralFloat(_code_ref, literal) => {
@@ -152,6 +160,7 @@ impl<'a> FunctionTranslator<'a> {
                 Declaration::Include(_) => todo!(),
             },
         };
+
         self.expr_depth -= 1;
         v
     }

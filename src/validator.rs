@@ -675,7 +675,7 @@ impl ExprType {
                 }
                 ExprType::Void(*code_ref)
             }
-            Expr::WhileLoop(code_ref, idx_expr, stmts) => {
+            Expr::WhileLoop(code_ref, idx_expr, _stmts) => {
                 let idx_type = ExprType::of(idx_expr, env, func_name, variables)?;
                 if idx_type != ExprType::Bool(*code_ref) {
                     error!("");
@@ -685,9 +685,10 @@ impl ExprType {
                         actual: idx_type,
                     });
                 }
-                for expr in stmts {
-                    ExprType::of(expr, env, func_name, variables)?;
-                }
+                //TODO Currently not testing the body, because it would be tested later anyway
+                //for expr in stmts {
+                //    ExprType::of(expr, env, func_name, variables)?;
+                //}
                 ExprType::Void(*code_ref)
             }
 
