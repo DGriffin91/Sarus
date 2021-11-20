@@ -41,6 +41,14 @@ pub struct FunctionTranslator<'a> {
 
     //incremented when starting to translate an expression, decremented when returning value
     pub expr_depth: usize,
+
+    // Stack of widths of the deep stack used in each scope
+    // when entering an inline section a new width starting at 0 will be pushed on
+    // when leaving the inline section or function the width will be popped off
+    // and the deep stack pointer we be decremented proportionally
+    pub deep_stack_widths: Vec<usize>,
+    pub use_deep_stack: bool,
+    pub max_deep_stack_size: usize,
 }
 
 impl<'a> FunctionTranslator<'a> {
@@ -170,6 +178,9 @@ impl<'a> FunctionTranslator<'a> {
             self.builder
                 .ins()
                 .stack_addr(self.ptr_ty, stack_slot, Offset32::new(0));
+        //TODO use self.alloc (returns_a_fixed_array_in_a_struct_basic is failing if the deep stack is always used)
+        //let stack_slot_address = self.alloc((types::I8.bytes() * bytes.len() as u32) as i64);
+
         //TODO Is this really how this is done?
         for (i, c) in bytes.iter().enumerate() {
             let v = self.builder.ins().iconst::<i64>(types::I64, *c as i64);
@@ -208,14 +219,7 @@ impl<'a> FunctionTranslator<'a> {
             ),
         };
 
-        let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
-            StackSlotKind::ExplicitSlot,
-            (item_width * len) as u32,
-        ));
-        let stack_slot_address =
-            self.builder
-                .ins()
-                .stack_addr(self.ptr_ty, stack_slot, Offset32::new(0));
+        let stack_slot_address = self.alloc((item_width * len) as usize);
 
         let len_val = self.builder.ins().iconst(types::I64, len as i64);
 
@@ -1542,9 +1546,16 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.switch_to_block(body_block);
         self.builder.seal_block(body_block);
 
+        if self.use_deep_stack {
+            self.deep_stack_widths.push(0);
+        }
+
         for expr in loop_body {
             self.translate_expr(expr)?;
         }
+
+        self.dealloc_deep_stack();
+
         self.builder.ins().jump(header_block, &[]);
 
         self.builder.switch_to_block(exit_block);
@@ -1806,7 +1817,7 @@ impl<'a> FunctionTranslator<'a> {
             base: local_id,
             offset: Offset32::new(0),
             global_type: data_type,
-            readonly: true,
+            readonly: false,
         });
 
         //self.builder.ins().symbol_value(ptr_ty, local_id)
@@ -1841,19 +1852,18 @@ impl<'a> FunctionTranslator<'a> {
             eventually, possibly look at expressions that are further down
             the ast like: if a {[1.0;1000]} else {[2.0;1000]}
         */
-        let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
-            StackSlotKind::ExplicitSlot,
-            self.env.struct_map[struct_name].size as u32,
-        ));
+
+        let struct_address = self.alloc(self.env.struct_map[struct_name].size);
 
         for field in fields.iter() {
             let dst_field_def = &self.env.struct_map[struct_name].fields[&field.field_name].clone();
 
-            let stack_slot_address = self.builder.ins().stack_addr(
-                self.ptr_ty,
-                stack_slot,
-                Offset32::new(dst_field_def.offset as i32),
-            );
+            let offset = self
+                .builder
+                .ins()
+                .iconst(types::I64, dst_field_def.offset as i64);
+
+            let field_address = self.builder.ins().iadd(struct_address, offset);
 
             let sval = self.translate_expr(&field.expr)?;
 
@@ -1917,7 +1927,7 @@ impl<'a> FunctionTranslator<'a> {
                 );
                 self.builder.emit_small_memory_copy(
                     self.module.target_config(),
-                    stack_slot_address,
+                    field_address,
                     src_start_ptr,
                     size,
                     1,
@@ -1952,19 +1962,13 @@ impl<'a> FunctionTranslator<'a> {
                     sval.inner("new_struct")?
                 };
 
-                self.builder.ins().store(
-                    MemFlags::new(),
-                    val,
-                    stack_slot_address,
-                    Offset32::new(0),
-                );
+                self.builder
+                    .ins()
+                    .store(MemFlags::new(), val, field_address, Offset32::new(0));
             }
         }
-        let stack_slot_address =
-            self.builder
-                .ins()
-                .stack_addr(self.ptr_ty, stack_slot, Offset32::new(0));
-        Ok(SValue::Struct(struct_name.to_string(), stack_slot_address))
+
+        Ok(SValue::Struct(struct_name.to_string(), struct_address))
     }
 
     fn get_struct_field_location(
@@ -2346,20 +2350,7 @@ impl<'a> FunctionTranslator<'a> {
         }
 
         let stack_slot_address = if let Some(size) = &stack_slot_return {
-            //setup StackSlotData to be used as a StructReturnSlot
-            let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
-                if inline_function {
-                    StackSlotKind::ExplicitSlot
-                } else {
-                    StackSlotKind::StructReturnSlot
-                },
-                *size as u32,
-            ));
-            //get stack address of StackSlotData
-            let stack_slot_address =
-                self.builder
-                    .ins()
-                    .stack_addr(ptr_ty, stack_slot, Offset32::new(0));
+            let stack_slot_address = self.alloc(*size);
             arg_values.insert(0, stack_slot_address);
             if let Some(sig) = &mut sig {
                 sig.params
@@ -2402,6 +2393,9 @@ impl<'a> FunctionTranslator<'a> {
             //self.builder.block_params(func_block).to_vec()
             self.func_stack.push(func.clone()); //push inlined func onto func_stack
             self.variables.push(HashMap::new()); //new variable scope for inline func
+            if self.use_deep_stack {
+                self.deep_stack_widths.push(0);
+            }
 
             if let Some(closure_src_scope_name) = closure_src_scope_name {
                 //closures need the variables form the the scope they close over to be included
@@ -2484,6 +2478,7 @@ impl<'a> FunctionTranslator<'a> {
             //finished with inline scope
             self.func_stack.pop();
             self.variables.pop();
+            self.dealloc_deep_stack();
 
             _return
         } else if let Some(sig) = sig {
@@ -2531,6 +2526,88 @@ impl<'a> FunctionTranslator<'a> {
             )?)
         } else {
             Ok(SValue::Void)
+        }
+    }
+
+    fn alloc(&mut self, width: usize) -> Value {
+        // if > 4KB //TODO make adjustable
+        if width > 4096 && self.use_deep_stack {
+            self.alloc_deep_stack(width)
+        } else {
+            self.alloc_stack(width)
+        }
+    }
+
+    fn alloc_stack(&mut self, width: usize) -> Value {
+        trace!("alloc_stack {}", width);
+        let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            width as u32,
+        ));
+        self.builder
+            .ins()
+            .stack_addr(self.ptr_ty, stack_slot, Offset32::new(0))
+    }
+
+    fn alloc_deep_stack(&mut self, width: usize) -> Value {
+        //TODO consider bumping downwards (possible alignment issues?)
+        //https://fitzgeraldnick.com/2019/11/01/always-bump-downwards.html
+
+        trace!("alloc_deep_stack {}", width);
+        *self.deep_stack_widths.last_mut().unwrap() += width;
+        self.max_deep_stack_size = self
+            .max_deep_stack_size
+            .max(self.deep_stack_widths.iter().sum());
+        trace!("max_deep_stack_size {}", self.max_deep_stack_size);
+
+        let deep_stack_address = self.translate_global_data_addr(self.ptr_ty, "__DEEP_STACK__");
+
+        let address = self.builder.ins().load(
+            self.ptr_ty,
+            MemFlags::new(),
+            deep_stack_address,
+            Offset32::new(0),
+        );
+
+        let alloc_size_val = self.builder.ins().iconst(types::I64, width as i64);
+
+        let address_new_start = self.builder.ins().iadd(address, alloc_size_val);
+
+        self.builder.ins().store(
+            MemFlags::new(),
+            address_new_start,
+            deep_stack_address,
+            Offset32::new(0),
+        );
+        address
+    }
+
+    pub fn dealloc_deep_stack(&mut self) {
+        if self.use_deep_stack {
+            let width_to_remove = self.deep_stack_widths.pop().unwrap();
+            trace!("alloc_deep_stack width_to_remove {}", width_to_remove);
+            let deep_stack_address = self.translate_global_data_addr(self.ptr_ty, "__DEEP_STACK__");
+
+            let stack_slot_address = self.builder.ins().load(
+                self.ptr_ty,
+                MemFlags::new(),
+                deep_stack_address,
+                Offset32::new(0),
+            );
+
+            let alloc_size_val = self
+                .builder
+                .ins()
+                .iconst(types::I64, width_to_remove as i64);
+
+            let address_new_start = self.builder.ins().isub(stack_slot_address, alloc_size_val);
+
+            self.builder.ins().store(
+                MemFlags::new(),
+                address_new_start,
+                deep_stack_address,
+                Offset32::new(0),
+            );
         }
     }
 }

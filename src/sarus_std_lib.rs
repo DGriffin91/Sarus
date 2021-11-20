@@ -270,6 +270,7 @@ pub(crate) fn translate_std(
 
 #[derive(Debug, Clone, Copy)]
 pub enum SConstant {
+    Address(i64),
     F32(f32),
     I64(i64),
     Bool(bool),
@@ -283,6 +284,7 @@ impl SConstant {
             CodeRef::z()
         };
         match self {
+            SConstant::Address(_) => ExprType::Address(code_ref),
             SConstant::F32(_) => ExprType::F32(code_ref),
             SConstant::I64(_) => ExprType::I64(code_ref),
             SConstant::Bool(_) => ExprType::Bool(code_ref),

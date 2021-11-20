@@ -45,7 +45,7 @@ impl Graph {
         sarus_std_lib::append_std(&mut ast, &mut jit_builder);
         sarus_std_lib::append_std_math(&mut ast, &mut jit_builder);
 
-        let mut jit = jit::JIT::from(jit_builder);
+        let mut jit = jit::JIT::from(jit_builder, true);
 
         let node_execution_order = order_connections(&connections, &nodes);
 

@@ -133,7 +133,7 @@ fn get_eq_jit() -> jit::JIT {
     sarus_std_lib::append_std(&mut ast, &mut jit_builder);
     sarus_std_lib::append_std_math(&mut ast, &mut jit_builder);
 
-    let mut jit = jit::JIT::from(jit_builder);
+    let mut jit = jit::JIT::from(jit_builder, true);
     jit.translate(ast, None).unwrap();
     jit
 }
@@ -167,7 +167,7 @@ fn eq_compile_only(b: &mut Bencher) {
             sarus_std_lib::append_std(&mut ast, &mut jit_builder);
             sarus_std_lib::append_std_math(&mut ast, &mut jit_builder);
 
-            let mut jit = jit::JIT::from(jit_builder);
+            let mut jit = jit::JIT::from(jit_builder, true);
             jit.translate(ast, None).unwrap();
             let mut output_arr = [0.0f32; 128];
 
@@ -254,7 +254,7 @@ fn compile_bench(b: &mut Bencher) {
             //sarus_std_lib::append_std(&mut ast, &mut jit_builder);
             //sarus_std_lib::append_std_math(&mut ast, &mut jit_builder);
 
-            let mut jit = jit::JIT::from(jit_builder);
+            let mut jit = jit::JIT::from(jit_builder, true);
 
             jit.translate(ast, None).unwrap();
             let func_ptr = jit.get_func("main").unwrap();

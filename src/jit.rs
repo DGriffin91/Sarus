@@ -37,6 +37,30 @@ pub struct JIT {
 
     //CLIF cranelift IR string, by function name
     pub clif: HashMap<String, String>,
+
+    // An optional larger stack for larger allocations
+    // Essentially a lifo arena
+    // Size determined at compile time, then used globally at runtime
+    // Must be accessed by only one thread at a time
+    deep_stack: Option<Heap>,
+
+    // pointer to address at the top of the stack in the heap
+    // at run time, when something is added to the deep stack, this is incremented
+    // when something is removed from the deep stack, this is decremented
+    deep_stack_pointer: Option<*mut u64>,
+    /*
+    TODO
+        to determine size of auto deep stack:
+        for each function compute max size of deep stack used
+        in each function also take into account sub calls
+        the functions will have to be in order for this to work
+        the deep stack should be the size of the largest function's
+        maximum stack size
+    CURRENTLY
+        this is just the sum of all functions max stack size
+    */
+    total_max_deep_stack_size: usize,
+    use_deep_stack: bool,
 }
 
 impl Default for JIT {
@@ -49,6 +73,10 @@ impl Default for JIT {
             data_ctx: DataContext::new(),
             module,
             clif: HashMap::new(),
+            use_deep_stack: true,
+            deep_stack: None,
+            deep_stack_pointer: None,
+            total_max_deep_stack_size: 0,
         }
     }
 }
@@ -79,15 +107,18 @@ pub fn new_jit_builder() -> JITBuilder {
 }
 
 impl JIT {
-    pub fn from(jit_builder: JITBuilder) -> Self {
+    pub fn from(jit_builder: JITBuilder, use_deep_stack: bool) -> Self {
         let module = JITModule::new(jit_builder);
-
         Self {
             builder_context: FunctionBuilderContext::new(),
             ctx: module.make_context(),
             data_ctx: DataContext::new(),
             module,
             clif: HashMap::new(),
+            use_deep_stack,
+            deep_stack: None,
+            deep_stack_pointer: None,
+            total_max_deep_stack_size: 0,
         }
     }
 
@@ -194,8 +225,24 @@ impl JIT {
             };
         }
 
+        if self.use_deep_stack {
+            trace!(
+                "total_max_deep_stack_size {}",
+                self.total_max_deep_stack_size
+            );
+            let deep_stack = Heap::new(self.total_max_deep_stack_size).unwrap();
+            let deep_stack_pointer = Box::into_raw(Box::new(deep_stack.get_ptr() as u64));
+            self.create_data(
+                "__DEEP_STACK__",
+                (deep_stack_pointer as u64).to_ne_bytes().to_vec(),
+            )?;
+            self.deep_stack = Some(deep_stack);
+            self.deep_stack_pointer = Some(deep_stack_pointer);
+        }
+
         for (name, val) in constant_vars.iter() {
             match val {
+                SConstant::Address(n) => self.create_data(name, (*n).to_ne_bytes().to_vec())?,
                 SConstant::I64(n) => self.create_data(name, (*n).to_ne_bytes().to_vec())?,
                 SConstant::F32(n) => self.create_data(name, (*n).to_ne_bytes().to_vec())?,
                 SConstant::Bool(n) => self.create_data(name, (*n as i8).to_ne_bytes().to_vec())?,
@@ -381,10 +428,16 @@ impl JIT {
             var_index,
             variables: vec![variables],
             expr_depth: 0,
+            deep_stack_widths: vec![0],
+            use_deep_stack: self.use_deep_stack,
+            max_deep_stack_size: 0,
         };
         for expr in &func.body {
             trans.translate_expr(expr)?;
         }
+
+        self.total_max_deep_stack_size += trans.max_deep_stack_size;
+        trans.dealloc_deep_stack();
 
         // Set up the return variable of the function. Above, we declared a
         // variable to hold the return value. Here, we just do a use of that
@@ -490,3 +543,33 @@ impl Env {
         None
     }
 }
+
+//TODO move to its own file if we use this
+use std::alloc::{alloc, dealloc, Layout};
+
+#[derive(Clone)]
+pub struct Heap {
+    ptr: *mut u8,
+    layout: Layout,
+}
+
+impl Drop for Heap {
+    fn drop(&mut self) {
+        unsafe { dealloc(self.ptr, self.layout) }
+    }
+}
+
+impl Heap {
+    pub fn new(size: usize) -> anyhow::Result<Self> {
+        let layout = Layout::from_size_align(size, 8)?;
+        let ptr = unsafe { alloc(layout) };
+        Ok(Heap { ptr, layout })
+    }
+
+    pub fn get_ptr(&self) -> *mut u8 {
+        self.ptr
+    }
+}
+
+unsafe impl Send for Heap {}
+unsafe impl Sync for Heap {}
