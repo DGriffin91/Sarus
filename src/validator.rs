@@ -3,6 +3,7 @@ use std::{collections::HashMap, fmt::Display};
 use crate::{
     frontend::{Binop, CodeRef, Expr},
     jit::{Env, SVariable, StructDef},
+    sarus_std_lib::validate_core_generics,
 };
 use cranelift::prelude::types;
 use thiserror::Error;
@@ -39,8 +40,13 @@ pub enum TypeError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArraySizedExpr {
-    Unsized,      //size is unknown, just an address with a type
-    Sized,        //start of array address is i64 with size.
+    Unsized, //size is unknown, just an address with a type
+    //Slice points to a an address with data layout like {
+    //    start: &
+    //    length: i64
+    //    capacity: i64
+    //}
+    Slice,
     Fixed(usize), //size is part of type signature
 }
 
@@ -137,7 +143,7 @@ impl Display for ExprType {
             ExprType::I64(_) => write!(f, "i64"),
             ExprType::Array(_, ty, size_type) => match size_type {
                 ArraySizedExpr::Unsized => write!(f, "&[{}]", ty),
-                ArraySizedExpr::Sized => todo!(),
+                ArraySizedExpr::Slice => write!(f, "[{}]", ty),
                 ArraySizedExpr::Fixed(len) => write!(f, "[{}; {}]", ty, len),
             },
             ExprType::Address(_) => write!(f, "&"),
@@ -262,8 +268,8 @@ impl ExprType {
     ) -> Option<usize> {
         match self {
             ExprType::Array(_, ty, size_type) => match size_type {
-                ArraySizedExpr::Unsized => None,
-                ArraySizedExpr::Sized => todo!(),
+                ArraySizedExpr::Unsized => Some(ptr_ty.bytes() as usize),
+                ArraySizedExpr::Slice => Some((ptr_ty.bytes() + 2 * 8) as usize),
                 ArraySizedExpr::Fixed(len) => ty.width(ptr_ty, struct_map).map(|width| width * len),
             },
             ExprType::Void(_) => Some(0),
@@ -303,11 +309,20 @@ impl ExprType {
             Expr::LiteralInt(code_ref, _) => ExprType::I64(*code_ref),
             Expr::LiteralBool(code_ref, _) => ExprType::Bool(*code_ref),
             Expr::LiteralString(code_ref, _) => ExprType::Address(*code_ref), //TODO change to char
-            Expr::LiteralArray(code_ref, e, len) => ExprType::Array(
-                *code_ref,
-                Box::new(ExprType::of(e, env, func_name, variables)?),
-                ArraySizedExpr::Fixed(*len),
-            ),
+            Expr::LiteralArray(code_ref, es, len) => {
+                let first_typ = ExprType::of(&es[0], env, func_name, variables)?;
+                for e in es.iter().next() {
+                    let typ = ExprType::of(e, env, func_name, variables)?;
+                    if typ != first_typ {
+                        return Err(TypeError::TypeMismatch {
+                            c: code_ref.s(&env.file_idx),
+                            expected: first_typ,
+                            actual: typ,
+                        });
+                    }
+                }
+                ExprType::Array(*code_ref, Box::new(first_typ), ArraySizedExpr::Fixed(*len))
+            }
             Expr::Binop(binop_code_ref, binop, lhs, rhs) => match binop {
                 crate::frontend::Binop::DotAccess => {
                     let mut path = Vec::new();
@@ -348,6 +363,19 @@ impl ExprType {
                                 } else {
                                     ExprType::of(&path[0], env, func_name, variables)?
                                 };
+
+                                if let Some(tp) = validate_core_generics(
+                                    &fn_name,
+                                    &args,
+                                    &code_ref,
+                                    &Some(sval.clone()),
+                                    env,
+                                    variables,
+                                )? {
+                                    lhs_val = Some(tp);
+                                    path = Vec::new();
+                                    continue;
+                                }
 
                                 let fn_name = format!("{}.{}", sval.to_string(), fn_name);
 
@@ -704,28 +732,10 @@ impl ExprType {
                     // Here the macro can check if the args works and will return
                     // returns = (macros[fn_name])(code_ref, args, env)
                 }
-                if fn_name == "unsized" {
-                    if args.len() != 1 {
-                        return Err(TypeError::TupleLengthMismatch {
-                            c: code_ref.s(&env.file_idx),
-                            actual: args.len(),
-                            expected: 1,
-                        });
-                    }
-
-                    let targ = ExprType::of(&args[0], env, func_name, variables)?;
-                    return match targ {
-                        ExprType::Array(c, expr, _) => {
-                            Ok(ExprType::Array(c, expr, ArraySizedExpr::Unsized))
-                        }
-                        ExprType::Address(c) => {
-                            Ok(ExprType::Array(c, Box::new(targ), ArraySizedExpr::Unsized))
-                        }
-                        sv => Err(TypeError::TypeMismatchSpecific {
-                            c: code_ref.s(&env.file_idx),
-                            s: format!("function unsized does not support {}", sv),
-                        }),
-                    };
+                if let Some(tp) =
+                    validate_core_generics(func_name, args, code_ref, &None, env, variables)?
+                {
+                    return Ok(tp);
                 }
                 //This could be called from an inline function if so we need to look at its closures
 

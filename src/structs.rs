@@ -134,7 +134,7 @@ fn get_field_size(
         }
         ExprType::Array(_code_ref, expr_type, size_type) => match size_type {
             ArraySizedExpr::Unsized => (ptr_type.bytes() as usize, false),
-            ArraySizedExpr::Sized => todo!(),
+            ArraySizedExpr::Slice => ((ptr_type.bytes() + 2 * 8) as usize, true),
             ArraySizedExpr::Fixed(len) => {
                 if max_base_field {
                     get_field_size(expr_type, struct_map, ptr_type, max_base_field)?

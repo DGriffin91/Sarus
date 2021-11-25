@@ -96,10 +96,8 @@ inline fn process(x, ic1eq, ic2eq, a1, a2, a3, m0, m1, m2) -> (n_x, n_ic1eq, n_i
     n_ic2eq = 2.0 * v2 - ic2eq
     n_x = m0 * x + m1 * v1 + m2 * v2
 }
-
-Slice for &[f32]
 fn main(iterations: i64, output_arr: &[f32]) -> (sum) {
-    output_slice = output_arr.into_slice(iterations)
+    output_slice = output_arr[..iterations]
     fs = 48000.0
     f1_a1, f1_a2, f1_a3, f1_m0, f1_m1, f1_m2 = highpass(100.0, 1.0, fs)
     f2_a1, f2_a2, f2_a3, f2_m0, f2_m1, f2_m2 = lowpass(5000.0, 1.0, fs)
@@ -120,7 +118,7 @@ fn main(iterations: i64, output_arr: &[f32]) -> (sum) {
         sample, f2_ic1eq, f2_ic2eq = process(sample, f2_ic1eq, f2_ic2eq, f2_a1, f2_a2, f2_a3, f2_m0, f2_m1, f2_m2)
         sample, f3_ic1eq, f3_ic2eq = process(sample, f3_ic1eq, f3_ic2eq, f3_a1, f3_a2, f3_a3, f3_m0, f3_m1, f3_m2)    
         sum += sample
-        output_slice.set(i, sample)
+        output_slice[i] = sample
         i += 1
         f_i += 1.0
     }

@@ -1,4 +1,5 @@
 #![feature(core_intrinsics)]
+#![feature(try_blocks)]
 
 use serde::Deserialize;
 use std::{
@@ -2914,42 +2915,6 @@ fn modifies_an_array(arr: [[i64; 10]; 10]) -> () {
     Ok(())
 }
 
-#[test]
-fn struct_macro() -> anyhow::Result<()> {
-    //setup_logging();
-    let code = r#"
-
-
-Slice for &[i64]
-fn modifies_an_array(arr: &[i64], len: i64) -> () {   
-    arr_slice = arr.into_slice(len)
-    a = arr_slice.get(0)
-    arr_slice.set(0, 5)
-    arr_slice.set(9, 5)
-}
-
-fn modifies_a_fixed_array(arr: [i64; 10], len: i64) -> () {   
-    arr_slice = unsized(arr).into_slice(10)
-    a = arr_slice.get(0)
-    arr_slice.set(0, 5)
-    arr_slice.set(9, 5)
-}
-"#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let mut arr = [1i64; 10];
-    let func_ptr = jit.get_func("modifies_an_array")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [i64; 10], i64)>(func_ptr) };
-    let len = arr.len() as i64;
-    func(&mut arr, len);
-    assert_eq!(arr, [5, 1, 1, 1, 1, 1, 1, 1, 1, 5,]);
-    let func_ptr = jit.get_func("modifies_a_fixed_array")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [i64; 10], i64)>(func_ptr) };
-    let len = arr.len() as i64;
-    func(&mut arr, len);
-    assert_eq!(arr, [5, 1, 1, 1, 1, 1, 1, 1, 1, 5,]);
-    Ok(())
-}
-
 #[repr(C)]
 #[derive(Debug)]
 struct B {
@@ -4102,6 +4067,424 @@ fn main() -> () {
     func();
     Ok(())
 }
+
+#[test]
+fn out_of_bounds_error() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+fn main() -> () { 
+    a = 100
+    b = [1.0; 10]
+    c = b[a]    
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    //let _: Result<(), ()> = try {
+    //    func();
+    //};
+
+    let result = std::panic::catch_unwind(|| {
+        println!("hello!");
+    });
+    assert!(result.is_ok());
+    let a = 100;
+    let b = [1.0; 10];
+    let result = std::panic::catch_unwind(|| {
+        let c = b[a];
+        //func();
+    });
+    assert!(result.is_err());
+
+    dbg!("!!!!!!!!!!!!!!! after");
+    Ok(())
+}
+
+#[test]
+fn basic_slice() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+fn main() -> () { 
+    a = [0.0; 100]
+    a[0] = 0.0
+    a[1] = 1.0
+    a[2] = 2.0
+    a[99] = 99.0
+    slice_of_a = a[..]
+    sub_slice_of_a1 = a[0..3]
+    sub_slice_of_a2 = a[..3]
+    sub_slice_of_a3 = a[2..]
+    sub_slice_of_a4 = a[1..3]
+
+    slice_of_a[0].assert_eq(0.0)
+    slice_of_a[1].assert_eq(1.0)
+    slice_of_a[2].assert_eq(2.0)
+    slice_of_a[99].assert_eq(99.0)
+
+    sub_slice_of_a1[0].assert_eq(0.0)
+    sub_slice_of_a1[1].assert_eq(1.0)
+    sub_slice_of_a1[2].assert_eq(2.0)
+
+    sub_slice_of_a2[0].assert_eq(0.0)
+    sub_slice_of_a2[1].assert_eq(1.0)
+    sub_slice_of_a2[2].assert_eq(2.0)
+
+    sub_slice_of_a3[0].assert_eq(2.0)
+    sub_slice_of_a3[99-2].assert_eq(99.0)
+
+    sub_slice_of_a4[0].assert_eq(1.0)
+    sub_slice_of_a4[1].assert_eq(2.0)
+
+    a[1] = 10.0
+    slice_of_a[1].assert_eq(10.0)
+
+    slice_of_a[2] = 20.0
+    a[2].assert_eq(20.0)
+
+    sub_slice_of_a4[0] = 5.0
+    sub_slice_of_a4[1] = 6.0
+
+    a[1].assert_eq(5.0)
+    a[2].assert_eq(6.0)
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn slice_contains_struct() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+struct Point {
+    x, y, z,
+}
+
+fn main() -> () { 
+    a = [Point {
+        x:0.0, 
+        y:0.0, 
+        z:0.0,
+    }; 100]
+    a[0].y = 0.0
+    a[1].y = 1.0
+    a[2].y = 2.0
+    a[99].y = 99.0
+    slice_of_a = a[..]
+    a[1].y.assert_eq(1.0)
+    sub_slice_of_a1 = a[0..3]
+    sub_slice_of_a2 = a[..3]
+    sub_slice_of_a3 = a[2..]
+    sub_slice_of_a4 = a[1..3]
+
+    slice_of_a[0].y.assert_eq(0.0)
+    slice_of_a[1].y.assert_eq(1.0)
+    slice_of_a[2].y.assert_eq(2.0)
+    slice_of_a[99].y.assert_eq(99.0)
+
+    sub_slice_of_a1[0].y.assert_eq(0.0)
+    sub_slice_of_a1[1].y.assert_eq(1.0)
+    sub_slice_of_a1[2].y.assert_eq(2.0)
+
+    sub_slice_of_a2[0].y.assert_eq(0.0)
+    sub_slice_of_a2[1].y.assert_eq(1.0)
+    sub_slice_of_a2[2].y.assert_eq(2.0)
+
+    sub_slice_of_a3[0].y.assert_eq(2.0)
+    sub_slice_of_a3[99-2].y.assert_eq(99.0)
+
+    sub_slice_of_a4[0].y.assert_eq(1.0)
+    sub_slice_of_a4[1].y.assert_eq(2.0)
+
+    a[1].y = 10.0
+    slice_of_a[1].y.assert_eq(10.0)
+
+    slice_of_a[2].y = 20.0
+    a[2].y.assert_eq(20.0)
+
+    sub_slice_of_a4[0].y = 5.0
+    sub_slice_of_a4[1].y = 6.0
+
+    a[1].y.assert_eq(5.0)
+    a[2].y.assert_eq(6.0)
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn pass_slice_to_func() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+struct Point {
+    x, y, z,
+}
+
+fn takes_slices(a: [Point], b: [Point]) -> () {
+    a[0].y.assert_eq(0.0)
+    a[1].y.assert_eq(1.0)
+    a[2].y.assert_eq(2.0)
+    a[99].y.assert_eq(99.0)
+
+    b[0].y.assert_eq(1.0)
+    b[1].y.assert_eq(2.0)
+
+    a[3].y = 20.0
+    b[1].y = 10.0
+}
+
+fn main() -> () { 
+    a = [Point {
+        x:0.0, 
+        y:0.0, 
+        z:0.0,
+    }; 100]
+    a[0].y = 0.0
+    a[1].y = 1.0
+    a[2].y = 2.0
+    a[99].y = 99.0
+    slice_of_a = a[..]
+    sub_slice_of_a1 = a[1..3]
+
+    takes_slices(slice_of_a, sub_slice_of_a1)
+
+    a[3].y.assert_eq(20.0)
+    a[2].y.assert_eq(10.0)
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn return_slice_from_func() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+fn takes_slices(in: [f32]) -> (r: [f32]) {
+    r = in
+}
+
+fn main() -> () { 
+    sl1 = [1.0; 100][..]
+    sl = [1.0; 200][..]
+    sl1 = takes_slices(sl)
+    sl1[5].assert_eq(1.0)
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn unsized_slice() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+fn modifies_an_array(arr: &[i64], len: i64) -> () {   
+    arr_slice = arr[..10]
+    a = arr_slice[0]
+    arr_slice[0] = 5
+    arr_slice[9] = 5
+}
+
+fn modifies_a_fixed_array(arr: [i64; 10], len: i64) -> () {   
+    arr_slice = arr[..]
+    a = arr_slice[0]
+    arr_slice[0] = 5
+    arr_slice[9] = 5
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let mut arr = [1i64; 10];
+    let func_ptr = jit.get_func("modifies_an_array")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [i64; 10], i64)>(func_ptr) };
+    let len = arr.len() as i64;
+    func(&mut arr, len);
+    assert_eq!(arr, [5, 1, 1, 1, 1, 1, 1, 1, 1, 5,]);
+    let func_ptr = jit.get_func("modifies_a_fixed_array")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn(&mut [i64; 10], i64)>(func_ptr) };
+    let len = arr.len() as i64;
+    func(&mut arr, len);
+    assert_eq!(arr, [5, 1, 1, 1, 1, 1, 1, 1, 1, 5,]);
+    Ok(())
+}
+
+#[test]
+fn slice_of_slice() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+
+fn main() -> () { 
+    sl = [0.0; 100][..]
+    sl[1] = 1.0
+    sl[2] = 2.0
+    sl[3] = 3.0
+    sl2 = sl[..]
+    sl2[1].assert_eq(1.0)
+    sl2[2].assert_eq(2.0)
+    sl2[3].assert_eq(3.0)
+    sl3 = sl2[1..]
+    sl3[1].assert_eq(2.0)
+    sl3[2].assert_eq(3.0)
+    sl3[3].assert_eq(0.0)
+    sl4 = sl3[1..]
+    sl4[1].assert_eq(3.0)
+    sl4[2].assert_eq(0.0)
+    sl4[3].assert_eq(0.0)
+    (sl4[0..1])[0].assert_eq(2.0)
+    (sl4[1..2])[0].assert_eq(3.0)
+
+    sl5 = sl[1..2]
+    sl5[0].assert_eq(1.0)
+    sl6 = sl[1..5]
+    sl6[0].assert_eq(1.0)
+    sl6[1].assert_eq(2.0)
+    sl6[2].assert_eq(3.0)
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn direct_array_literal() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+fn main() -> () {
+    arr = [0.0, 0.5+0.5, 2.0, 3.0, 4.0]
+    arr[0].assert_eq(0.0)
+    arr[1].assert_eq(1.0)
+    arr[2].assert_eq(2.0)
+    arr[3].assert_eq(3.0)
+    arr[4].assert_eq(4.0)
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn push_onto_slice() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+
+fn main() -> () {
+    arr = [0.0; 100]
+    sl = arr[0..0]
+    sl.cap().assert_eq(arr.len())
+    sl.len().assert_eq(0)
+    sl.push(1.0)
+    sl.len().assert_eq(1)
+    sl.push(2.0)
+    sl.len().assert_eq(2)
+    sl.pop().assert_eq(2.0)
+    sl.len().assert_eq(1)
+    sl.pop().assert_eq(1.0)
+    sl.len().assert_eq(0)
+    (sl.unsized())[0].assert_eq(arr[0])
+    (sl.unsized())[1].assert_eq(arr[1])
+    (sl.unsized())[2].assert_eq(arr[2])
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn append_to_slice() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+fn main() -> () {
+    arr = [2.0; 100]
+    sl = arr[0..3]
+    sl.append([1.0;3])
+    sl.len().assert_eq(6)
+    sl[2].assert_eq(2.0)
+    sl[3].assert_eq(1.0)
+    sl[4].assert_eq(1.0)
+    sl[5].assert_eq(1.0)
+    (sl[0..sl.len()+1])[6].assert_eq(2.0)
+    sl.append([6.0,7.0,8.0][..])
+    sl.len().assert_eq(9)
+    sl[5].assert_eq(1.0)
+    sl[6].assert_eq(6.0)
+    sl[7].assert_eq(7.0)
+    sl[8].assert_eq(8.0)
+    (sl[0..sl.len()+1])[9].assert_eq(2.0)
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn append_slice_of_structs_to_slice() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+struct Point { x, y, z, }
+
+fn main() -> () {
+    arr = [Point { x: 0.0, y: 0.0, z: 0.0, }; 100]
+    sl = arr[0..0]
+    sl.len().assert_eq(0)
+    to_append = [
+        Point { x: 1.0, y: 2.0, z: 3.0, },
+        Point { x: 4.0, y: 5.0, z: 6.0, },
+        Point { x: 7.0, y: 8.0, z: 9.0, }
+    ]
+    sl.append(to_append)
+    sl.len().assert_eq(3)
+    sl[0].x.assert_eq(1.0)
+    sl[0].y.assert_eq(2.0)
+    sl[0].z.assert_eq(3.0)
+    sl[1].x.assert_eq(4.0)
+    sl[1].y.assert_eq(5.0)
+    sl[1].z.assert_eq(6.0)
+    sl[2].x.assert_eq(7.0)
+    sl[2].y.assert_eq(8.0)
+    sl[2].z.assert_eq(9.0)
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+// TODO this parses very slowly
+/*
+sl.append([
+        Point { x: 1.0, y: 2.0, z: 2.0, },
+        Point { x: 2.0, y: 1.0, z: 2.0, },
+        Point { x: 2.0, y: 2.0, z: 1.0, }
+    ])
+*/
 
 // TODO don't allow vars that are only declared in a
 // while loop, if/then, or if/then/elseif

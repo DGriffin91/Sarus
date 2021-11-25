@@ -325,10 +325,11 @@ impl JIT {
 
         if !func.returns.is_empty() {
             match &func.returns[0].expr_type {
-                ExprType::Struct(_, ..) | ExprType::Array(_, _, ArraySizedExpr::Fixed(..)) => {
+                ExprType::Struct(_, ..)
+                | ExprType::Array(_, _, ArraySizedExpr::Fixed(..) | ArraySizedExpr::Slice) => {
                     if func.returns.len() > 1 {
                         anyhow::bail!(
-                            "If returning a fixed length array or struct, only 1 return value is currently supported"
+                            "If returning a fixed length array, slice, or struct, only 1 return value is currently supported"
                         )
                     }
                     self.ctx
@@ -416,12 +417,14 @@ impl JIT {
 
         //println!("FunctionTranslator {}", func.name);
         let ptr_ty = self.module.target_config().pointer_type();
+        let ptr_width = ptr_ty.bytes() as i64;
 
         // Now translate the statements of the function body.
         let mut trans = FunctionTranslator {
             builder,
             module: &mut self.module,
             ptr_ty,
+            ptr_width,
             env,
             func_stack: vec![func.clone()],
             entry_block,
@@ -461,7 +464,8 @@ impl JIT {
                             "return_variable",
                         )?)
                     }
-                    ArraySizedExpr::Sized => todo!(),
+                    // We don't actually return slices, they are passed in as StackSlotKind::StructReturnSlot and written to from there
+                    ArraySizedExpr::Slice => continue,
                     // We don't actually return fixed sized arrays, they are passed in as StackSlotKind::StructReturnSlot and written to from there
                     ArraySizedExpr::Fixed(_) => continue,
                 },

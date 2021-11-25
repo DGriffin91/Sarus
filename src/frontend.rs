@@ -12,10 +12,33 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
+pub struct SarusRange {
+    pub start: Option<Box<Expr>>,
+    pub end: Option<Box<Expr>>,
+}
+
+impl Display for SarusRange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let start = if let Some(start) = &self.start {
+            start.to_string()
+        } else {
+            "".to_string()
+        };
+        let end = if let Some(end) = &self.end {
+            end.to_string()
+        } else {
+            "".to_string()
+        };
+        write!(f, "{}..{}", start, end)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Unaryop {
     Not,
     Negative,
+    Slice(SarusRange),
 }
 
 impl Display for Unaryop {
@@ -23,6 +46,7 @@ impl Display for Unaryop {
         match self {
             Unaryop::Not => write!(f, "!"),
             Unaryop::Negative => write!(f, "-"),
+            Unaryop::Slice(range) => write!(f, "[{}]", range),
         }
     }
 }
@@ -144,7 +168,7 @@ pub enum Expr {
     LiteralInt(CodeRef, i64),
     LiteralBool(CodeRef, bool),
     LiteralString(CodeRef, String),
-    LiteralArray(CodeRef, Box<Expr>, usize),
+    LiteralArray(CodeRef, Vec<Expr>, usize),
     Identifier(CodeRef, String),
     Binop(CodeRef, Binop, Box<Expr>, Box<Expr>),
     Unaryop(CodeRef, Unaryop, Box<Expr>),
@@ -239,7 +263,7 @@ impl Expr {
         Expr::LiteralString(CodeRef::z(), s.to_string())
     }
     pub fn literal_array(v: &Expr, len: usize) -> Self {
-        Expr::LiteralArray(CodeRef::z(), Box::new(v.clone()), len)
+        Expr::LiteralArray(CodeRef::z(), vec![v.clone()], len)
     }
     pub fn identifier(s: &str) -> Self {
         Expr::Identifier(CodeRef::z(), s.to_string())
@@ -321,7 +345,21 @@ impl Display for Expr {
             Expr::LiteralFloat(_, s) => write!(f, "{}", s),
             Expr::LiteralInt(_, s) => write!(f, "{}", s),
             Expr::LiteralString(_, s) => write!(f, "\"{}\"", s),
-            Expr::LiteralArray(_, e, len) => write!(f, "[{}; {}]", e, len),
+            Expr::LiteralArray(_, es, len) => {
+                if es.len() == 1 {
+                    write!(f, "[{}; {}]", es[0], len)
+                } else {
+                    write!(f, "[")?;
+                    for (i, e) in es.iter().enumerate() {
+                        if i < es.len() - 1 {
+                            write!(f, "{},", e)?;
+                        } else {
+                            write!(f, "{}", e)?;
+                        }
+                    }
+                    write!(f, "]")
+                }
+            }
             Expr::Identifier(_, s) => write!(f, "{}", s),
             Expr::Binop(_, op, e1, e2) => write!(f, "{}{}{}", e1, op, e2),
             Expr::Unaryop(_, op, e1) => write!(f, "{} {}", op, e1),
@@ -742,6 +780,7 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         = _ pos:position!() "f32" { ExprType::F32(CodeRef::new(pos, code_ctx)) }
         / _ pos:position!() "i64" { ExprType::I64(CodeRef::new(pos, code_ctx)) }
         / _ pos:position!() "&[" ty:type_label() "]" { ExprType::Array(CodeRef::new(pos, code_ctx), Box::new(ty), ArraySizedExpr::Unsized) }
+        / _ pos:position!() "[" ty:type_label() "]" { ExprType::Array(CodeRef::new(pos, code_ctx), Box::new(ty), ArraySizedExpr::Slice) }
         / _ pos:position!() "&" { ExprType::Address(CodeRef::new(pos, code_ctx)) }
         / _ pos:position!() "bool" { ExprType::Bool(CodeRef::new(pos, code_ctx)) }
         / _ pos:position!() n:$(identifier() "::" (type_label() ** "::")) { ExprType::Struct(CodeRef::new(pos, code_ctx), Box::new(n.to_string())) }
@@ -833,9 +872,21 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
 
     rule unary_op() -> Expr
         //TODO e:unary() "[" idx:expression() "]" is causing a severe performance regression vs using i:identifier() "[" idx:expression() "]"
-        = _ pos:position!() e:unary() "[" idx:expression() "]" { Expr::ArrayAccess(CodeRef::new(pos, code_ctx), Box::new(e), Box::new(idx)) }
+        = _ pos:position!() e:unary() "[" r:range() "]" { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Slice(r), Box::new(e)) }
+        / _ pos:position!() e:unary() "[" idx:expression() "]" { Expr::ArrayAccess(CodeRef::new(pos, code_ctx), Box::new(e), Box::new(idx)) }
         / _ pos:position!() "!" e:unary() { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Not, Box::new(e)) }
         / _ pos:position!() "-" e:unary() { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Negative, Box::new(e)) }
+
+    rule range() -> SarusRange
+        = _ se:expression()? _ ".." _ ee:expression()? _ {SarusRange{start: if let Some(se) = se {Some(Box::new(se))} else {None},
+                                                                     end: if let Some(ee) = ee {Some(Box::new(ee))} else {None}}}
+        //TODO add runtime range with _ se:expression() _ ".." _ ee:expression() _
+        //This range should probably be a full on type, where this would return a Expr
+        //and the expression type is like range {start: i64, end: i64, end_inclusive: bool, start_is_none: bool, end_is_none: bool}
+        //The indexing could be done with either a single i64 or the range type
+        //note that building this range struct may be slower than making the range
+        //a compile time thing where start and end are just expressions. The downside
+        //with this would be that it is not a value that can be passed around
 
     rule unary() -> Expr
         //Having a _ before the () breaks in this case:
@@ -846,15 +897,18 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         }
         / _ pos:position!() i:identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" { Expr::NewStruct(CodeRef::new(pos, code_ctx), i, args) }
         / _ pos:position!() i:identifier() { Expr::Identifier(CodeRef::new(pos, code_ctx), i) }
-        / _ pos:position!() "(" _ e:expression() _ ")" { Expr::Parentheses(CodeRef::new(pos, code_ctx), Box::new(e)) }
+        / _ pos:position!() "(" e:expression() _ ")" { Expr::Parentheses(CodeRef::new(pos, code_ctx), Box::new(e)) }
         / _ pos:position!() "\"" body:$[^'"']* "\"" { Expr::LiteralString(CodeRef::new(pos, code_ctx), body.join("")) }
-        / _ pos:position!() "[" _ "\"" repstr:$[^'\"']* "\"" _ ";" _ len:$(['0'..='9']+) _ "]" {
+        / _ pos:position!() "[" "\"" repstr:$[^'\"']* "\"" _ ";" _ len:$(['0'..='9']+) _ "]" {
             //Temp solution for creating empty strings
             Expr::LiteralString(CodeRef::new(pos, code_ctx), repstr.join("").repeat( len.parse().unwrap()))
         } //[" "; 10]
-        / _ pos:position!() "[" _  e:expression()  _ ";" _ len:$(['0'..='9']+) _ "]" {
-
-            Expr::LiteralArray(CodeRef::new(pos, code_ctx), Box::new(e), len.parse::<usize>().unwrap())
+        / _ pos:position!() "[" e:expression()  _ ";" _ len:$(['0'..='9']+) _ "]" {
+            Expr::LiteralArray(CodeRef::new(pos, code_ctx), vec![e], len.parse::<usize>().unwrap())
+        }
+        / _ pos:position!() "[" exprs:(e:expression() ** comma() {e}) _ "]" {
+            let len = exprs.len();
+            Expr::LiteralArray(CodeRef::new(pos, code_ctx), exprs, len)
         }
         / l:literal() { l }
 

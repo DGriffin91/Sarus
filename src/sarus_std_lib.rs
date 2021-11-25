@@ -1,40 +1,18 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::CStr;
 
-use cranelift::frontend::FunctionBuilder;
-use cranelift::prelude::{types, InstBuilder};
-use cranelift_jit::JITBuilder;
-use tracing::trace;
-
-use crate::jit::{ArraySized, SValue, StructDef};
-use crate::validator::{address_t, bool_t, f32_t, i64_t, ArraySizedExpr, ExprType};
+use crate::frontend::Expr;
+use crate::function_translator::SVariable;
+use crate::jit::{ArraySized, Env, SValue, StructDef};
+use crate::validator::{address_t, bool_t, f32_t, i64_t, ArraySizedExpr, ExprType, TypeError};
 use crate::{
     decl,
     frontend::{Arg, CodeRef, Declaration, Function},
 };
-use crate::{hashmap, make_decl, parse};
-
-const STD_1ARG_FF: [&str; 6] = [
-    "f32.ceil", // built in std
-    "f32.floor",
-    "f32.trunc",
-    "f32.fract",
-    "f32.abs",
-    "f32.round",
-];
-const STD_1ARG_IF: [&str; 1] = [
-    "i64.f32", // built in std
-];
-const STD_1ARG_FI: [&str; 1] = [
-    "f32.i64", // built in std
-];
-
-const STD_2ARG_FF: [&str; 2] = [
-    "f32.min", "f32.max", // built in std
-];
-const STD_2ARG_II: [&str; 2] = [
-    "i64.min", "i64.max", // built in std
-];
+use crate::{hashmap, make_decl};
+use cranelift::frontend::FunctionBuilder;
+use cranelift::prelude::{types, InstBuilder};
+use cranelift_jit::JITBuilder;
 
 extern "C" fn f32_print(x: f32) {
     print!("{}", x);
@@ -172,23 +150,23 @@ pub fn append_std_math(
 #[rustfmt::skip]
 pub fn append_std(prog: &mut Vec<Declaration>, jit_builder: &mut JITBuilder) {
     let jb = jit_builder;
-    for n in STD_1ARG_FF {
+    for n in ["f32.ceil", "f32.floor", "f32.trunc", "f32.fract", "f32.abs", "f32.round"] {
         prog.push(make_decl(n, vec![("x", f32_t())], vec![("y", f32_t())]));
     }
-    for n in STD_1ARG_FI {
+    for n in ["f32.i64"] {
         prog.push(make_decl(n, vec![("x", f32_t())], vec![("y", i64_t())]));
     }
-    for n in STD_1ARG_IF {
+    for n in ["i64.f32"] {
         prog.push(make_decl(n, vec![("x", i64_t())], vec![("y", f32_t())]));
     }
-    for n in STD_2ARG_FF {
+    for n in ["f32.min", "f32.max"] {
         prog.push(make_decl(
             n,
             vec![("x", f32_t()), ("y", f32_t())],
             vec![("z", f32_t())],
         ));
     }
-    for n in STD_2ARG_II {
+    for n in ["i64.min", "i64.max"] {
         prog.push(make_decl(
             n,
             vec![("x", i64_t()), ("y", i64_t())],
@@ -216,7 +194,166 @@ pub fn append_std(prog: &mut Vec<Declaration>, jit_builder: &mut JITBuilder) {
     
     prog.push(make_decl("src_line", vec![], vec![("line", i64_t())]));
 
-    append_struct_macros(prog);
+}
+
+pub(crate) fn check_core_generics(fn_name: &str, impl_val: Option<SValue>) -> bool {
+    if HashSet::from(["push", "pop", "len", "cap", "append"]).contains(fn_name) {
+        if let Some(impl_val) = &impl_val {
+            if let SValue::Array(_sval, ArraySized::Slice) = impl_val {
+                return true;
+            }
+        }
+    }
+    if fn_name == "len" {
+        if let Some(impl_val) = &impl_val {
+            if let SValue::Array(_sval, ArraySized::Fixed(..)) = impl_val {
+                return true;
+            }
+        }
+    }
+    HashSet::from(["unsized"]).contains(fn_name)
+}
+
+pub(crate) fn validate_core_generics(
+    fn_name: &str,
+    args: &Vec<Expr>,
+    code_ref: &CodeRef,
+    lhs_val: &Option<ExprType>,
+    env: &Env,
+    variables: &HashMap<String, SVariable>,
+) -> Result<Option<ExprType>, TypeError> {
+    if fn_name == "push" {
+        if let Some(lhs_val) = lhs_val {
+            if let ExprType::Array(code_ref, expr_type, ArraySizedExpr::Slice) = lhs_val {
+                if args.len() != 1 {
+                    return Err(TypeError::TupleLengthMismatch {
+                        c: code_ref.s(&env.file_idx),
+                        actual: args.len(),
+                        expected: 1,
+                    });
+                }
+                let targ = ExprType::of(&args[0], env, fn_name, variables)?;
+                if **expr_type != targ {
+                    return Err(TypeError::TypeMismatchSpecific {
+                                    c: code_ref.s(&env.file_idx),
+                                    s: format!("function {} expected parameter {} to be of type {} but type {} was found", fn_name, 1, expr_type , targ)
+                                });
+                }
+                return Ok(Some(ExprType::Void(*code_ref)));
+            }
+        }
+    }
+    if fn_name == "pop" {
+        if let Some(lhs_val) = lhs_val {
+            if let ExprType::Array(code_ref, expr_type, ArraySizedExpr::Slice) = lhs_val {
+                if args.len() != 0 {
+                    return Err(TypeError::TupleLengthMismatch {
+                        c: code_ref.s(&env.file_idx),
+                        actual: args.len(),
+                        expected: 0,
+                    });
+                }
+                return Ok(Some(*expr_type.clone()));
+            }
+        }
+    }
+    if fn_name == "len" {
+        if let Some(lhs_val) = lhs_val {
+            if let ExprType::Array(
+                code_ref,
+                _expr_type,
+                ArraySizedExpr::Slice | ArraySizedExpr::Fixed(..),
+            ) = lhs_val
+            {
+                if args.len() != 0 {
+                    return Err(TypeError::TupleLengthMismatch {
+                        c: code_ref.s(&env.file_idx),
+                        actual: args.len(),
+                        expected: 0,
+                    });
+                }
+                return Ok(Some(ExprType::I64(*code_ref)));
+            }
+        }
+    }
+    if fn_name == "cap" {
+        if let Some(lhs_val) = lhs_val {
+            if let ExprType::Array(code_ref, _expr_type, ArraySizedExpr::Slice) = lhs_val {
+                if args.len() != 0 {
+                    return Err(TypeError::TupleLengthMismatch {
+                        c: code_ref.s(&env.file_idx),
+                        actual: args.len(),
+                        expected: 0,
+                    });
+                }
+                return Ok(Some(ExprType::I64(*code_ref)));
+            }
+        }
+    }
+    if fn_name == "append" {
+        if let Some(lhs_val) = lhs_val {
+            if let ExprType::Array(code_ref, expr_type, ArraySizedExpr::Slice) = lhs_val {
+                if args.len() != 1 {
+                    return Err(TypeError::TupleLengthMismatch {
+                        c: code_ref.s(&env.file_idx),
+                        actual: args.len(),
+                        expected: 1,
+                    });
+                }
+                let targ = ExprType::of(&args[0], env, fn_name, variables)?;
+                if let ExprType::Array(code_ref, ref arg_expr_type, ArraySizedExpr::Fixed(_len)) =
+                    targ
+                {
+                    if *expr_type != *arg_expr_type {
+                        return Err(TypeError::TypeMismatchSpecific {
+                                        c: code_ref.s(&env.file_idx),
+                                        s: format!("function {} expected parameter {} to be slice or fixed array of type {} but type {} was found", fn_name, 1, lhs_val, targ)
+                                    });
+                    }
+                    return Ok(Some(ExprType::Void(code_ref)));
+                }
+                if *lhs_val != targ {
+                    return Err(TypeError::TypeMismatchSpecific {
+                                    c: code_ref.s(&env.file_idx),
+                                    s: format!("function {} expected parameter {} to be slice or fixed array of type {} but type {} was found", fn_name, 1, lhs_val, targ)
+                                });
+                }
+                return Ok(Some(ExprType::Void(*code_ref)));
+            }
+        }
+    }
+    if fn_name == "unsized" {
+        if args.len() != 0 {
+            return Err(TypeError::TupleLengthMismatch {
+                c: code_ref.s(&env.file_idx),
+                actual: args.len(),
+                expected: 0,
+            });
+        }
+
+        if let Some(lhs_val) = lhs_val {
+            return match lhs_val {
+                ExprType::Array(c, expr, _) => Ok(Some(ExprType::Array(
+                    *c,
+                    expr.clone(),
+                    ArraySizedExpr::Unsized,
+                ))),
+                ExprType::Address(c) => Ok(Some(ExprType::Array(
+                    *c,
+                    Box::new(lhs_val.clone()),
+                    ArraySizedExpr::Unsized,
+                ))),
+                sv => Err(TypeError::TypeMismatchSpecific {
+                    c: code_ref.s(&env.file_idx),
+                    s: format!("function unsized does not support {}", sv),
+                }),
+            };
+        } else {
+            Ok(None)
+        }
+    } else {
+        Ok(None)
+    }
 }
 
 pub(crate) fn translate_std(
@@ -322,78 +459,4 @@ pub fn get_constants(struct_map: &HashMap<String, StructDef>) -> HashMap<String,
         constants.insert(format!("{}::size", name), SConstant::I64(def.size as i64));
     }
     constants
-}
-
-pub fn append_struct_macros(prog: &mut Vec<Declaration>) {
-    //Will probably change significantly or be removed
-    let mut new_decls = Vec::new();
-    for decl in prog.iter() {
-        if let Declaration::StructMacro(name, ty) = decl {
-            if name == "Slice" {
-                if let ExprType::Array(code_ref, expr_type, size_type) = &**ty {
-                    let code = format!(
-                        r#"
-struct Slice::{1} {{
-    arr: {0},
-    len: i64,
-}}
-inline fn get(self: Slice::{1}, i: i64) -> (r: {1}) {{
-    if i >= 0 && i < self.len {{
-        r = self.arr[i]
-    }} else {{
-        panic("index out of bounds")
-    }}
-}}
-inline fn set(self: Slice::{1}, i: i64, val: {1}) -> () {{
-    if i >= 0 && i < self.len {{
-        self.arr[i] = val
-    }} else {{
-        panic("index out of bounds")
-    }}
-}}
-"#,
-                        ty, expr_type
-                    );
-                    trace!("{}: {}", code_ref, &code);
-                    new_decls.append(&mut parse(&code).unwrap()); //TODO handle errors
-
-                    let code = match size_type {
-                        ArraySizedExpr::Unsized => {
-                            format!(
-                                r#"
-inline fn into_slice(self: {0}, len: i64) -> (r: Slice::{1}) {{
-    r = Slice::{1} {{
-        arr: self,
-        len: len,
-    }}
-}}
-"#,
-                                ty, expr_type
-                            )
-                        }
-                        ArraySizedExpr::Sized => todo!(),
-                        ArraySizedExpr::Fixed(len) => {
-                            format!(
-                                r#"
-inline fn into_slice(self: {0}) -> (r: Slice::{1}) {{
-    r = Slice::{1} {{
-        arr: self,
-        len: {2},
-    }}
-}}
-"#,
-                                ty, expr_type, len
-                            )
-                        }
-                    };
-                    trace!("{}: {}", code_ref, &code);
-                    new_decls.append(&mut parse(&code).unwrap());
-                //TODO handle errors
-                } else {
-                    panic!("Slice for type {} is unsupported", ty)
-                }
-            }
-        }
-    }
-    prog.append(&mut new_decls);
 }

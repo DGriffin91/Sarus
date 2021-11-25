@@ -1,6 +1,7 @@
 use crate::frontend::*;
 use crate::jit::Env;
 use crate::sarus_std_lib;
+use crate::sarus_std_lib::check_core_generics;
 pub use crate::structs::*;
 use crate::validator::ArraySizedExpr;
 use crate::validator::ExprType;
@@ -24,6 +25,7 @@ pub struct FunctionTranslator<'a> {
     pub module: &'a mut JITModule,
     pub env: Env,
     pub ptr_ty: types::Type,
+    pub ptr_width: i64,
 
     // This is a vec where inline calls will push hashmaps of vars as they
     // are called, and pop off the end when they are done variables.last()
@@ -74,12 +76,8 @@ impl<'a> FunctionTranslator<'a> {
 
         //dbg!(&expr);
         let v = match expr {
-            Expr::LiteralFloat(_code_ref, literal) => {
-                Ok(SValue::F32(self.builder.ins().f32const::<f32>(*literal)))
-            }
-            Expr::LiteralInt(_code_ref, literal) => Ok(SValue::I64(
-                self.builder.ins().iconst::<i64>(types::I64, *literal),
-            )),
+            Expr::LiteralFloat(_code_ref, literal) => Ok(SValue::F32(self.f32const(*literal))),
+            Expr::LiteralInt(_code_ref, literal) => Ok(SValue::I64(self.i64const(*literal))),
             Expr::LiteralString(_code_ref, literal) => self.translate_string(literal),
             Expr::LiteralArray(code_ref, item, len) => {
                 self.translate_array_create(code_ref, item, *len)
@@ -87,7 +85,7 @@ impl<'a> FunctionTranslator<'a> {
             Expr::Binop(_code_ref, op, lhs, rhs) => {
                 Ok(self.translate_binop(*op, lhs, rhs, false)?.0)
             }
-            Expr::Unaryop(_code_ref, op, lhs) => self.translate_unaryop(*op, lhs),
+            Expr::Unaryop(_code_ref, op, lhs) => self.translate_unaryop(op.clone(), lhs),
             Expr::Compare(_code_ref, cmp, lhs, rhs) => self.translate_cmp(*cmp, lhs, rhs),
             Expr::Call(code_ref, name, args, is_macro) => {
                 self.translate_call(code_ref, name, args, None, *is_macro)
@@ -144,9 +142,7 @@ impl<'a> FunctionTranslator<'a> {
                 Ok(SValue::Void)
             }
             Expr::Block(_code_ref, b) => b.iter().map(|e| self.translate_expr(e)).last().unwrap(),
-            Expr::LiteralBool(_code_ref, b) => {
-                Ok(SValue::Bool(self.builder.ins().bconst(types::B1, *b)))
-            }
+            Expr::LiteralBool(_code_ref, b) => Ok(SValue::Bool(self.bconst(*b))),
             Expr::Parentheses(_code_ref, expr) => self.translate_expr(expr),
             Expr::ArrayAccess(code_ref, expr, idx_expr) => {
                 let idx_val = self.idx_expr_to_val(idx_expr)?;
@@ -192,7 +188,7 @@ impl<'a> FunctionTranslator<'a> {
 
         //TODO Is this really how this is done?
         for (i, c) in bytes.iter().enumerate() {
-            let v = self.builder.ins().iconst::<i64>(types::I64, *c as i64);
+            let v = self.i64const(*c as i64);
             self.builder.ins().istore8(
                 MemFlags::new(),
                 v,
@@ -206,60 +202,60 @@ impl<'a> FunctionTranslator<'a> {
     fn translate_array_create(
         &mut self,
         code_ref: &CodeRef,
-        item_expr: &Expr,
+        item_exprs: &Vec<Expr>,
         len: usize,
     ) -> anyhow::Result<SValue> {
         trace!(
-            "{}: translate_array_create item_expr {} len {}",
+            "{}: translate_array_create item_exprs {:?} len {}",
             code_ref,
-            item_expr,
+            item_exprs,
             len,
         );
-        let item_value = self.translate_expr(item_expr)?;
+        let mut item_iter = item_exprs.iter();
 
-        let item_expr_type = item_value.expr_type(code_ref)?;
+        let first_item = item_iter.next().unwrap();
+        let first_item_value = self.translate_expr(first_item)?;
 
-        let item_width = match item_expr_type.width(self.ptr_ty, &self.env.struct_map) {
+        let first_item_type = first_item_value.expr_type(code_ref)?;
+
+        let item_width = match first_item_type.width(self.ptr_ty, &self.env.struct_map) {
             Some(item_width) => item_width,
             None => anyhow::bail!(
                 "{} expression {} has no size",
                 code_ref.s(&self.env.file_idx),
-                item_expr
+                first_item
             ),
         };
 
         let stack_slot_address = self.alloc((item_width * len) as usize);
 
-        let len_val = self.builder.ins().iconst(types::I64, len as i64);
+        let len_val = self.i64const(len as i64);
 
         //if len > 16, fill using while loop
-        if len > 16 {
+        if len > 16 && item_exprs.len() == 1 {
             let header_block = self.builder.create_block();
             let body_block = self.builder.create_block();
             let exit_block = self.builder.create_block();
 
-            let inc_val = self.builder.ins().iconst(types::I64, 1);
+            let inc_val = self.i64const(1);
 
-            let i_val = self.builder.ins().iconst(types::I64, 0);
+            let i_val = self.i64const(0);
             let i_var = Variable::new(self.var_index);
             self.var_index += 1;
             self.builder.declare_var(i_var, types::I64);
             self.builder.def_var(i_var, i_val);
 
-            let len_val = self.builder.ins().iconst(types::I64, len as i64);
-            let width_val = self.builder.ins().iconst(types::I64, item_width as i64);
+            let len_val = self.i64const(len as i64);
+            let width_val = self.i64const(item_width as i64);
 
-            let set_val = item_value.inner("translate_array_create")?;
+            let set_val = first_item_value.inner("translate_array_create")?;
 
             self.builder.ins().jump(header_block, &[]);
             self.builder.switch_to_block(header_block);
 
             let i_val = self.builder.use_var(i_var);
 
-            let b_condition_value = self
-                .builder
-                .ins()
-                .icmp(IntCC::SignedLessThan, i_val, len_val);
+            let b_condition_value = self.icmp(Cmp::Lt, i_val, len_val);
 
             self.builder.ins().brz(b_condition_value, exit_block, &[]);
             self.builder.ins().jump(body_block, &[]);
@@ -269,40 +265,25 @@ impl<'a> FunctionTranslator<'a> {
 
             let i_val = self.builder.use_var(i_var);
 
-            let offset_val = self.builder.ins().imul(i_val, width_val);
-            let stack_slot_address_abs_pos =
-                self.builder.ins().iadd(stack_slot_address, offset_val);
+            let offset_val = self.imul(i_val, width_val);
+            let stack_slot_address_abs_pos = self.iadd(stack_slot_address, offset_val);
 
             //Essentially same as below
-            match item_expr_type {
+            match first_item_type {
                 ExprType::Bool(_) | ExprType::F32(_) | ExprType::I64(_) | ExprType::Address(_) => {
-                    self.builder.ins().store(
-                        MemFlags::new(),
-                        set_val,
-                        stack_slot_address_abs_pos,
-                        Offset32::new(0),
-                    );
+                    self.store(set_val, stack_slot_address_abs_pos, 0);
                 }
                 ExprType::Struct(_code_ref, _) | ExprType::Array(_code_ref, _, _) => {
-                    self.builder.emit_small_memory_copy(
-                        self.module.target_config(),
-                        stack_slot_address_abs_pos,
-                        set_val,
-                        item_width as u64,
-                        1,
-                        1,
-                        true,
-                        MemFlags::new(),
-                    );
+                    self.mem_copy(set_val, stack_slot_address_abs_pos, item_width);
                 }
                 ExprType::Tuple(_, _) | ExprType::Void(_) => anyhow::bail!(
                     "{} cannot assign expression {} to array",
                     code_ref,
-                    item_expr
+                    first_item
                 ),
             }
 
-            let i_val = self.builder.ins().iadd(i_val, inc_val);
+            let i_val = self.iadd(i_val, inc_val);
             self.builder.def_var(i_var, i_val);
 
             self.builder.ins().jump(header_block, &[]);
@@ -313,45 +294,36 @@ impl<'a> FunctionTranslator<'a> {
             self.builder.seal_block(exit_block);
         } else {
             for i in 0..len {
-                let val = item_value.inner("translate_array_create")?;
-                match item_expr_type {
+                let val = if item_exprs.len() == 1 || i == 0 {
+                    first_item_value.inner("translate_array_create")?
+                } else {
+                    let next_item = item_iter.next().unwrap();
+                    self.translate_expr(next_item)?
+                        .inner("translate_array_create")?
+                };
+                match first_item_type {
                     ExprType::Bool(_)
                     | ExprType::F32(_)
                     | ExprType::I64(_)
                     | ExprType::Address(_) => {
-                        self.builder.ins().store(
-                            MemFlags::new(),
-                            val,
-                            stack_slot_address,
-                            Offset32::new((i * item_width) as i32),
-                        );
+                        self.store(val, stack_slot_address, (i * item_width) as i64);
                     }
                     ExprType::Struct(code_ref, _) | ExprType::Array(code_ref, _, _) => {
                         let offset = i * item_width;
-                        let offset_v = self.builder.ins().iconst(self.ptr_ty, offset as i64);
-                        let stack_slot_offset =
-                            self.builder.ins().iadd(stack_slot_address, offset_v);
+                        let offset_v = self.i64const(offset as i64);
+                        let stack_slot_offset = self.iadd(stack_slot_address, offset_v);
                         trace!(
                             "{}: emit_small_memory_copy size {} offset {}",
                             code_ref,
                             item_width,
                             offset
                         );
-                        self.builder.emit_small_memory_copy(
-                            self.module.target_config(),
-                            stack_slot_offset,
-                            val,
-                            item_width as u64,
-                            1,
-                            1,
-                            true,
-                            MemFlags::new(),
-                        );
+                        self.mem_copy(val, stack_slot_offset, item_width);
                     }
                     ExprType::Tuple(_, _) | ExprType::Void(_) => anyhow::bail!(
                         "{} cannot assign expression {} to array",
                         code_ref,
-                        item_expr
+                        first_item
                     ),
                 }
             }
@@ -361,7 +333,7 @@ impl<'a> FunctionTranslator<'a> {
         let ret_val = SValue::Array(
             Box::new(SValue::from(
                 &mut self.builder,
-                &item_value.expr_type(code_ref)?,
+                &first_item_type,
                 stack_slot_address,
             )?),
             ArraySized::Fixed(len_sval, len),
@@ -578,18 +550,19 @@ impl<'a> FunctionTranslator<'a> {
         }
     }
 
-    fn translate_unaryop(&mut self, op: Unaryop, lhs: &Expr) -> anyhow::Result<SValue> {
-        let lhs = self.translate_expr(lhs)?;
+    fn translate_unaryop(&mut self, op: Unaryop, lhs_expr: &Expr) -> anyhow::Result<SValue> {
+        let code_ref = lhs_expr.get_code_ref();
+        let lhs = self.translate_expr(lhs_expr)?;
 
-        Ok(match op {
+        Ok(match &op {
             Unaryop::Not => match lhs {
                 SValue::Bool(lhs) => {
                     //TODO I'm sure this has absolutely terrible performance
                     //thread 'unary_not' panicked at 'not implemented: bool bnot', [...]\cranelift-codegen-0.76.0\src\isa\x64\lower.rs:2375:17
                     //SValue::Bool(self.builder.ins().bnot(lhs))
-                    let i_bool = self.builder.ins().bint(types::I64, lhs);
-                    let false_const = self.builder.ins().iconst(types::I64, 0);
-                    SValue::Bool(self.builder.ins().icmp(IntCC::Equal, i_bool, false_const))
+                    let i_bool = self.bint(lhs);
+                    let false_const = self.i64const(0);
+                    SValue::Bool(self.icmp(Cmp::Eq, i_bool, false_const))
                 }
                 SValue::Void
                 | SValue::F32(_)
@@ -603,12 +576,297 @@ impl<'a> FunctionTranslator<'a> {
                 }
             },
             Unaryop::Negative => match lhs {
-                SValue::F32(lhs) => SValue::F32(self.builder.ins().fneg(lhs)),
-                SValue::I64(lhs) => SValue::I64(self.builder.ins().ineg(lhs)),
+                SValue::F32(lhs) => SValue::F32(self.fneg(lhs)),
+                SValue::I64(lhs) => SValue::I64(self.ineg(lhs)),
                 SValue::Void
                 | SValue::Bool(_)
                 | SValue::Unknown(_)
                 | SValue::Array(_, _)
+                | SValue::Address(_)
+                | SValue::Struct(_, _)
+                | SValue::Tuple(_) => {
+                    anyhow::bail!("operation not supported: {} {:?}", op, lhs)
+                }
+            },
+            Unaryop::Slice(range) => match lhs {
+                SValue::Array(array_start_sval, size_type) => match size_type {
+                    ArraySized::Unsized => {
+                        //slice is (address of array start, length, capacity)
+                        let slice_start = self.alloc((self.ptr_width + 2 * 8) as usize);
+
+                        let start_v = if let Some(start) = &range.start {
+                            if let SValue::I64(v) = self.translate_expr(&start)? {
+                                let zero_v = self.i64const(0);
+                                let b_under = self.icmp(Cmp::Lt, v, zero_v);
+                                self.call_panic_if(
+                                    b_under,
+                                    &format!(
+                                        "{} index out of bounds",
+                                        code_ref.s(&self.env.file_idx)
+                                    ),
+                                )?;
+                                Some(v)
+                            } else {
+                                anyhow::bail!("{} only i64 type supported for indexing", code_ref)
+                            }
+                        } else {
+                            None
+                        };
+
+                        let end_v = if let Some(end) = &range.end {
+                            if let SValue::I64(v) = self.translate_expr(&end)? {
+                                v
+                            } else {
+                                anyhow::bail!("{} only i64 type supported for indexing", code_ref)
+                            }
+                        } else {
+                            anyhow::bail!(
+                                "{} slice end must be specified for unsized array",
+                                code_ref
+                            )
+                        };
+
+                        if range.start.is_some() || range.end.is_some() {
+                            let st_v = start_v.unwrap_or(self.i64const(0));
+                            let b_over = self.icmp(Cmp::Ge, st_v, end_v);
+                            self.call_panic_if(
+                                b_over,
+                                &format!("{} index out of bounds", code_ref.s(&self.env.file_idx)),
+                            )?;
+                        }
+
+                        let array_start_address =
+                            array_start_sval.inner("translate_unaryop slice")?;
+
+                        let (array_start_address_with_offset, len_val, cap_val) =
+                            if let Some(start_v) = start_v {
+                                let item_width = array_start_sval
+                                    .expr_type(code_ref)?
+                                    .width(self.ptr_ty, &self.env.struct_map)
+                                    .unwrap();
+                                let item_width_val = self.i64const(item_width as i64);
+                                let item_offset = self.imul(item_width_val, start_v);
+                                let len_val = self.isub(end_v, start_v);
+                                (
+                                    self.iadd(item_offset, array_start_address),
+                                    len_val,
+                                    len_val,
+                                )
+                            } else {
+                                (array_start_address, end_v, end_v)
+                            };
+
+                        self.store(array_start_address_with_offset, slice_start, 0);
+                        self.store(len_val, slice_start, self.ptr_width);
+                        self.store(cap_val, slice_start, self.ptr_width + 8);
+
+                        let res_sval = SValue::Array(
+                            Box::new(array_start_sval.replace_value(slice_start)?),
+                            ArraySized::Slice,
+                        );
+                        trace!(
+                            "{} creating slice &{} from unsized array {} &{} with range {}, &{:?} to &{}",
+                            code_ref,
+                            slice_start,
+                            lhs_expr,
+                            array_start_sval,
+                            range,
+                            start_v,
+                            end_v
+                        );
+                        res_sval
+                    }
+                    ArraySized::Slice => {
+                        //slice is (address of array start, length, capacity)
+                        let new_slice_start = self.alloc((self.ptr_width + 2 * 8) as usize);
+
+                        let orig_slice_address =
+                            array_start_sval.inner("translate_unaryop slice")?;
+
+                        let array_start_address = self.ptr_load(orig_slice_address, 0);
+                        let orig_slice_len = self.i64load(orig_slice_address, self.ptr_width);
+                        let orig_slice_cap = self.i64load(orig_slice_address, self.ptr_width + 8);
+
+                        let start_v = if let Some(start) = &range.start {
+                            if let SValue::I64(v) = self.translate_expr(&start)? {
+                                let zero_v = self.i64const(0);
+                                let b_under = self.icmp(Cmp::Lt, v, zero_v);
+                                self.call_panic_if(
+                                    b_under,
+                                    &format!(
+                                        "{} index out of bounds",
+                                        code_ref.s(&self.env.file_idx)
+                                    ),
+                                )?;
+                                Some(v)
+                            } else {
+                                anyhow::bail!("{} only i64 type supported for indexing", code_ref)
+                            }
+                        } else {
+                            None
+                        };
+
+                        let end_v = if let Some(end) = &range.end {
+                            if let SValue::I64(v) = self.translate_expr(&end)? {
+                                let b_over = self.icmp(Cmp::Gt, v, orig_slice_cap);
+                                self.call_panic_if(
+                                    b_over,
+                                    &format!(
+                                        "{} index out of bounds",
+                                        code_ref.s(&self.env.file_idx)
+                                    ),
+                                )?;
+                                v
+                            } else {
+                                anyhow::bail!("{} only i64 type supported for indexing", code_ref)
+                            }
+                        } else {
+                            orig_slice_len
+                        };
+
+                        if range.start.is_some() || range.end.is_some() {
+                            let st_v = start_v.unwrap_or(self.i64const(0));
+                            let b_over = self.icmp(Cmp::Gt, st_v, end_v);
+                            self.call_panic_if(
+                                b_over,
+                                &format!("{} index out of bounds", code_ref.s(&self.env.file_idx)),
+                            )?;
+                        }
+
+                        let (array_start_address_with_offset, len_val, cap_val) =
+                            if let Some(start_v) = start_v {
+                                let item_width = array_start_sval
+                                    .expr_type(code_ref)?
+                                    .width(self.ptr_ty, &self.env.struct_map)
+                                    .unwrap();
+                                let item_width_val = self.i64const(item_width as i64);
+                                let item_offset = self.imul(item_width_val, start_v);
+                                (
+                                    self.iadd(item_offset, array_start_address),
+                                    self.isub(end_v, start_v),
+                                    self.isub(orig_slice_cap, start_v),
+                                )
+                            } else {
+                                (array_start_address, end_v, orig_slice_len)
+                            };
+
+                        self.store(array_start_address_with_offset, new_slice_start, 0);
+                        self.store(len_val, new_slice_start, self.ptr_width);
+                        self.store(cap_val, new_slice_start, self.ptr_width + 8);
+
+                        let res_sval = SValue::Array(
+                            Box::new(array_start_sval.replace_value(new_slice_start)?),
+                            ArraySized::Slice,
+                        );
+                        trace!(
+                            "{} creating slice &{} from array {} &{} with range {}, &{:?} to &{}",
+                            code_ref,
+                            new_slice_start,
+                            lhs_expr,
+                            array_start_sval,
+                            range,
+                            start_v,
+                            end_v
+                        );
+                        res_sval
+                    }
+                    ArraySized::Fixed(_sval_len, len) => {
+                        //slice is (address of array start, length, capacity)
+                        let new_slice_start = self.alloc((self.ptr_width + 2 * 8) as usize);
+                        let arr_len_val = self.i64const(len as i64);
+
+                        let start_v = if let Some(start) = &range.start {
+                            if let SValue::I64(v) = self.translate_expr(&start)? {
+                                let zero_v = self.i64const(0);
+                                let b_under = self.icmp(Cmp::Lt, v, zero_v);
+                                self.call_panic_if(
+                                    b_under,
+                                    &format!(
+                                        "{} index out of bounds",
+                                        code_ref.s(&self.env.file_idx)
+                                    ),
+                                )?;
+                                Some(v)
+                            } else {
+                                anyhow::bail!("{} only i64 type supported for indexing", code_ref)
+                            }
+                        } else {
+                            None
+                        };
+
+                        let end_v = if let Some(end) = &range.end {
+                            if let SValue::I64(v) = self.translate_expr(&end)? {
+                                let b_over = self.icmp(Cmp::Gt, v, arr_len_val);
+                                self.call_panic_if(
+                                    b_over,
+                                    &format!(
+                                        "{} index out of bounds",
+                                        code_ref.s(&self.env.file_idx)
+                                    ),
+                                )?;
+                                v
+                            } else {
+                                anyhow::bail!("{} only i64 type supported for indexing", code_ref)
+                            }
+                        } else {
+                            arr_len_val
+                        };
+
+                        if range.start.is_some() || range.end.is_some() {
+                            let st_v = start_v.unwrap_or(self.i64const(0));
+                            let b_over = self.icmp(Cmp::Gt, st_v, end_v);
+                            self.call_panic_if(
+                                b_over,
+                                &format!("{} index out of bounds", code_ref.s(&self.env.file_idx)),
+                            )?;
+                        }
+
+                        let array_start_address =
+                            array_start_sval.inner("translate_unaryop slice")?;
+
+                        let (array_start_address_with_offset, len_val, cap_val) =
+                            if let Some(start_v) = start_v {
+                                let item_width = array_start_sval
+                                    .expr_type(code_ref)?
+                                    .width(self.ptr_ty, &self.env.struct_map)
+                                    .unwrap();
+                                let item_width_val = self.i64const(item_width as i64);
+                                let item_offset = self.imul(item_width_val, start_v);
+                                (
+                                    self.iadd(item_offset, array_start_address),
+                                    self.isub(end_v, start_v),
+                                    self.isub(arr_len_val, start_v),
+                                )
+                            } else {
+                                (array_start_address, end_v, arr_len_val)
+                            };
+
+                        self.store(array_start_address_with_offset, new_slice_start, 0);
+                        self.store(len_val, new_slice_start, self.ptr_width);
+                        self.store(cap_val, new_slice_start, self.ptr_width + 8);
+
+                        let res_sval = SValue::Array(
+                            Box::new(array_start_sval.replace_value(new_slice_start)?),
+                            ArraySized::Slice,
+                        );
+                        trace!(
+                            "{} creating slice &{} from array {} &{} with range {}, &{:?} to &{}",
+                            code_ref,
+                            new_slice_start,
+                            lhs_expr,
+                            array_start_sval,
+                            range,
+                            start_v,
+                            end_v
+                        );
+                        res_sval
+                    }
+                },
+                SValue::F32(_)
+                | SValue::I64(_)
+                | SValue::Void
+                | SValue::Bool(_)
+                | SValue::Unknown(_)
                 | SValue::Address(_)
                 | SValue::Struct(_, _)
                 | SValue::Tuple(_) => {
@@ -620,10 +878,10 @@ impl<'a> FunctionTranslator<'a> {
 
     fn binop_float(&mut self, op: Binop, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
         Ok(match op {
-            Binop::Add => self.builder.ins().fadd(lhs, rhs),
-            Binop::Sub => self.builder.ins().fsub(lhs, rhs),
-            Binop::Mul => self.builder.ins().fmul(lhs, rhs),
-            Binop::Div => self.builder.ins().fdiv(lhs, rhs),
+            Binop::Add => self.fadd(lhs, rhs),
+            Binop::Sub => self.fsub(lhs, rhs),
+            Binop::Mul => self.fmul(lhs, rhs),
+            Binop::Div => self.fdiv(lhs, rhs),
             Binop::LogicalAnd | Binop::LogicalOr | Binop::DotAccess => {
                 anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs)
             }
@@ -632,10 +890,10 @@ impl<'a> FunctionTranslator<'a> {
 
     fn binop_int(&mut self, op: Binop, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
         Ok(match op {
-            Binop::Add => self.builder.ins().iadd(lhs, rhs),
-            Binop::Sub => self.builder.ins().isub(lhs, rhs),
-            Binop::Mul => self.builder.ins().imul(lhs, rhs),
-            Binop::Div => self.builder.ins().sdiv(lhs, rhs),
+            Binop::Add => self.iadd(lhs, rhs),
+            Binop::Sub => self.isub(lhs, rhs),
+            Binop::Mul => self.imul(lhs, rhs),
+            Binop::Div => self.sdiv(lhs, rhs),
             Binop::LogicalAnd | Binop::LogicalOr | Binop::DotAccess => {
                 anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs)
             }
@@ -644,8 +902,8 @@ impl<'a> FunctionTranslator<'a> {
 
     fn binop_bool(&mut self, op: Binop, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
         Ok(match op {
-            Binop::LogicalAnd => self.builder.ins().band(lhs, rhs),
-            Binop::LogicalOr => self.builder.ins().bor(lhs, rhs),
+            Binop::LogicalAnd => self.band(lhs, rhs),
+            Binop::LogicalOr => self.bor(lhs, rhs),
             _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs),
         })
     }
@@ -661,7 +919,7 @@ impl<'a> FunctionTranslator<'a> {
         // if a or b is a float, convert to other to a float
         match lhs {
             SValue::F32(a) => match rhs {
-                SValue::F32(b) => Ok(SValue::Bool(self.cmp_float(cmp, a, b))),
+                SValue::F32(b) => Ok(SValue::Bool(self.fcmp(cmp, a, b))),
                 _ => anyhow::bail!(
                     "{} compare not supported: {:?} {} {:?}",
                     lhs_expr.get_code_ref(),
@@ -671,7 +929,7 @@ impl<'a> FunctionTranslator<'a> {
                 ),
             },
             SValue::I64(a) => match rhs {
-                SValue::I64(b) => Ok(SValue::Bool(self.cmp_int(cmp, a, b))),
+                SValue::I64(b) => Ok(SValue::Bool(self.icmp(cmp, a, b))),
                 _ => anyhow::bail!(
                     "{} compare not supported: {:?} {} {:?}",
                     lhs_expr.get_code_ref(),
@@ -705,66 +963,6 @@ impl<'a> FunctionTranslator<'a> {
                 )
             }
         }
-    }
-
-    fn cmp_float(&mut self, cmp: Cmp, lhs: Value, rhs: Value) -> Value {
-        let icmp = match cmp {
-            Cmp::Eq => FloatCC::Equal,
-            Cmp::Ne => FloatCC::NotEqual,
-            Cmp::Lt => FloatCC::LessThan,
-            Cmp::Le => FloatCC::LessThanOrEqual,
-            Cmp::Gt => FloatCC::GreaterThan,
-            Cmp::Ge => FloatCC::GreaterThanOrEqual,
-        };
-        self.builder.ins().fcmp(icmp, lhs, rhs)
-    }
-
-    fn cmp_int(&mut self, cmp: Cmp, lhs: Value, rhs: Value) -> Value {
-        let icmp = match cmp {
-            Cmp::Eq => IntCC::Equal,
-            Cmp::Ne => IntCC::NotEqual,
-            Cmp::Lt => IntCC::SignedLessThan,
-            Cmp::Le => IntCC::SignedLessThanOrEqual,
-            Cmp::Gt => IntCC::SignedGreaterThan,
-            Cmp::Ge => IntCC::SignedGreaterThanOrEqual,
-        };
-        self.builder.ins().icmp(icmp, lhs, rhs)
-    }
-
-    fn cmp_bool(&mut self, cmp: Cmp, lhs: Value, rhs: Value) -> Value {
-        //TODO
-        //thread 'logical_operators' panicked at 'not implemented: bool bnot', [...]]\cranelift-codegen-0.76.0\src\isa\x64\lower.rs:2375:17
-        //match cmp {
-        //    Cmp::Eq => {
-        //        let x = self.builder.ins().bxor(lhs, rhs);
-        //        self.builder.ins().bnot(x)
-        //    }
-        //    Cmp::Ne => self.builder.ins().bxor(lhs, rhs),
-        //    Cmp::Lt => {
-        //        let x = self.builder.ins().bxor(lhs, rhs);
-        //        self.builder.ins().band_not(x, lhs)
-        //    }
-        //    Cmp::Le => {
-        //        //There's probably a faster way
-        //        let x = self.cmp_bool(Cmp::Eq, lhs, rhs);
-        //        let y = self.cmp_bool(Cmp::Lt, lhs, rhs);
-        //        self.builder.ins().bor(x, y)
-        //    }
-        //    Cmp::Gt => {
-        //        let x = self.builder.ins().bxor(lhs, rhs);
-        //        self.builder.ins().band_not(x, rhs)
-        //    }
-        //    Cmp::Ge => {
-        //        //There's probably a faster way
-        //        let x = self.cmp_bool(Cmp::Eq, lhs, rhs);
-        //        let y = self.cmp_bool(Cmp::Eq, lhs, rhs);
-        //        self.builder.ins().bor(x, y)
-        //    }
-        //}
-
-        let lhs = self.builder.ins().bint(types::I64, lhs);
-        let rhs = self.builder.ins().bint(types::I64, rhs);
-        self.cmp_int(cmp, lhs, rhs)
     }
 
     fn translate_assign(
@@ -828,59 +1026,76 @@ impl<'a> FunctionTranslator<'a> {
                                 implications for how aliasing works)
                                 */
                                 if let ExprType::Struct(code_ref, struct_name) = &arg.expr_type {
-                                    trace!(
-                                        "{} struct {} is arg {} of this fn {} copying onto memory at {} on assignment",
-                                        code_ref,
-                                        struct_name,
-                                        arg.name,
-                                        &self.func_stack.last().unwrap().name,
-                                        arg.name,
-                                    );
                                     //copy to struct that was passed in as parameter
                                     let struct_address = self.builder.use_var(dst_svar.inner());
-                                    copy_to_stack_slot(
-                                        self.module.target_config(),
-                                        &mut self.builder,
-                                        self.env.struct_map[&struct_name.to_string()].size,
-                                        src_sval.expect_struct(
-                                            &struct_name.to_string(),
-                                            &format!(
-                                                "{} translate_assign",
-                                                code_ref.s(&self.env.file_idx)
-                                            ),
-                                        )?,
+                                    trace!(
+                                        "{} struct {} is arg {} of {} copying &{} onto memory at {} &{} on assignment",
+                                        code_ref.s(&self.env.file_idx),
+                                        struct_name,
+                                        arg.name,
+                                        &self.func_stack.last().unwrap(),
+                                        src_sval,
+                                        arg.name,
                                         struct_address,
-                                        0,
+                                    );
+                                    let src_val = src_sval.expect_struct(
+                                        &struct_name.to_string(),
+                                        &format!(
+                                            "{} translate_assign",
+                                            code_ref.s(&self.env.file_idx)
+                                        ),
                                     )?;
+                                    let size = self.env.struct_map[&struct_name.to_string()].size;
+                                    self.mem_copy(src_val, struct_address, size);
                                     continue 'expression;
                                 } else if let ExprType::Array(code_ref, expr_type, size_type) =
                                     &arg.expr_type
                                 {
                                     match size_type {
                                         ArraySizedExpr::Unsized => (), //Use normal assignment below
-                                        ArraySizedExpr::Sized => todo!(),
-                                        ArraySizedExpr::Fixed(len) => {
+                                        //TODO only copy to arg slice if this is inlined and the scope here is included
+                                        ArraySizedExpr::Slice => {
+                                            //copy to slice that was passed in as parameter
+                                            let slice_address =
+                                                self.builder.use_var(dst_svar.inner());
+                                            let src_val = src_sval.inner("translate_assign")?;
                                             trace!(
-                                                "{} array {} is arg {} of this fn {} copying onto memory at {} on assignment",
-                                                code_ref,
-                                                expr_type,
-                                                arg.name,
-                                                &self.func_stack.last().unwrap(),
-                                                arg.name,
+                                                    "{} slice {} is arg {} of {} copying &{} onto memory at {} &{} on assignment",
+                                                    code_ref.s(&self.env.file_idx),
+                                                    expr_type,
+                                                    arg.name,
+                                                    &self.func_stack.last().unwrap(),
+                                                    src_val,
+                                                    arg.name,
+                                                    slice_address,
+                                                );
+                                            self.mem_copy(
+                                                src_val,
+                                                slice_address,
+                                                (self.ptr_width + 2 * 8) as usize,
                                             );
+                                            continue 'expression;
+                                        }
+                                        ArraySizedExpr::Fixed(len) => {
                                             //copy to array that was passed in as parameter
                                             let array_address =
                                                 self.builder.use_var(dst_svar.inner());
-                                            copy_to_stack_slot(
-                                                self.module.target_config(),
-                                                &mut self.builder,
-                                                *len * expr_type
+                                            let src_val = src_sval.inner("translate_assign")?;
+                                            trace!(
+                                                    "{} array {} is arg {} of {} copying &{} onto memory at {} &{} on assignment",
+                                                    code_ref.s(&self.env.file_idx),
+                                                    expr_type,
+                                                    arg.name,
+                                                    &self.func_stack.last().unwrap(),
+                                                    src_val,
+                                                    arg.name,
+                                                    array_address,
+                                                );
+                                            let size = *len
+                                                * expr_type
                                                     .width(self.ptr_ty, &self.env.struct_map)
-                                                    .unwrap(),
-                                                src_sval.inner("translate_assign")?,
-                                                array_address,
-                                                0,
-                                            )?;
+                                                    .unwrap();
+                                            self.mem_copy(src_val, array_address, size);
                                             continue 'expression;
                                         }
                                     }
@@ -965,19 +1180,23 @@ impl<'a> FunctionTranslator<'a> {
                 let mut bound_check_at_get = true;
                 match size_type {
                     ArraySized::Unsized => (),
-                    ArraySized::Sized => todo!(),
+                    ArraySized::Slice => {
+                        bound_check_at_get = true;
+                    }
                     ArraySized::Fixed(sval, _len) => {
-                        let b_condition_value = self.builder.ins().icmp(
-                            IntCC::SignedGreaterThanOrEqual,
+                        let val = sval.inner("translate_array_get")?;
+                        let b_condition_value = self.icmp(Cmp::Ge, idx_val, val);
+                        trace!(
+                            "{} checking bounds for array &{} get with idx &{} condition &{}",
+                            code_ref.s(&self.env.file_idx),
+                            val,
                             idx_val,
-                            sval.inner("translate_array_get")?,
+                            b_condition_value,
                         );
-                        let merge_block = self.exec_if_start(b_condition_value);
-                        self.call_panic(
-                            code_ref,
+                        self.call_panic_if(
+                            b_condition_value,
                             &format!("{} index out of bounds", code_ref.s(&self.env.file_idx)),
                         )?;
-                        self.exec_if_end(merge_block);
                         bound_check_at_get = false;
                     }
                 }
@@ -1014,46 +1233,115 @@ impl<'a> FunctionTranslator<'a> {
         check_bounds: bool,
     ) -> anyhow::Result<SValue> {
         let mut width;
+        let mut slice_len_val = None;
         let base_type = match &array_expr_type {
             ExprType::Array(code_ref, ty, size_type) => {
                 if check_bounds {
                     match size_type {
                         ArraySizedExpr::Unsized => (),
-                        ArraySizedExpr::Sized => todo!(),
-                        ArraySizedExpr::Fixed(len) => {
-                            //Looks expensive
-                            let len_val = self.builder.ins().iconst(types::I64, *len as i64);
-                            let b_condition_value = self.builder.ins().icmp(
-                                IntCC::SignedGreaterThanOrEqual,
+                        ArraySizedExpr::Slice => {
+                            slice_len_val = Some(self.i64load(array_address, self.ptr_width)); //length is 2nd item (start, length, capacity)
+                            let b_condition_value =
+                                self.icmp(Cmp::Ge, idx_val, slice_len_val.unwrap());
+                            trace!(
+                                "{} checking bounds for slice {} &{} get of length &{} with idx &{} condition &{}",
+                                code_ref.s(&self.env.file_idx),
+                                array_expr_type,
+                                array_address,
+                                slice_len_val.unwrap(),
                                 idx_val,
-                                len_val,
+                                b_condition_value,
                             );
-                            let merge_block = self.exec_if_start(b_condition_value);
-                            self.call_panic(
-                                code_ref,
+                            self.call_panic_if(
+                                b_condition_value,
                                 &format!("{} index out of bounds", code_ref.s(&self.env.file_idx)),
                             )?;
-                            self.exec_if_end(merge_block);
+                        }
+                        ArraySizedExpr::Fixed(len) => {
+                            //Looks expensive
+                            let len_val = self.i64const(*len as i64);
+                            let b_condition_value = self.icmp(Cmp::Ge, idx_val, len_val);
+                            trace!(
+                                "{} checking bounds for fixed array {} &{} get of length &{} with idx &{} condition &{}",
+                                code_ref.s(&self.env.file_idx),
+                                array_expr_type,
+                                array_address,
+                                len_val,
+                                idx_val,
+                                b_condition_value,
+                            );
+                            self.call_panic_if(
+                                b_condition_value,
+                                &format!("{} index out of bounds", code_ref.s(&self.env.file_idx)),
+                            )?;
                         }
                     }
                 }
                 let c_ty = ty.cranelift_type(self.ptr_ty, true)?;
                 width = ty
                     .width(self.ptr_ty, &self.env.struct_map)
-                    .unwrap_or(self.ptr_ty.bytes() as usize);
+                    .unwrap_or(self.ptr_width as usize);
                 match *ty.to_owned() {
                     ExprType::Void(_) => (),
                     ExprType::Bool(_) => (),
                     ExprType::F32(_) => (),
                     ExprType::I64(_) => (),
+                    //array items are arrays
                     ExprType::Array(_, expr_type, size_type) => match size_type {
                         ArraySizedExpr::Unsized => (),
-                        ArraySizedExpr::Sized => todo!(),
+                        ArraySizedExpr::Slice => {
+                            trace!(
+                                "{} indexing into slice {} &{} with idx &{}",
+                                code_ref,
+                                array_expr_type,
+                                array_address,
+                                idx_val
+                            );
+                            let inner_type_width_val = self.i64const(
+                                expr_type.width(self.ptr_ty, &self.env.struct_map).unwrap() as i64,
+                            );
+                            let width_val = self.imul(inner_type_width_val, slice_len_val.unwrap());
+
+                            let actual_array_address = self.i64load(array_address, 0); //start is 1st item (start, length, capacity)
+
+                            let abs_idx_val = self.imul(width_val, idx_val);
+                            let array_address_at_idx_ptr =
+                                self.iadd(abs_idx_val, actual_array_address);
+
+                            trace!(
+                                "{} actual_array_address &{} abs_idx_val &{} array_address_at_idx_ptr &{}",
+                                code_ref,
+                                actual_array_address,
+                                abs_idx_val,
+                                array_address_at_idx_ptr,
+                            );
+
+                            return Ok(SValue::Array(
+                                Box::new(SValue::from(
+                                    &mut self.builder,
+                                    &expr_type,
+                                    array_address_at_idx_ptr,
+                                )?),
+                                ArraySized::from(&mut self.builder, &size_type),
+                            ));
+                        }
                         ArraySizedExpr::Fixed(len) => {
+                            trace!(
+                                "{} indexing into array {} &{} with idx &{}",
+                                code_ref,
+                                array_expr_type,
+                                array_address,
+                                idx_val
+                            );
                             width =
                                 expr_type.width(self.ptr_ty, &self.env.struct_map).unwrap() * len;
                             let array_address_at_idx_ptr =
                                 self.get_array_address_from_ptr(width, array_address, idx_val);
+                            trace!(
+                                "{} array_address_at_idx_ptr &{}",
+                                code_ref,
+                                array_address_at_idx_ptr,
+                            );
                             return Ok(SValue::Array(
                                 Box::new(SValue::from(
                                     &mut self.builder,
@@ -1066,13 +1354,38 @@ impl<'a> FunctionTranslator<'a> {
                     },
                     ExprType::Address(_) => (),
                     ExprType::Tuple(_, _) => (),
+                    //array items are structs
                     ExprType::Struct(_code_ref, name) => {
                         //if the items of the array are structs return struct with same start address
-                        let base_struct = self.env.struct_map[&name.to_string()].clone();
-                        width = base_struct.size;
-                        let array_address_at_idx_ptr =
-                            self.get_array_address_from_ptr(width, array_address, idx_val);
-                        return Ok(SValue::Struct(base_struct.name, array_address_at_idx_ptr));
+                        match size_type {
+                            ArraySizedExpr::Slice => {
+                                let base_struct = self.env.struct_map[&name.to_string()].clone();
+                                width = base_struct.size;
+
+                                let width_val = self.ptr_const(width as i64);
+
+                                let actual_array_address = self.i64load(array_address, 0); //start is 1st item (start, length, capacity)
+
+                                let abs_idx_val = self.imul(width_val, idx_val);
+                                let array_address_at_idx_ptr =
+                                    self.iadd(abs_idx_val, actual_array_address);
+
+                                return Ok(SValue::Struct(
+                                    base_struct.name,
+                                    array_address_at_idx_ptr,
+                                ));
+                            }
+                            ArraySizedExpr::Unsized | ArraySizedExpr::Fixed(_) => {
+                                let base_struct = self.env.struct_map[&name.to_string()].clone();
+                                width = base_struct.size;
+                                let array_address_at_idx_ptr =
+                                    self.get_array_address_from_ptr(width, array_address, idx_val);
+                                return Ok(SValue::Struct(
+                                    base_struct.name,
+                                    array_address_at_idx_ptr,
+                                ));
+                            }
+                        }
                     }
                 }
                 c_ty
@@ -1082,24 +1395,42 @@ impl<'a> FunctionTranslator<'a> {
             }
         };
 
-        let array_address_at_idx_ptr =
-            self.get_array_address_from_ptr(width, array_address, idx_val);
-        if get_address {
-            Ok(SValue::Address(array_address_at_idx_ptr))
-        } else {
-            let val = self.builder.ins().load(
-                base_type,
-                MemFlags::new(),
-                array_address_at_idx_ptr,
-                Offset32::new(0),
-            );
-            match &array_expr_type {
-                ExprType::Array(_code_ref, ty, _len) => {
-                    Ok(SValue::from(&mut self.builder, ty, val)?)
+        match &array_expr_type {
+            ExprType::Array(_code_ref, ty, size_type) => match size_type {
+                ArraySizedExpr::Slice => {
+                    let actual_array_address = self.i64load(array_address, 0); //start is 1st item (start, length, capacity)
+                    let array_address_at_idx_ptr =
+                        self.get_array_address_from_ptr(width, actual_array_address, idx_val);
+                    if get_address {
+                        Ok(SValue::Address(array_address_at_idx_ptr))
+                    } else {
+                        let val = self.builder.ins().load(
+                            base_type,
+                            MemFlags::new(),
+                            array_address_at_idx_ptr,
+                            Offset32::new(0),
+                        );
+                        Ok(SValue::from(&mut self.builder, ty, val)?)
+                    }
                 }
-                e => {
-                    anyhow::bail!("{} can't index type {}", e.get_code_ref(), &array_expr_type)
+                ArraySizedExpr::Unsized | ArraySizedExpr::Fixed(..) => {
+                    let array_address_at_idx_ptr =
+                        self.get_array_address_from_ptr(width, array_address, idx_val);
+                    if get_address {
+                        Ok(SValue::Address(array_address_at_idx_ptr))
+                    } else {
+                        let val = self.builder.ins().load(
+                            base_type,
+                            MemFlags::new(),
+                            array_address_at_idx_ptr,
+                            Offset32::new(0),
+                        );
+                        Ok(SValue::from(&mut self.builder, ty, val)?)
+                    }
                 }
+            },
+            e => {
+                anyhow::bail!("{} can't index type {}", e.get_code_ref(), &array_expr_type)
             }
         }
     }
@@ -1110,9 +1441,9 @@ impl<'a> FunctionTranslator<'a> {
         array_ptr: Value,
         idx_val: Value,
     ) -> Value {
-        let mult_n = self.builder.ins().iconst(self.ptr_ty, step_bytes as i64);
-        let idx_val = self.builder.ins().imul(mult_n, idx_val);
-        let idx_ptr = self.builder.ins().iadd(idx_val, array_ptr);
+        let mult_n = self.ptr_const(step_bytes as i64);
+        let idx_val = self.imul(mult_n, idx_val);
+        let idx_ptr = self.iadd(idx_val, array_ptr);
 
         idx_ptr
     }
@@ -1123,6 +1454,7 @@ impl<'a> FunctionTranslator<'a> {
         idx_val: Value,
         val: &SValue,
     ) -> anyhow::Result<SValue> {
+        trace!("translate_array_set_from_var");
         //TODO crash if idx_val > ExprType::Array(_, len)
         let variable = self.get_variable(&CodeRef::z(), &name)?.clone();
 
@@ -1155,22 +1487,14 @@ impl<'a> FunctionTranslator<'a> {
             SValue::Array(_, _) => todo!(),
             SValue::Tuple(_) => todo!(),
             SValue::Address(address) => {
-                self.builder.ins().store(
-                    MemFlags::new(),
-                    from_val.inner("array_set")?,
-                    address,
-                    Offset32::new(0),
-                );
+                self.store(from_val.inner("array_set")?, address, 0);
             }
             SValue::Struct(struct_name, struct_address) => {
-                copy_to_stack_slot(
-                    self.module.target_config(),
-                    &mut self.builder,
-                    self.env.struct_map[&struct_name].size,
+                self.mem_copy(
                     from_val.inner("array_set")?,
                     struct_address,
-                    0,
-                )?;
+                    self.env.struct_map[&struct_name].size,
+                );
             }
         }
         Ok(())
@@ -1585,6 +1909,7 @@ impl<'a> FunctionTranslator<'a> {
         impl_val: Option<SValue>,
         is_macro: bool,
     ) -> anyhow::Result<SValue> {
+        let orig_fn_name = fn_name;
         let mut fn_name = fn_name.to_string();
         trace!(
             "{}: translate_call {} {:?} {:?}",
@@ -1594,9 +1919,9 @@ impl<'a> FunctionTranslator<'a> {
             &impl_val
         );
         let mut arg_values = Vec::new();
-        if let Some(impl_sval) = impl_val {
+        if let Some(impl_sval) = &impl_val {
             fn_name = format!("{}.{}", impl_sval.to_string(), fn_name);
-            arg_values.push(impl_sval);
+            arg_values.push(impl_sval.clone());
         }
 
         for expr in args.iter() {
@@ -1608,9 +1933,16 @@ impl<'a> FunctionTranslator<'a> {
             // returns = (macros[fn_name])(code_ref, arg_values, self.env)
         }
 
-        if fn_name == "unsized" {
+        if check_core_generics(orig_fn_name, impl_val) {
             return self.call_with_svalues(
-                code_ref, &fn_name, None, None, false, false, arg_values, None,
+                code_ref,
+                orig_fn_name,
+                None,
+                None,
+                false,
+                false,
+                arg_values,
+                None,
             );
         }
 
@@ -1761,7 +2093,9 @@ impl<'a> FunctionTranslator<'a> {
             } else if let ExprType::Array(_code_ref, expr_type, size_type) = &returns[0].expr_type {
                 match size_type {
                     ArraySizedExpr::Unsized => {}
-                    ArraySizedExpr::Sized => todo!(),
+                    ArraySizedExpr::Slice => {
+                        stack_slot_return = Some((self.ptr_width + 2 * 8) as usize)
+                    }
                     ArraySizedExpr::Fixed(len) => {
                         stack_slot_return = Some(
                             expr_type
@@ -1872,7 +2206,7 @@ impl<'a> FunctionTranslator<'a> {
                 .ins()
                 .iconst(types::I64, dst_field_def.offset as i64);
 
-            let field_address = self.builder.ins().iadd(struct_address, offset);
+            let field_address = self.iadd(struct_address, offset);
 
             let sval = self.translate_expr(&field.expr)?;
 
@@ -1899,7 +2233,10 @@ impl<'a> FunctionTranslator<'a> {
                 }
                 SValue::Array(sval_item, size_type) => match size_type {
                     ArraySized::Unsized => None,
-                    ArraySized::Sized => todo!(),
+                    ArraySized::Slice => Some((
+                        sval_item.inner("translate_new_struct")?,
+                        (self.ptr_width + 2 * 8) as u64,
+                    )),
                     ArraySized::Fixed(_sval_len, array_len) => {
                         trace!(
                             "{}: copy array {} into struct {}",
@@ -2041,8 +2378,8 @@ impl<'a> FunctionTranslator<'a> {
             offset
         );
 
-        let offset_v = self.builder.ins().iconst(self.ptr_ty, offset as i64);
-        let address = self.builder.ins().iadd(base_struct_var_ptr, offset_v);
+        let offset_v = self.ptr_const(offset as i64);
+        let address = self.iadd(base_struct_var_ptr, offset_v);
         if let ExprType::Struct(code_ref, name) = &parent_struct_field_def.expr_type {
             trace!(
                 "{}: ExprType::Struct {}",
@@ -2065,7 +2402,7 @@ impl<'a> FunctionTranslator<'a> {
             );
             match size_type {
                 ArraySizedExpr::Unsized => Ok((SValue::Address(address), parent_struct_field_def)),
-                ArraySizedExpr::Sized => todo!(),
+                ArraySizedExpr::Slice => Ok((SValue::Address(address), parent_struct_field_def)),
                 ArraySizedExpr::Fixed(_len) => {
                     Ok((SValue::Address(address), parent_struct_field_def))
                 }
@@ -2097,7 +2434,17 @@ impl<'a> FunctionTranslator<'a> {
                 {
                     match size_type {
                         ArraySizedExpr::Unsized => (),
-                        ArraySizedExpr::Sized => todo!(),
+                        ArraySizedExpr::Slice => {
+                            trace!("{}: slice {} consists of an address to the start of the array, a length and a capacity these are stored directly in struct, returning slice SValue with address of start of slice components", coderef, expr_type);
+                            return Ok(SValue::Array(
+                                Box::new(SValue::from(
+                                    &mut self.builder,
+                                    expr_type,
+                                    field_address.inner("get_struct_field")?,
+                                )?),
+                                ArraySized::Slice,
+                            ));
+                        }
                         ArraySizedExpr::Fixed(_len) => {
                             //TODO will this have the correct size relative to the index?
                             trace!("{}: array {} is fixed in length and is stored directly in struct, returning fixed array SValue with address of array field", coderef, expr_type);
@@ -2122,7 +2469,7 @@ impl<'a> FunctionTranslator<'a> {
                 );
                 if let ExprType::Bool(_code_ref) = parent_struct_field_def.expr_type {
                     let t = self.builder.ins().iconst(types::I8, 1);
-                    val = self.builder.ins().icmp(IntCC::Equal, t, val)
+                    val = self.icmp(Cmp::Eq, t, val)
                 }
 
                 SValue::from(&mut self.builder, &parent_struct_field_def.expr_type, val)
@@ -2150,7 +2497,14 @@ impl<'a> FunctionTranslator<'a> {
             | ExprType::Address(_) => None,
             ExprType::Array(_code_ref, expr_type, size_type) => match size_type {
                 ArraySizedExpr::Unsized => None,
-                ArraySizedExpr::Sized => todo!(),
+                ArraySizedExpr::Slice => {
+                    if array_field {
+                        let width = expr_type.width(self.ptr_ty, &self.env.struct_map).unwrap();
+                        Some(width as u64)
+                    } else {
+                        Some(dst_field_def.size as u64)
+                    }
+                }
                 ArraySizedExpr::Fixed(_len) => {
                     if array_field {
                         let width = expr_type.width(self.ptr_ty, &self.env.struct_map).unwrap();
@@ -2199,12 +2553,7 @@ impl<'a> FunctionTranslator<'a> {
                 &dst_field_def.name,
             );
             //If the struct field is not a struct, set copy of value
-            self.builder.ins().store(
-                MemFlags::new(),
-                val,
-                dst_address.inner("set_struct_field_at_address")?,
-                Offset32::new(0),
-            );
+            self.store(val, dst_address.inner("set_struct_field_at_address")?, 0);
             Ok(())
         }
     }
@@ -2233,9 +2582,16 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.seal_block(merge_block);
     }
 
-    fn call_panic(&mut self, code_ref: &CodeRef, message: &str) -> anyhow::Result<()> {
-        let arg_values = vec![Expr::LiteralString(*code_ref, message.to_string())];
-        self.translate_call(code_ref, "panic", &arg_values, None, false)?;
+    fn call_panic_if(&mut self, b_condition_value: Value, message: &str) -> anyhow::Result<()> {
+        let merge_block = self.exec_if_start(b_condition_value);
+        self.call_panic(message)?;
+        self.exec_if_end(merge_block);
+        Ok(())
+    }
+
+    fn call_panic(&mut self, message: &str) -> anyhow::Result<()> {
+        let arg_values = vec![Expr::LiteralString(CodeRef::z(), message.to_string())];
+        self.translate_call(&CodeRef::z(), "panic", &arg_values, None, false)?;
         Ok(())
     }
 
@@ -2260,17 +2616,21 @@ impl<'a> FunctionTranslator<'a> {
             closure_src_scope_name,
             stack_slot_return.is_some()
         );
-        if fn_name == "unsized" {
-            if let Some(v) = sarus_std_lib::translate_std(
-                self.module.target_config().pointer_type(),
-                &mut self.builder,
-                code_ref,
-                fn_name,
-                &arg_svalues,
-            )? {
-                return Ok(v);
-            }
+
+        if let Some(v) = self.translate_core_generics(code_ref, fn_name, &arg_svalues)? {
+            return Ok(v);
         }
+
+        if let Some(v) = sarus_std_lib::translate_std(
+            self.module.target_config().pointer_type(),
+            &mut self.builder,
+            code_ref,
+            fn_name,
+            &arg_svalues,
+        )? {
+            return Ok(v);
+        }
+
         let func = if let Some(func) = func {
             func
         } else {
@@ -2318,18 +2678,6 @@ impl<'a> FunctionTranslator<'a> {
                 arg_svalues.len(),
                 func.params.len()
             )
-        }
-
-        if func.extern_func {
-            if let Some(v) = sarus_std_lib::translate_std(
-                self.module.target_config().pointer_type(),
-                &mut self.builder,
-                code_ref,
-                fn_name,
-                &arg_svalues,
-            )? {
-                return Ok(v);
-            }
         }
 
         let mut arg_values = Vec::new();
@@ -2505,16 +2853,14 @@ impl<'a> FunctionTranslator<'a> {
         if let Some(stack_slot_address) = stack_slot_address {
             let expr_type = &func.returns.first().unwrap().expr_type;
             match expr_type {
-                ExprType::Array(_, _, ArraySizedExpr::Fixed(..)) => Ok(SValue::from(
-                    &mut self.builder,
-                    expr_type,
-                    stack_slot_address,
-                )?),
+                ExprType::Array(_, _, ArraySizedExpr::Slice | ArraySizedExpr::Fixed(..)) => Ok(
+                    SValue::from(&mut self.builder, expr_type, stack_slot_address)?,
+                ),
                 ExprType::Struct(_, struct_name) => {
                     Ok(SValue::Struct(struct_name.to_string(), stack_slot_address))
                 }
                 _ => {
-                    anyhow::bail!("expected fixed array or struct return")
+                    anyhow::bail!("expected fixed array, slice, or struct return")
                 }
             }
         } else if res.len() > 1 {
@@ -2536,6 +2882,192 @@ impl<'a> FunctionTranslator<'a> {
         } else {
             Ok(SValue::Void)
         }
+    }
+
+    fn translate_core_generics(
+        &mut self,
+        code_ref: &CodeRef,
+        fn_name: &str,
+        args: &[SValue],
+    ) -> anyhow::Result<Option<SValue>> {
+        Ok(match fn_name {
+            "push" => match &args[0] {
+                SValue::Array(slice_sval, ArraySized::Slice) => {
+                    let slice_address = slice_sval.inner("translate_core_generics slice push")?;
+
+                    let orig_slice_len = self.i64load(slice_address, self.ptr_width);
+                    let orig_slice_cap = self.i64load(slice_address, self.ptr_width + 8);
+
+                    let one_v = self.i64const(1);
+                    let new_slice_len = self.iadd(orig_slice_len, one_v);
+                    let b_over = self.icmp(Cmp::Gt, new_slice_len, orig_slice_cap);
+                    self.call_panic_if(
+                        b_over,
+                        &format!("{} push out of bounds", code_ref.s(&self.env.file_idx)),
+                    )?;
+
+                    self.store(new_slice_len, slice_address, self.ptr_width);
+
+                    self.array_set(
+                        &args[1],
+                        &slice_address,
+                        &args[0].expr_type(code_ref)?,
+                        orig_slice_len,
+                        true,
+                    )?;
+
+                    Some(SValue::Void)
+                }
+                sv => anyhow::bail!("push does not support {}", sv),
+            },
+            "pop" => match &args[0] {
+                SValue::Array(slice_sval, ArraySized::Slice) => {
+                    let slice_address = slice_sval.inner("translate_core_generics slice push")?;
+
+                    let orig_slice_len = self.i64load(slice_address, self.ptr_width);
+
+                    let one_v = self.i64const(1);
+                    let zero = self.i64const(0);
+                    let new_slice_len = self.isub(orig_slice_len, one_v);
+                    let b_under = self.icmp(Cmp::Lt, new_slice_len, zero);
+                    self.call_panic_if(
+                        b_under,
+                        &format!(
+                            "{} can't pop size already 0",
+                            code_ref.s(&self.env.file_idx)
+                        ),
+                    )?;
+
+                    let ret_val = self.array_get(
+                        slice_address,
+                        &args[0].expr_type(code_ref)?,
+                        new_slice_len,
+                        false,
+                        false,
+                    )?;
+
+                    self.store(new_slice_len, slice_address, self.ptr_width);
+
+                    Some(ret_val)
+                }
+                sv => anyhow::bail!("push does not support {}", sv),
+            },
+            "len" => match &args[0] {
+                SValue::Array(slice_sval, ArraySized::Slice) => {
+                    let slice_address = slice_sval.inner("translate_core_generics slice len")?;
+                    Some(SValue::I64(self.i64load(slice_address, self.ptr_width)))
+                }
+                SValue::Array(_slice_sval, ArraySized::Fixed(slen, _len)) => Some(*slen.clone()),
+                sv => anyhow::bail!("push does not support {}", sv),
+            },
+            "cap" => match &args[0] {
+                SValue::Array(slice_sval, ArraySized::Slice) => {
+                    let slice_address = slice_sval.inner("translate_core_generics slice cap")?;
+                    Some(SValue::I64(self.i64load(slice_address, self.ptr_width + 8)))
+                }
+                sv => anyhow::bail!(
+                    "{} push does not support {}",
+                    code_ref.s(&self.env.file_idx),
+                    sv
+                ),
+            },
+            "append" => match &args[0] {
+                SValue::Array(slice_sval, ArraySized::Slice) => {
+                    let ctx_msg = "translate_core_generics slice append";
+                    let slice_address = slice_sval.inner(ctx_msg)?;
+
+                    let orig_slice_len = self.i64load(slice_address, self.ptr_width);
+                    let orig_slice_cap = self.i64load(slice_address, self.ptr_width + 8);
+
+                    let (to_be_appended_start, to_be_appended_len) = match &args[1] {
+                        SValue::Array(src_sval, size_type) => match size_type {
+                            ArraySized::Unsized => todo!(),
+                            ArraySized::Slice => {
+                                let src_val = src_sval.inner(ctx_msg)?;
+                                (
+                                    self.i64load(src_val, 0),              //slice start
+                                    self.i64load(src_val, self.ptr_width), //slice len
+                                )
+                            }
+                            ArraySized::Fixed(size_sval, _) => {
+                                (src_sval.inner(ctx_msg)?, size_sval.inner(ctx_msg)?)
+                            }
+                        },
+                        sv => anyhow::bail!(
+                            "{} push does not support {}",
+                            code_ref.s(&self.env.file_idx),
+                            sv
+                        ),
+                    };
+
+                    let new_slice_len = self.iadd(orig_slice_len, to_be_appended_len);
+
+                    let b_over = self.icmp(Cmp::Gt, new_slice_len, orig_slice_cap);
+                    self.call_panic_if(
+                        b_over,
+                        &format!("{} push out of bounds", code_ref.s(&self.env.file_idx)),
+                    )?;
+
+                    self.store(new_slice_len, slice_address, self.ptr_width);
+
+                    let dst_address = self
+                        .array_get(
+                            slice_address,
+                            &args[0].expr_type(code_ref)?,
+                            orig_slice_len,
+                            true,
+                            false,
+                        )?
+                        .inner(ctx_msg)?;
+
+                    let item_width = slice_sval
+                        .expr_type(code_ref)?
+                        .width(self.ptr_ty, &self.env.struct_map)
+                        .unwrap();
+
+                    let item_width_v = self.i64const(item_width as i64);
+                    let len_to_copy = self.imul(item_width_v, to_be_appended_len);
+
+                    self.builder.call_memcpy(
+                        self.module.target_config(),
+                        dst_address,
+                        to_be_appended_start,
+                        len_to_copy,
+                    );
+
+                    Some(SValue::Void)
+                }
+                sv => anyhow::bail!("push does not support {}", sv),
+            },
+            "unsized" => match &args[0] {
+                SValue::Array(sval, size_type) => match size_type {
+                    ArraySized::Unsized => anyhow::bail!(
+                        "{} array is already unsized {}",
+                        code_ref.s(&self.env.file_idx),
+                        &args[0]
+                    ),
+                    ArraySized::Slice => Some(SValue::Array(
+                        Box::new(sval.replace_value(
+                            self.ptr_load(sval.inner("translate_core_generics slice unsized")?, 0),
+                        )?),
+                        ArraySized::Unsized,
+                    )),
+                    ArraySized::Fixed(_, _) => {
+                        Some(SValue::Array(sval.clone(), ArraySized::Unsized))
+                    }
+                },
+                SValue::Address(_) => Some(SValue::Array(
+                    Box::new(args[0].clone()),
+                    ArraySized::Unsized,
+                )),
+                sv => anyhow::bail!(
+                    "{} unsized does not support {}",
+                    code_ref.s(&self.env.file_idx),
+                    sv
+                ),
+            },
+            _ => None,
+        })
     }
 
     fn alloc(&mut self, width: usize) -> Value {
@@ -2571,81 +3103,208 @@ impl<'a> FunctionTranslator<'a> {
 
         let deep_stack_address = self.translate_global_data_addr(self.ptr_ty, "__DEEP_STACK__");
 
-        let address = self.builder.ins().load(
-            self.ptr_ty,
-            MemFlags::new(),
-            deep_stack_address,
-            Offset32::new(0),
-        );
+        let address = self.ptr_load(deep_stack_address, 0);
 
-        let alloc_size_val = self.builder.ins().iconst(types::I64, width as i64);
+        let alloc_size_val = self.i64const(width as i64);
 
-        let address_new_start = self.builder.ins().iadd(address, alloc_size_val);
+        let address_new_start = self.iadd(address, alloc_size_val);
 
-        self.builder.ins().store(
-            MemFlags::new(),
-            address_new_start,
-            deep_stack_address,
-            Offset32::new(0),
-        );
+        self.store(address_new_start, deep_stack_address, 0);
         address
     }
 
     pub fn dealloc_deep_stack(&mut self) {
         if self.use_deep_stack {
             let width_to_remove = self.deep_stack_widths.pop().unwrap();
-            trace!("alloc_deep_stack width_to_remove {}", width_to_remove);
-            let deep_stack_address = self.translate_global_data_addr(self.ptr_ty, "__DEEP_STACK__");
+            if width_to_remove > 0 {
+                trace!("dealloc_deep_stack width_to_remove {}", width_to_remove);
+                let deep_stack_address =
+                    self.translate_global_data_addr(self.ptr_ty, "__DEEP_STACK__");
 
-            let stack_slot_address = self.builder.ins().load(
-                self.ptr_ty,
-                MemFlags::new(),
-                deep_stack_address,
-                Offset32::new(0),
-            );
+                let stack_slot_address = self.ptr_load(deep_stack_address, 0);
 
-            let alloc_size_val = self
-                .builder
-                .ins()
-                .iconst(types::I64, width_to_remove as i64);
+                let alloc_size_val = self
+                    .builder
+                    .ins()
+                    .iconst(types::I64, width_to_remove as i64);
 
-            let address_new_start = self.builder.ins().isub(stack_slot_address, alloc_size_val);
+                let address_new_start = self.isub(stack_slot_address, alloc_size_val);
 
-            self.builder.ins().store(
-                MemFlags::new(),
-                address_new_start,
-                deep_stack_address,
-                Offset32::new(0),
-            );
+                self.store(address_new_start, deep_stack_address, 0);
+            }
         }
     }
-}
 
-fn copy_to_stack_slot(
-    target_config: isa::TargetFrontendConfig,
-    builder: &mut FunctionBuilder,
-    size: usize,
-    src_ptr: Value,
-    stack_slot_address: Value,
-    offset: usize,
-) -> anyhow::Result<Value> {
-    let offset_v = builder
-        .ins()
-        .iconst(target_config.pointer_type(), offset as i64);
-    let src_ptr_with_offset = builder.ins().iadd(src_ptr, offset_v);
-    trace!("emit_small_memory_copy size {} offset {}", size, offset);
-    builder.emit_small_memory_copy(
-        target_config,
-        stack_slot_address,
-        src_ptr_with_offset,
-        size as u64,
-        1,
-        1,
-        true,
-        MemFlags::new(),
-    );
+    fn store(&mut self, src: Value, dst: Value, offset: i64) {
+        self.builder
+            .ins()
+            .store(MemFlags::new(), src, dst, Offset32::new(offset as i32));
+    }
 
-    Ok(stack_slot_address)
+    fn i64load(&mut self, src: Value, offset: i64) -> Value {
+        self.builder.ins().load(
+            types::I64,
+            MemFlags::new(),
+            src,
+            Offset32::new(offset as i32),
+        )
+    }
+
+    fn ptr_load(&mut self, src: Value, offset: i64) -> Value {
+        self.builder.ins().load(
+            self.ptr_ty,
+            MemFlags::new(),
+            src,
+            Offset32::new(offset as i32),
+        )
+    }
+
+    fn i64const(&mut self, x: i64) -> Value {
+        self.builder.ins().iconst(types::I64, x)
+    }
+
+    fn ptr_const(&mut self, x: i64) -> Value {
+        self.builder.ins().iconst(self.ptr_ty, x)
+    }
+
+    fn f32const(&mut self, x: f32) -> Value {
+        self.builder.ins().f32const::<f32>(x)
+    }
+
+    fn bconst(&mut self, x: bool) -> Value {
+        self.builder.ins().bconst(types::B1, x)
+    }
+
+    fn iadd(&mut self, x: Value, y: Value) -> Value {
+        self.builder.ins().iadd(x, y)
+    }
+
+    fn isub(&mut self, x: Value, y: Value) -> Value {
+        self.builder.ins().isub(x, y)
+    }
+
+    fn imul(&mut self, x: Value, y: Value) -> Value {
+        self.builder.ins().imul(x, y)
+    }
+
+    fn ineg(&mut self, x: Value) -> Value {
+        self.builder.ins().ineg(x)
+    }
+
+    fn sdiv(&mut self, x: Value, y: Value) -> Value {
+        self.builder.ins().sdiv(x, y)
+    }
+
+    fn fadd(&mut self, x: Value, y: Value) -> Value {
+        self.builder.ins().fadd(x, y)
+    }
+
+    fn fsub(&mut self, x: Value, y: Value) -> Value {
+        self.builder.ins().fsub(x, y)
+    }
+
+    fn fmul(&mut self, x: Value, y: Value) -> Value {
+        self.builder.ins().fmul(x, y)
+    }
+
+    fn fdiv(&mut self, x: Value, y: Value) -> Value {
+        self.builder.ins().fdiv(x, y)
+    }
+
+    fn fneg(&mut self, x: Value) -> Value {
+        self.builder.ins().fneg(x)
+    }
+
+    fn bint(&mut self, x: Value) -> Value {
+        self.builder.ins().bint(types::I64, x)
+    }
+
+    fn band(&mut self, x: Value, y: Value) -> Value {
+        self.builder.ins().band(x, y)
+    }
+
+    fn bor(&mut self, x: Value, y: Value) -> Value {
+        self.builder.ins().bor(x, y)
+    }
+
+    fn fcmp(&mut self, cmp: Cmp, x: Value, y: Value) -> Value {
+        let fcmp = match cmp {
+            Cmp::Eq => FloatCC::Equal,
+            Cmp::Ne => FloatCC::NotEqual,
+            Cmp::Lt => FloatCC::LessThan,
+            Cmp::Le => FloatCC::LessThanOrEqual,
+            Cmp::Gt => FloatCC::GreaterThan,
+            Cmp::Ge => FloatCC::GreaterThanOrEqual,
+        };
+        self.builder.ins().fcmp(fcmp, x, y)
+    }
+
+    fn icmp(&mut self, cmp: Cmp, x: Value, y: Value) -> Value {
+        let icmp = match cmp {
+            Cmp::Eq => IntCC::Equal,
+            Cmp::Ne => IntCC::NotEqual,
+            Cmp::Lt => IntCC::SignedLessThan,
+            Cmp::Le => IntCC::SignedLessThanOrEqual,
+            Cmp::Gt => IntCC::SignedGreaterThan,
+            Cmp::Ge => IntCC::SignedGreaterThanOrEqual,
+        };
+        self.builder.ins().icmp(icmp, x, y)
+    }
+
+    fn cmp_bool(&mut self, cmp: Cmp, lhs: Value, rhs: Value) -> Value {
+        //TODO
+        //thread 'logical_operators' panicked at 'not implemented: bool bnot', [...]]\cranelift-codegen-0.76.0\src\isa\x64\lower.rs:2375:17
+        //match cmp {
+        //    Cmp::Eq => {
+        //        let x = self.builder.ins().bxor(lhs, rhs);
+        //        self.builder.ins().bnot(x)
+        //    }
+        //    Cmp::Ne => self.builder.ins().bxor(lhs, rhs),
+        //    Cmp::Lt => {
+        //        let x = self.builder.ins().bxor(lhs, rhs);
+        //        self.builder.ins().band_not(x, lhs)
+        //    }
+        //    Cmp::Le => {
+        //        //There's probably a faster way
+        //        let x = self.cmp_bool(Cmp::Eq, lhs, rhs);
+        //        let y = self.cmp_bool(Cmp::Lt, lhs, rhs);
+        //        self.builder.ins().bor(x, y)
+        //    }
+        //    Cmp::Gt => {
+        //        let x = self.builder.ins().bxor(lhs, rhs);
+        //        self.builder.ins().band_not(x, rhs)
+        //    }
+        //    Cmp::Ge => {
+        //        //There's probably a faster way
+        //        let x = self.cmp_bool(Cmp::Eq, lhs, rhs);
+        //        let y = self.cmp_bool(Cmp::Eq, lhs, rhs);
+        //        self.builder.ins().bor(x, y)
+        //    }
+        //}
+
+        let lhs = self.bint(lhs);
+        let rhs = self.bint(rhs);
+        self.icmp(cmp, lhs, rhs)
+    }
+
+    fn mem_copy(&mut self, src_address: Value, dst_address: Value, size: usize) {
+        trace!(
+            "emit_small_memory_copy size {} from {} to {}",
+            size,
+            src_address,
+            dst_address
+        );
+        self.builder.emit_small_memory_copy(
+            self.module.target_config(),
+            dst_address,
+            src_address,
+            size as u64,
+            1,
+            1,
+            true,
+            MemFlags::new(),
+        );
+    }
 }
 
 #[derive(Debug, Clone)]

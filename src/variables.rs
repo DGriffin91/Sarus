@@ -12,8 +12,8 @@ use tracing::trace;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArraySized {
-    Unsized,                   //size is unknown, just an address with a type
-    Sized,                     //start of array address is i64 with size.
+    Unsized, //size is unknown, just an address with a type
+    Slice,
     Fixed(Box<SValue>, usize), //size is part of type signature
 }
 
@@ -21,14 +21,14 @@ impl ArraySized {
     pub fn expr_type(&self) -> ArraySizedExpr {
         match self {
             ArraySized::Unsized => ArraySizedExpr::Unsized,
-            ArraySized::Sized => ArraySizedExpr::Sized,
+            ArraySized::Slice => ArraySizedExpr::Slice,
             ArraySized::Fixed(_, size) => ArraySizedExpr::Fixed(*size),
         }
     }
     pub fn from(builder: &mut FunctionBuilder, size_type: &ArraySizedExpr) -> ArraySized {
         match size_type {
             ArraySizedExpr::Unsized => ArraySized::Unsized,
-            ArraySizedExpr::Sized => todo!(),
+            ArraySizedExpr::Slice => ArraySized::Slice,
             ArraySizedExpr::Fixed(len) => ArraySized::Fixed(
                 Box::new(SValue::I64(
                     builder.ins().iconst::<i64>(types::I64, *len as i64),
@@ -61,7 +61,7 @@ impl Display for SValue {
             SValue::I64(_) => write!(f, "i64"),
             SValue::Array(sval, size_type) => match size_type {
                 ArraySized::Unsized => write!(f, "&[{}]", sval),
-                ArraySized::Sized => todo!(),
+                ArraySized::Slice => write!(f, "[{}]", sval),
                 ArraySized::Fixed(_size_val, len) => write!(f, "[{}; {}]", sval, len),
             },
             SValue::Address(_) => write!(f, "&"),
@@ -197,7 +197,7 @@ impl Display for SVariable {
             SVariable::I64(name, _) => write!(f, "{}", name),
             SVariable::Array(svar, size_type) => match size_type {
                 ArraySized::Unsized => write!(f, "&[{}]", svar),
-                ArraySized::Sized => todo!(),
+                ArraySized::Slice => write!(f, "[{}]", svar),
                 ArraySized::Fixed(_size_val, len) => write!(f, "&[{}; {}]", svar, len),
             },
             SVariable::Address(name, _) => write!(f, "{}", name),
@@ -361,9 +361,9 @@ pub fn declare_param_and_return_variables(
         let expr_type = &func.returns[0].expr_type;
         match expr_type {
             ExprType::Struct(code_ref, ..)
-            | ExprType::Array(code_ref, _, ArraySizedExpr::Fixed(..)) => {
+            | ExprType::Array(code_ref, _, ArraySizedExpr::Fixed(..) | ArraySizedExpr::Slice) => {
                 trace!(
-                    "{}: fn is returning struct/array {} declaring var {}",
+                    "{}: fn is returning struct/array/slice {} declaring var {}",
                     code_ref,
                     expr_type,
                     &func.returns[0].name
