@@ -1,5 +1,24 @@
 # Sarus Language Documentation
 
+## [Types](#types)
+- [Basic Types](#basic-types)
+- [Arrays](#arrays)
+- [Slices](#slices)
+- [Structs](#structs)
+
+## [Control Flow](#control-flow)
+- [While Loop](#while-loop)
+
+## [Functions](#functions)
+- [Methods](#methods)
+- [Closures](#closures)
+
+## [Math](#math)
+
+## [Rust Interop](#rust-interop)
+
+-----
+
 Most of the following examples are run using:
 ```rust
 use sarus::*;
@@ -74,7 +93,7 @@ b.assert_eq(c)
 a.assert_eq(d)
 ```
 
-## Compound Types
+## Arrays
 
 Arrays in sarus can contain any other type. Every element in the array must of be the same type. Arrays are fixed in length, and the length of the array is encoded in the type.
 
@@ -393,7 +412,7 @@ a.assert_eq(8)
 (if false {5} else if true {6} else {7}).assert_eq(6)
 ```
 
-## While loop
+## While Loop
 
 While loops conditionally
 ```rust , skt-sarus_single_func
@@ -617,7 +636,7 @@ fn main() -> () {
 }
 ```
 
-# Rust interop
+# Rust Interop
 
 To pass structs between Sarus and Rust they need to be declared with `#[repr(C)]`. Sarus functions are callable using `extern "C"`. In most cases the C FFI doesn't support multiple returns so Sarus functions that are going to be called from Rust should only have one return.
 
