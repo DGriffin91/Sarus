@@ -1,21 +1,20 @@
 # Sarus Language Documentation
 
-## [Types](#types)
-- [Basic Types](#basic-types)
-- [Arrays](#arrays)
-- [Slices](#slices)
-- [Structs](#structs)
+- [Types](#types)
+    - [Basic Types](#basic-types)
+    - [Arrays](#arrays)
+    - [Slices](#slices)
+    - [Structs](#structs)
 
-## [Control Flow](#control-flow)
-- [While Loop](#while-loop)
+- [Control Flow](#control-flow)
+    - [While Loop](#while-loop)
 
-## [Functions](#functions)
-- [Methods](#methods)
-- [Closures](#closures)
+- [Functions](#functions)
+    - [Methods](#methods)
+    - [Closures](#closures)
 
-## [Math](#math)
-
-## [Rust Interop](#rust-interop)
+- [Math](#math)
+- [Rust Interop](#rust-interop)
 
 -----
 
