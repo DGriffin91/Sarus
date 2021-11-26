@@ -4069,39 +4069,6 @@ fn main() -> () {
 }
 
 #[test]
-fn out_of_bounds_error() -> anyhow::Result<()> {
-    //setup_logging();
-    let code = r#"
-fn main() -> () { 
-    a = 100
-    b = [1.0; 10]
-    c = b[a]    
-}
-"#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    //let _: Result<(), ()> = try {
-    //    func();
-    //};
-
-    let result = std::panic::catch_unwind(|| {
-        println!("hello!");
-    });
-    assert!(result.is_ok());
-    let a = 100;
-    let b = [1.0; 10];
-    let result = std::panic::catch_unwind(|| {
-        let c = b[a];
-        //func();
-    });
-    assert!(result.is_err());
-
-    dbg!("!!!!!!!!!!!!!!! after");
-    Ok(())
-}
-
-#[test]
 fn basic_slice() -> anyhow::Result<()> {
     //setup_logging();
     let code = r#"

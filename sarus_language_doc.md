@@ -1,6 +1,6 @@
 # Sarus Language Documentation
 
-Most of these example are run using:
+Most of the following examples are run using:
 ```rust
 use sarus::*;
 use std::mem;
@@ -85,7 +85,7 @@ c = [0.0, 1.0, 2.0]          // [f32; 3]
 d = [[0.0, 1.0], [2.0, 3.0]] // [[f32; 2]; 2]
 ```
 
-Array elements are access via indexing. Indexing arrays can only be done using the i64 type.
+Array elements are accessed via indexing. Indexing arrays can only be done using the i64 type.
 ```rust , skt-sarus_single_func
 a = [0, 1, 2, 3] // [i64; 4]
 b = a[2]         // i64
@@ -93,11 +93,10 @@ b = a[2]         // i64
 b.assert_eq(2)
 ```
 
-Out of bounds access:
+Out of bounds access will result in an aborting panic at JIT runtime
 ```rust , ignore
 a = [0, 1, 2, 3] // [i64; 4]
-d = a[4]         // will result in an aborting panic at JIT runtime
-// index out of bounds
+d = a[4] // index out of bounds
 ```
 
 In the future there will be support for wrapping & clipping accessors. There will also be support for falling back to clipping and reporting an error at runtime instead of aborting.
@@ -109,7 +108,7 @@ b = a[0]                     // [f32; 2]
 
 b[1].assert_eq(1.0)
 (a[1])[1].assert_eq(3.0) 
-//TODO don't require parenthesis for multidimensional array access
+//TODO - don't require parenthesis for multidimensional array access
 ```
 
 Initializing large arrays:
@@ -122,7 +121,7 @@ a[9999].assert_eq(0.0)
 
 Types of any size can be allocated (given there is sufficient memory avaliable)
 ```rust , ignore
-a = [0.0; 400000000] // 3200MB of floats
+a = [0.0; 800000000] // 3200MB of floats
 ```
 Most data in Sarus is allocated on the stack. However, the amount of memory avaliable on the stack is limited. To enable larger allocations without relying on runtime heap allocations the memory for this operation is allocated at compile time using the *deep stack*. The deep stack operates similarly to the stack, but is allocated on the heap at compile time. Currently, anything over 4KB is allocated on the deep stack. The deep stack can also be optionally disabled.
 
@@ -166,7 +165,7 @@ c[0].assert_eq(2)
 c[1].assert_eq(3)
 ```
 
-Slices can be made of existing slices that expand the size up to the slice capacity:
+Slices can be made of existing slices that expand the size. (up to the slice capacity):
 ```rust , skt-sarus_single_func
 a = [0, 1, 2, 3, 4, 5]
 b = a[0..2]
@@ -206,11 +205,13 @@ a.len().assert_eq(3)
 a[0].assert_eq(1)
 a[1].assert_eq(2)
 a[2].assert_eq(3)
+
 a.pop().assert_eq(3)
+
 a.len().assert_eq(2)
 ```
 
-Slices can also be appended to with other slices or arrays using the `append` method
+Slices can also be appended to other slices or arrays using the `append` method
 ```rust , skt-sarus_single_func
 a = [0; 100][0..0] // [i64] Slice of array with length of 0 and capacity of 100
 a.append([0, 1, 2])
@@ -260,13 +261,10 @@ fn main() -> () {
         y: 200.0,
         z: 300.0,
     }
-    p.x.assert_eq(100.0)
-    p.y.assert_eq(200.0)
-    p.z.assert_eq(300.0)
 }
 ```
 
-Structs can stored in arrays:
+Structs can be stored in arrays:
 ```rust , skt-sarus_multi_func
 struct Point { x, y, z, }
 fn main() -> () {
@@ -336,7 +334,10 @@ fn main() -> () {
     initial_numbers[0] = 500
     a_stuff.numbers[0].assert_eq(0)
 
-    //When a field that is either an array or struct is assigned to a variable, that variable points to the array or struct allocated in the parent struct, this operation does not create copy
+    // When a field that is either an array or struct is assigned 
+    // to a variable, that variable points to the array or struct 
+    // allocated in the parent struct, this operation does not 
+    // create a copy
 
     sub_thing = a_stuff.sub_thing
     a_stuff.sub_thing.a = 5.0
@@ -380,7 +381,7 @@ if a == 6 {
 }
 a.assert_eq(7)
 
-if a > 6 {
+if a > 6 || false {
     a += 1
 }
 a.assert_eq(8)
@@ -409,7 +410,7 @@ a[99].assert_eq(99)
 
 # Functions
 
-In Sarus both the parameters and the returns have are named, and have type definitions:
+In Sarus both the parameters and the returns are named, and have type definitions:
 ```rust , skt-sarus_multi_func
 fn add(a: i64, b: i64) -> (c: i64) {
     c = a + b
@@ -431,7 +432,7 @@ fn main() -> () {
 }
 ```
 
-Functions can be inlined using the inline keyword. This can result in a decent improvement in performance for small funcitons.
+Functions can be inlined using the inline keyword. This can result in a decent improvement in performance for small functions.
 ```rust , skt-sarus_multi_func
 inline fn add(a, b) -> (c) {
     c = a + b
@@ -466,7 +467,9 @@ fn main() -> () {
 
 Currently, if the return value is a struct or array only one return value is supported. In the future there will be support for returning multiple arrays, structs, etc...
 
-If a function returns a slice, the function must be inlined. This is because the memory for the array is reclamed when the caller's scope ends. When a function needs to return more data than will fit in registers, the caller will allocate the memory required for the return value and pass a pointer to a memory location where the return value can be written. But in the case of returning a slice, it is only returning a pointer to memory that is allocated in the callee. If the function is inlined, and the compiler sees that the function returns a slice, it will not reclaim the memory allocated in the callee.
+If a function returns a slice, the function must be inlined. This is because the memory for the underlying array is reclamed when the caller's scope ends, if the array was also allocated in that function. 
+
+When a C FFI function needs to return more data than will fit in registers, the caller will allocate the memory required for the return value and pass a pointer to a memory location where the return value can be written. But in Sarus when returning a slice, it is only returning a pointer to memory that is allocated in the callee. If the function is inlined, and the compiler sees that the function returns a slice, it will not reclaim the memory allocated in the callee.
 
 ```rust , skt-sarus_multi_func
 inline fn a_slice(a) -> (b: [f32]) {
@@ -480,7 +483,7 @@ fn main() -> () {
 
 # Methods
 
-All types can have methods. Methods operate on their associated types. Methods are declared by using the identifier `self` as the first parameter of the function.
+All types can have methods. Methods operate on their associated types. Methods are declared by using the identifier `self` as the first parameter of a function.
 ```rust , skt-sarus_multi_func
 fn times_2(self: i64) -> (y: i64) {
     y = self * 2
@@ -541,9 +544,9 @@ fn main(n: f32) -> (c: f32) {
 
 # Closures
 
-In Sarus, closures are inlined, and are not an actual value. Their callsite must be known at compile time. This means they are more limited in some ways than in other languages. This also means they don't incur a runtime cost, and memory safety is much simpler because they are ultimately executed in the scope they close around.
+In Sarus, closures are inlined, and are not an actual values. Their callsite must be known at compile time. This means they are more limited in some ways than in other languages. But it also means they don't incur a runtime cost, and memory safety is much simpler because they are ultimately executed in the scope they close around.
 
-Closures currently have very similar syntax to functions, with both named parameters and returns. In the future, this will not be required.
+Closures currently have very similar syntax to functions, with both named parameters and returns. In the future, the return names and possibly even types will not be required.
 
 ```rust , skt-sarus_single_func
 c = 5.0 + 6.0
