@@ -10,15 +10,14 @@ Sarus is in very early stages of development.
 See `tests/integration_test.rs` for a breadth of code examples.
 [sarus-editor-plugin](https://github.com/DGriffin91/sarus-editor-plugin) uses Sarus to JIT compile DSP/UI code in a VST plugin.
 
-Derived from https://github.com/bytecodealliance/cranelift-jit-demo
-
 test with `cargo test`
 
 In Progress: (more or less usable)
-- Base types: bool, f32, i64, &[f32], &[i64], [100; f32], ...
-- `repr(C)` Structs with impls
-- Functions with multiple return variables, and optional inline
-- Basic branching (if/then, if/then/else)
+- Base types: bool, f32, i64
+- Composite types: Fixed length arrays [f32; 100], Slices [f32]
+- `repr(C)` Structs with method implementations
+- Functions with multiple return variables, and optional inlineing 
+- Basic branching (if/then, if/then/else, etc...)
 - While loop   
 - Call Sarus functions from Rust and vice versa with `extern "C"`
 - Custom metadata associated functions/expressions
