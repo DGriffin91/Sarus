@@ -6,6 +6,7 @@
 Sarus is in very early stages of development.
 
 [Sarus Language Documentation](https://github.com/DGriffin91/Sarus/sarus_language_doc.md)
+
 See `tests/integration_test.rs` for a breadth of code examples.
 [sarus-editor-plugin](https://github.com/DGriffin91/sarus-editor-plugin) uses Sarus to JIT compile DSP/UI code in a VST plugin.
 
