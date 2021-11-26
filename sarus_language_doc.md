@@ -619,4 +619,101 @@ fn main() -> () {
 
 # Rust interop
 
-TODO - Show examples (for now see `tests/integration_test.rs`)
+To pass structs between Sarus and Rust they need to be declared with `#[repr(C)]`. Sarus functions are callable using `extern "C"`. In most cases the C FFI doesn't support multiple returns so Sarus functions that are going to be called from Rust should only have one return.
+
+```rust 
+use sarus::*;
+use std::mem;
+
+#[repr(C)]
+struct Point {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+fn main() {
+    //Define Sarus Code
+    let code = r#"
+struct Point {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+fn length(self: Point) -> (r: f32) {
+    r = (self.x.powf(2.0) + self.y.powf(2.0) + self.z.powf(2.0)).sqrt()
+}
+
+fn main(p1: Point) -> (c: f32) {
+    c = p1.length()
+}
+"#;
+    // Get jit default instance
+    let mut jit = default_std_jit_from_code(code).unwrap();
+
+    // Get pointer to Sarus main function
+    let func_ptr = jit.get_func("main").unwrap();
+
+    // Get function that can be called from rust code
+    let func = unsafe { mem::transmute::<_, extern "C" fn(Point) -> f32>(func_ptr) };
+
+    let p2 = Point {
+        x: 100.0,
+        y: 200.0,
+        z: 300.0,
+    };
+
+    // Call Sarus Function
+    assert_eq!(func(p2), 374.16574)
+}
+```
+
+Calling Rust function from Sarus:
+```rust 
+use sarus::*;
+use std::mem;
+
+extern "C" fn length(p: Point) -> f32 {
+    (p.x.powf(2.0) + p.y.powf(2.0) + p.z.powf(2.0)).sqrt()
+}
+
+#[repr(C)]
+struct Point {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+fn main() {
+    let code = r#"
+extern fn length(self: Point) -> (l: f32) {}
+
+struct Point {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+fn main(p1: Point) -> () {
+    p1.length().assert_eq(374.16574)
+}
+"#;
+    let ast = parse(code).unwrap();
+    let mut jit = default_std_jit_from_code_with_importer(ast, None, |_ast, jit_builder| {
+        // Give Rust function pointer to Sarus compiler
+        // When a function is a method, we use the format struct_name.method_name
+        jit_builder.symbols([("Point.length", length as *const u8)]);
+    }).unwrap();
+    let func_ptr = jit.get_func("main").unwrap();
+    let func = unsafe { mem::transmute::<_, extern "C" fn(Point) >(func_ptr) };
+
+    let p2 = Point {
+        x: 100.0,
+        y: 200.0,
+        z: 300.0,
+    };
+
+    func(p2)
+}
+```
