@@ -4271,7 +4271,7 @@ fn main() -> () {
 fn return_slice_from_func() -> anyhow::Result<()> {
     //setup_logging();
     let code = r#"
-fn takes_slices(in: [f32]) -> (r: [f32]) {
+inline fn takes_slices(in: [f32]) -> (r: [f32]) {
     r = in
 }
 
@@ -4353,6 +4353,17 @@ fn main() -> () {
     sl6[0].assert_eq(1.0)
     sl6[1].assert_eq(2.0)
     sl6[2].assert_eq(3.0)
+
+    a = [0, 1, 2, 3, 4, 5]
+    b = a[0..2]
+    b.len().assert_eq(2)
+    b.cap().assert_eq(6)
+    
+    c = b[..6]
+    c.len().assert_eq(6)
+    c.cap().assert_eq(6)
+    c[4].assert_eq(4)
+    c[5].assert_eq(5)
 }
 "#;
     let mut jit = default_std_jit_from_code(code)?;
@@ -4468,6 +4479,25 @@ fn main() -> () {
     sl[2].x.assert_eq(7.0)
     sl[2].y.assert_eq(8.0)
     sl[2].z.assert_eq(9.0)
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn returns_a_slice() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+inline fn a_slice(a) -> (b: [f32]) {
+    b = [a; 100][..]
+}
+fn main() -> () {
+    b = a_slice(5.0)
+    b[20].assert_eq(5.0)
 }
 "#;
     let mut jit = default_std_jit_from_code(code)?;

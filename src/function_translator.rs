@@ -747,7 +747,7 @@ impl<'a> FunctionTranslator<'a> {
                                     self.isub(orig_slice_cap, start_v),
                                 )
                             } else {
-                                (array_start_address, end_v, orig_slice_len)
+                                (array_start_address, end_v, orig_slice_cap)
                             };
 
                         self.store(array_start_address_with_offset, new_slice_start, 0);
@@ -2728,6 +2728,18 @@ impl<'a> FunctionTranslator<'a> {
             }
         }
 
+        let mut inline_scope = false;
+        for ret_arg in &func.returns {
+            if let ExprType::Array(_, _, ArraySizedExpr::Slice) = ret_arg.expr_type {
+                inline_scope = true;
+                break;
+            }
+        }
+
+        if inline_scope && !inline_function {
+            anyhow::bail!("functions returning slices must be inlined")
+        }
+
         let res = if inline_function {
             trace!(
                 "{} inlining function {}",
@@ -2750,7 +2762,7 @@ impl<'a> FunctionTranslator<'a> {
             //self.builder.block_params(func_block).to_vec()
             self.func_stack.push(func.clone()); //push inlined func onto func_stack
             self.variables.push(HashMap::new()); //new variable scope for inline func
-            if self.use_deep_stack {
+            if self.use_deep_stack && !inline_scope {
                 self.deep_stack_widths.push(0);
             }
 
@@ -2835,7 +2847,9 @@ impl<'a> FunctionTranslator<'a> {
             //finished with inline scope
             self.func_stack.pop();
             self.variables.pop();
-            self.dealloc_deep_stack();
+            if self.use_deep_stack && !inline_scope {
+                self.dealloc_deep_stack();
+            }
 
             _return
         } else if let Some(sig) = sig {
