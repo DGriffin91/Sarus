@@ -5,6 +5,7 @@ use cranelift::prelude::*;
 pub use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::Module;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fmt::Display;
 
 use tracing::instrument;
@@ -345,7 +346,15 @@ impl SVariable {
 
 #[instrument(
     level = "info",
-    skip(builder, module, func, entry_block, variables, inline_arg_values)
+    skip(
+        builder,
+        module,
+        func,
+        entry_block,
+        variables,
+        per_scope_vars,
+        inline_arg_values
+    )
 )]
 pub fn declare_param_and_return_variables(
     index: &mut usize,
@@ -354,8 +363,10 @@ pub fn declare_param_and_return_variables(
     func: &Function,
     entry_block: Block,
     variables: &mut HashMap<String, SVariable>,
+    per_scope_vars: &mut HashSet<String>,
     inline_arg_values: &Option<Vec<Value>>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<HashSet<String>> {
+    let mut return_var_names = HashSet::new();
     //Declare returns
     let entry_block_is_offset = if !func.returns.is_empty() {
         let expr_type = &func.returns[0].expr_type;
@@ -382,6 +393,7 @@ pub fn declare_param_and_return_variables(
                     let return_param_val = builder.block_params(entry_block)[0];
                     (return_arg.name.clone(), return_param_val)
                 };
+                return_var_names.insert(name.clone());
                 declare_variable(
                     module.target_config().pointer_type(),
                     &return_arg.expr_type,
@@ -389,6 +401,7 @@ pub fn declare_param_and_return_variables(
                     index,
                     &[&name],
                     variables,
+                    per_scope_vars,
                     true,
                 )?;
                 if let Some(var) = variables.get(&name) {
@@ -398,15 +411,17 @@ pub fn declare_param_and_return_variables(
             }
             _ => {
                 for arg in &func.returns {
-                    declare_variable(
-                        module.target_config().pointer_type(),
-                        &arg.expr_type,
-                        builder,
-                        index,
-                        &[&arg.name],
-                        variables,
-                        false,
-                    )?;
+                    return_var_names.insert(arg.name.clone());
+                    //declare_variable(
+                    //    module.target_config().pointer_type(),
+                    //    &arg.expr_type,
+                    //    builder,
+                    //    index,
+                    //    &[&arg.name],
+                    //    variables,
+                    //    per_scope_vars,
+                    //    false,
+                    //)?;
                 }
                 false
             }
@@ -440,6 +455,7 @@ pub fn declare_param_and_return_variables(
             index,
             &[&arg.name],
             variables,
+            per_scope_vars,
             false,
         )?;
         if let Some(var) = variables.get(&arg.name) {
@@ -447,7 +463,7 @@ pub fn declare_param_and_return_variables(
         }
     }
 
-    Ok(())
+    Ok(return_var_names)
 }
 
 pub fn declare_variable(
@@ -457,6 +473,7 @@ pub fn declare_variable(
     index: &mut usize,
     names: &[&str],
     variables: &mut HashMap<String, SVariable>,
+    per_scope_vars: &mut HashSet<String>,
     return_struct: bool,
 ) -> anyhow::Result<()> {
     let name = *names.first().unwrap();
@@ -472,6 +489,7 @@ pub fn declare_variable(
                 trace!("{} {} {}", code_ref, expr_type, name);
                 let var = Variable::new(*index);
                 variables.insert(name.into(), SVariable::Bool(name.into(), var));
+                per_scope_vars.insert(name.into());
                 builder.declare_var(var, types::B1);
                 *index += 1;
             }
@@ -481,6 +499,7 @@ pub fn declare_variable(
                 trace!("{} {} {}", code_ref, expr_type, name);
                 let var = Variable::new(*index);
                 variables.insert(name.into(), SVariable::F32(name.into(), var));
+                per_scope_vars.insert(name.into());
                 builder.declare_var(var, types::F32);
                 *index += 1;
             }
@@ -490,6 +509,7 @@ pub fn declare_variable(
                 trace!("{} {} {}", code_ref, expr_type, name);
                 let var = Variable::new(*index);
                 variables.insert(name.into(), SVariable::I64(name.into(), var));
+                per_scope_vars.insert(name.into());
                 builder.declare_var(var, types::I64);
                 *index += 1;
             }
@@ -505,6 +525,7 @@ pub fn declare_variable(
                         ArraySized::from(builder, size_type),
                     ),
                 );
+                per_scope_vars.insert(name.into());
                 builder.declare_var(var, ptr_type);
                 *index += 1;
             }
@@ -514,6 +535,7 @@ pub fn declare_variable(
                 trace!("{} {} {}", code_ref, expr_type, name);
                 let var = Variable::new(*index);
                 variables.insert(name.into(), SVariable::Address(name.into(), var));
+                per_scope_vars.insert(name.into());
                 builder.declare_var(var, ptr_type);
                 *index += 1;
             }
@@ -530,6 +552,7 @@ pub fn declare_variable(
                             index,
                             &[sname],
                             variables,
+                            per_scope_vars,
                             return_struct,
                         )?
                     }
@@ -544,6 +567,7 @@ pub fn declare_variable(
                     index,
                     &[sname],
                     variables,
+                    per_scope_vars,
                     return_struct,
                 )?
             }
@@ -556,6 +580,7 @@ pub fn declare_variable(
                     name.into(),
                     SVariable::Struct(name.into(), structname.to_string(), var, return_struct),
                 );
+                per_scope_vars.insert(name.into());
                 builder.declare_var(var, ptr_type);
                 *index += 1;
             }

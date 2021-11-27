@@ -11,6 +11,7 @@ use cranelift::prelude::*;
 pub use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataContext, Linkage, Module};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::slice;
 use tracing::info;
@@ -163,9 +164,10 @@ impl JIT {
                     if func.extern_func {
                         // Don't compile the contents of std func, it will be empty
                         trace!(
-                            "Function {} is an external function, skipping codegen",
-                            func.sig_string()?
+                            "Function {} is an external function, skipping codegen.",
+                            func.sig_string()?,
                         );
+                        //TODO self.module.lookup_symbol(func.name);
                         continue;
                     }
                     if let InlineKind::Always = func.inline {
@@ -403,15 +405,17 @@ impl JIT {
         //println!("declare_variables {}", func.name);
 
         let mut variables = HashMap::new();
+        let mut per_scope_vars = vec![vec![HashSet::new()]];
 
         let mut var_index = 0;
-        declare_param_and_return_variables(
+        let return_var_names = declare_param_and_return_variables(
             &mut var_index,
             &mut builder,
             &mut self.module,
             func,
             entry_block,
             &mut variables,
+            &mut per_scope_vars.last_mut().unwrap().last_mut().unwrap(),
             &None,
         )?;
 
@@ -427,9 +431,11 @@ impl JIT {
             ptr_width,
             env,
             func_stack: vec![func.clone()],
+            unassigned_return_var_names: vec![return_var_names],
             entry_block,
             var_index,
             variables: vec![variables],
+            per_scope_vars,
             expr_depth: 0,
             deep_stack_widths: vec![0],
             use_deep_stack: self.use_deep_stack,
@@ -442,12 +448,14 @@ impl JIT {
         self.total_max_deep_stack_size += trans.max_deep_stack_size;
         trans.dealloc_deep_stack();
 
+        trans.check_unassigned_return_var_names(&func.name)?;
+
         // Set up the return variable of the function. Above, we declared a
         // variable to hold the return value. Here, we just do a use of that
         // variable.
         let mut return_values = Vec::new();
         for ret in func.returns.iter() {
-            let return_variable = trans.variables.last().unwrap().get(&ret.name).unwrap();
+            let return_variable = trans.get_variable(&CodeRef::z(), &ret.name)?.clone();
             let v = match &ret.expr_type {
                 ExprType::F32(code_ref) => trans
                     .builder

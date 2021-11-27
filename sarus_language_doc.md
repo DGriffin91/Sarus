@@ -411,6 +411,18 @@ a.assert_eq(8)
 (if false {5} else if true {6} else {7}).assert_eq(6)
 ```
 
+Variables that are only declared inside inner if/then or while loop scopes are not accessible to outer scopes.
+```rust , ignore
+a = 2 + 7
+if a > 9 {
+    // it is not known at compile time if the code inside this 
+    // branch will execute. To avoid access to uninitialized 
+    // variables b is not accessible outside this scope.
+    b = 6
+}
+c = b + a // results in panic
+```
+
 ## While Loop
 
 While loops conditionally
@@ -549,12 +561,6 @@ fn main(n: f32) -> (c: f32) {
         a: p1,
         b: p2,
     }
-
-    d = l1.a
-    e = d.x + l1.a.x
-    
-    p1.y = e * d.z
-    p1.y.assert_eq(e * d.z)
 
     c = l1.length()
 }

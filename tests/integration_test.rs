@@ -1158,8 +1158,8 @@ fn main(n: f32) -> (c: f32) {
     p1.print()
     p2.print()
     l1.print()
-    d = l1.a //struct is copied
-    e = d.x + l1.a.x //f32's are copied
+    d = l1.a
+    e = d.x + l1.a.x
     d.print()
     
     p1.y = e * d.z
@@ -1229,7 +1229,7 @@ struct Point {
     z: f32,
 }
 
-fn main(n: f32) -> (c: f32) {
+fn main(n: f32) -> () {
     p1 = Point {
         x: n,
         y: 200.0,
@@ -1256,7 +1256,7 @@ fn main(n: f32) -> (c: f32) {
     let a = 100.0f32;
     let mut jit = default_std_jit_from_code(code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f32) -> f32>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32)>(func_ptr) };
     dbg!(func(a));
     //assert_eq!(200.0, func(a));
     //jit.print_clif(true);
@@ -1290,7 +1290,7 @@ fn print(self: Bar) -> () {
     "}".println()
 }
 
-fn main(n: f32) -> (c: f32) {
+fn main(n: f32) -> () {
     pe = Bar {
         x: n,
     }
@@ -1313,7 +1313,7 @@ fn main(n: f32) -> (c: f32) {
         jit_builder.symbols([("dbgf", dbgf as *const u8), ("dbgi", dbgi as *const u8)]);
     })?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f32) -> f32>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32)>(func_ptr) };
     dbg!(func(a));
     //assert_eq!(200.0, func(a));
     //jit.print_clif(false);
@@ -1422,7 +1422,7 @@ fn main(n: f32) -> (c: f32) {
         b: p2,
     }
 
-    d = l1.a //struct is copied
+    d = l1.a
     e = d.x + l1.a.x
     
     p1.y = e * d.z
@@ -1462,7 +1462,7 @@ fn set_to_0(point: Point) -> () {
     point.z = 0.0
 }
 
-fn main(n: f32) -> (c: f32) {
+fn main(n: f32) -> () {
     p1 = Point {
         x: n,
         y: 200.0,
@@ -1494,7 +1494,7 @@ fn main(n: f32) -> (c: f32) {
     let a = 100.0f32;
     let mut jit = default_std_jit_from_code(code)?;
     let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn(f32) -> f32>(func_ptr) };
+    let func = unsafe { mem::transmute::<_, extern "C" fn(f32)>(func_ptr) };
     dbg!(func(a));
     //assert_eq!(200.0, func(a));
     //jit.print_clif(true);
@@ -2028,8 +2028,8 @@ struct AudioData {
 
 fn process(audio: AudioData) -> () {
     i = 0
+    left = audio.left
     while i < audio.len {
-        left = audio.left
         left[i] = i.f32()
         audio.right[i] = i.f32()  
         i += 1
@@ -3087,7 +3087,7 @@ fn float_to_int(a: f32) -> (c: i64) {
     }
     c.assert_eq(n)
 }
-fn main(a: f32) -> (c: i64) {
+fn main(a: f32) -> () {
     float_to_int(0.0).assert_eq(0)
     float_to_int(1.0).assert_eq(1)
     float_to_int(2.0).assert_eq(2)
@@ -3146,7 +3146,7 @@ fn float_to_int2(a: f32) -> (c: i64) {
     }
     c.assert_eq(n)
 }
-fn main(a: f32) -> (c: i64) {
+fn main(a: f32) -> () {
     float_to_int(0.0).assert_eq(0)
     float_to_int(1.0).assert_eq(1)
     float_to_int(2.0).assert_eq(2)
@@ -3427,7 +3427,7 @@ fn main() -> () {
     fn passing_no_param() -> anyhow::Result<()> {
         //setup_logging();
         let code = r#"
-always_inline fn run_some_closure(some_closure: || -> ()) -> (f) {
+always_inline fn run_some_closure(some_closure: || -> ()) -> () {
     some_closure()
 }
 fn main() -> () {
@@ -3797,12 +3797,14 @@ fn var_define_checking() -> anyhow::Result<()> {
     let code = r#"
 
 fn main() -> () {  
+    a = 0.0
     if false {
         a = 5.0
     } else {
         a = 4.0
     }
     a.assert_eq(4.0)
+    b = 0.0
     if false {
         b = 5.0
     } else if (true) {
@@ -3938,7 +3940,6 @@ fn main() -> () {
         a = 5
         a.assert_eq(5)
     }
-    a.assert_eq(5)
 }
 "#;
     let mut jit = default_std_jit_from_code(code)?;
@@ -4465,6 +4466,24 @@ inline fn a_slice(a) -> (b: [f32]) {
 fn main() -> () {
     b = a_slice(5.0)
     b[20].assert_eq(5.0)
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn scoped_vars() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+fn main() -> () {
+    if true {
+        a = 1.0 //does not live outside if statement
+    }
+    a = true
 }
 "#;
     let mut jit = default_std_jit_from_code(code)?;

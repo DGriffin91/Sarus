@@ -12,6 +12,7 @@ use cranelift::prelude::*;
 pub use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::ffi::CString;
 use tracing::info;
 use tracing::instrument;
@@ -32,10 +33,23 @@ pub struct FunctionTranslator<'a> {
     // should have the variables for the "current" function (inline or not)
     pub variables: Vec<HashMap<String, SVariable>>,
 
+    // Variables per scope where as a scope is entered a set is pushed on
+    // Variables that don't already exist in higher scopes are added to
+    // the last set. When that scope is exited, the last is popped and
+    // the vars are removed from the`variables` field above since they
+    // are no longer accessible
+    // first vec is current function, second vec is current scope
+    pub per_scope_vars: Vec<Vec<HashSet<String>>>,
+
     // Stack of inlined function names. Used as prefixes for inline
     // when entering an inline section the func name will be appended
     // when leaving the inline section the func name will be removed
     pub func_stack: Vec<Function>,
+
+    // This is used to make sure these are assigned to at some
+    // point in the function in an appropriate scope
+    // use last on vec for current function
+    pub unassigned_return_var_names: Vec<HashSet<String>>,
 
     // so that we can add inline vars
     pub entry_block: Block,
@@ -161,7 +175,7 @@ impl<'a> FunctionTranslator<'a> {
         v
     }
 
-    fn get_variable(&mut self, code_ref: &CodeRef, name: &str) -> anyhow::Result<&SVariable> {
+    pub fn get_variable(&mut self, code_ref: &CodeRef, name: &str) -> anyhow::Result<&SVariable> {
         match self.variables.last().unwrap().get(name) {
             Some(v) => Ok(v),
             None => anyhow::bail!(
@@ -1005,8 +1019,12 @@ impl<'a> FunctionTranslator<'a> {
                             &mut self.var_index,
                             &[&name],
                             &mut self.variables.last_mut().unwrap(),
+                            &mut self.per_scope_vars.last_mut().unwrap().last_mut().unwrap(),
                             false,
                         )?;
+
+                        self.update_unassigned_return_var_names(name);
+
                         //Can this be done without clone?
                         let dst_svar = self.get_variable(code_ref, name)?.clone();
 
@@ -1142,8 +1160,10 @@ impl<'a> FunctionTranslator<'a> {
                                 &mut self.var_index,
                                 &[&name],
                                 &mut self.variables.last_mut().unwrap(),
+                                &mut self.per_scope_vars.last_mut().unwrap().last_mut().unwrap(),
                                 false,
                             )?;
+                            self.update_unassigned_return_var_names(name);
                             let var = self.get_variable(code_ref, name)?.inner();
                             self.builder
                                 .def_var(var, values[i].inner("translate_assign")?);
@@ -1505,6 +1525,8 @@ impl<'a> FunctionTranslator<'a> {
         condition: &Expr,
         then_body: &[Expr],
     ) -> anyhow::Result<SValue> {
+        self.per_scope_vars_enter_scope();
+
         let b_condition_value = self.translate_expr(condition)?.inner("if_then")?;
 
         let then_block = self.builder.create_block();
@@ -1527,6 +1549,8 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.switch_to_block(merge_block);
         // We've now seen all the predecessors of the merge block.
         self.builder.seal_block(merge_block);
+
+        self.per_scope_vars_leave_scope();
         Ok(SValue::Void)
     }
 
@@ -1536,6 +1560,8 @@ impl<'a> FunctionTranslator<'a> {
         then_body: &[Expr],
         else_body: &[Expr],
     ) -> anyhow::Result<SValue> {
+        self.per_scope_vars_enter_scope();
+
         let b_condition_value = self.translate_expr(condition)?.inner("translate_if_else")?;
 
         let then_block = self.builder.create_block();
@@ -1620,6 +1646,8 @@ impl<'a> FunctionTranslator<'a> {
         // We've now seen all the predecessors of the merge block.
         self.builder.seal_block(merge_block);
 
+        self.per_scope_vars_leave_scope();
+
         // Read the value of the if-else by reading the merge block
         // parameter.
         let phi = self.builder.block_params(merge_block);
@@ -1655,6 +1683,8 @@ impl<'a> FunctionTranslator<'a> {
         code_ref: &CodeRef,
         condition_bodies: &[(Expr, Vec<Expr>)],
     ) -> anyhow::Result<SValue> {
+        self.per_scope_vars_enter_scope();
+
         //TODO see how rust or other languages do this, there may be a more efficient way
         trace!(
             "{}: translate_if_then_else_if {:?}",
@@ -1706,6 +1736,8 @@ impl<'a> FunctionTranslator<'a> {
         // We've now seen all the predecessors of the merge block.
         self.builder.seal_block(merge_block);
 
+        self.per_scope_vars_leave_scope();
+
         Ok(SValue::Void)
     }
 
@@ -1715,6 +1747,8 @@ impl<'a> FunctionTranslator<'a> {
         condition_bodies: &[(Expr, Vec<Expr>)],
         else_body: &[Expr],
     ) -> anyhow::Result<SValue> {
+        self.per_scope_vars_enter_scope();
+
         //TODO see how rust or other languages do this, there may be a more efficient way
         trace!(
             "{}: translate_if_then_else_if_else {:?}",
@@ -1831,6 +1865,8 @@ impl<'a> FunctionTranslator<'a> {
         // We've now seen all the predecessors of the merge block.
         self.builder.seal_block(merge_block);
 
+        self.per_scope_vars_leave_scope();
+
         // Read the value of the if-else by reading the merge block
         // parameter.
         let phi = self.builder.block_params(merge_block);
@@ -1862,6 +1898,8 @@ impl<'a> FunctionTranslator<'a> {
         condition: &Expr,
         loop_body: &[Expr],
     ) -> anyhow::Result<SValue> {
+        self.per_scope_vars_enter_scope();
+
         let header_block = self.builder.create_block();
         let body_block = self.builder.create_block();
         let exit_block = self.builder.create_block();
@@ -1897,6 +1935,8 @@ impl<'a> FunctionTranslator<'a> {
         // more backedges to the header to exits to the bottom.
         self.builder.seal_block(header_block);
         self.builder.seal_block(exit_block);
+
+        self.per_scope_vars_leave_scope();
 
         Ok(SValue::Void)
     }
@@ -2761,7 +2801,8 @@ impl<'a> FunctionTranslator<'a> {
             //}
             //self.builder.block_params(func_block).to_vec()
             self.func_stack.push(func.clone()); //push inlined func onto func_stack
-            self.variables.push(HashMap::new()); //new variable scope for inline func
+            self.variables.push(HashMap::new()); //new variable func scope for inline func
+            self.per_scope_vars.push(vec![HashSet::new()]);
             if self.use_deep_stack && !inline_scope {
                 self.deep_stack_widths.push(0);
             }
@@ -2822,15 +2863,18 @@ impl<'a> FunctionTranslator<'a> {
             }
 
             // inlined functions will not have variables already declared
-            declare_param_and_return_variables(
+            let return_var_names = declare_param_and_return_variables(
                 &mut self.var_index,
                 &mut self.builder,
                 &mut self.module,
                 func,
                 self.entry_block,
                 self.variables.last_mut().unwrap(),
+                &mut self.per_scope_vars.last_mut().unwrap().last_mut().unwrap(),
                 &Some(arg_values),
             )?;
+
+            self.unassigned_return_var_names.push(return_var_names);
 
             // translate inline func body
             for expr in &func.body {
@@ -2844,9 +2888,13 @@ impl<'a> FunctionTranslator<'a> {
                 _return.push(self.builder.use_var(v))
             }
 
+            self.check_unassigned_return_var_names(&func.name)?;
+
             //finished with inline scope
             self.func_stack.pop();
             self.variables.pop();
+            self.per_scope_vars.pop();
+            self.unassigned_return_var_names.pop();
             if self.use_deep_stack && !inline_scope {
                 self.dealloc_deep_stack();
             }
@@ -3082,6 +3130,40 @@ impl<'a> FunctionTranslator<'a> {
             },
             _ => None,
         })
+    }
+
+    pub fn check_unassigned_return_var_names(&mut self, func_name: &str) -> anyhow::Result<()> {
+        //Make sure all return vars are in scope at the end of the function
+        if self.unassigned_return_var_names.last().unwrap().len() > 0 {
+            anyhow::bail!(
+                "return variables {:?} never assigned to in fn {}",
+                self.unassigned_return_var_names.last().unwrap(),
+                func_name,
+            )
+        } else {
+            Ok(())
+        }
+    }
+
+    fn update_unassigned_return_var_names(&mut self, name: &str) {
+        if self.per_scope_vars.last_mut().unwrap().len() == 1 {
+            // we are in top level scope
+            // remove var if it has been declared
+            self.unassigned_return_var_names
+                .last_mut()
+                .unwrap()
+                .remove(name);
+        }
+    }
+
+    fn per_scope_vars_enter_scope(&mut self) {
+        self.per_scope_vars.last_mut().unwrap().push(HashSet::new());
+    }
+
+    fn per_scope_vars_leave_scope(&mut self) {
+        for var in self.per_scope_vars.last_mut().unwrap().pop().unwrap() {
+            self.variables.last_mut().unwrap().remove(&var);
+        }
     }
 
     fn alloc(&mut self, width: usize) -> Value {
