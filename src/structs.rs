@@ -197,6 +197,7 @@ fn can_insert_into_map(
         | ExprType::Bool(_code_ref)
         | ExprType::F32(_code_ref)
         | ExprType::I64(_code_ref)
+        | ExprType::U8(_code_ref)
         | ExprType::Address(_code_ref)
         | ExprType::Tuple(_code_ref, _) => can_insert,
         ExprType::Struct(code_ref, field_struct_name) => {

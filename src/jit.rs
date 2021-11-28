@@ -358,6 +358,7 @@ impl JIT {
                 match &p.expr_type {
                     ExprType::F32(_code_ref) => AbiParam::new(types::F32),
                     ExprType::I64(_code_ref) => AbiParam::new(types::I64),
+                    ExprType::U8(_code_ref) => AbiParam::new(types::I8),
                     ExprType::Array(_code_ref, _ty, _len) => AbiParam::new(ptr_ty),
                     ExprType::Address(_code_ref) => AbiParam::new(ptr_ty),
                     ExprType::Void(_code_ref) => continue,
@@ -463,6 +464,9 @@ impl JIT {
                 ExprType::I64(code_ref) => trans
                     .builder
                     .use_var(return_variable.expect_i64(code_ref, "return_variable")?),
+                ExprType::U8(code_ref) => trans
+                    .builder
+                    .use_var(return_variable.expect_u8(code_ref, "return_variable")?),
                 ExprType::Array(code_ref, ty, size_type) => match size_type {
                     ArraySizedExpr::Unsized => {
                         trans.builder.use_var(return_variable.expect_array(

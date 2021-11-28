@@ -4,6 +4,7 @@
     - [Basic Types](#basic-types)
     - [Arrays](#arrays)
     - [Slices](#slices)
+    - [Strings](#strings)
     - [Structs](#structs)
 
 - [Control Flow](#control-flow)
@@ -68,7 +69,7 @@ x = 5.0 // will result in an error at JIT compile time
 a = 1      // i64
 b = 1.0    // f32
 c = true   // bool
-//d = 'a'  // byte (TODO not yet implemented)
+d = 1u8    // u8
 ```
 
 Expression types are inferred implicitly. Operations are only allowed between expressions of the same type.
@@ -83,13 +84,12 @@ There are included methods for converting between numeric types.
 The `assert_eq` method will panic if the values are not equal.
 
 ```rust , skt-sarus_single_func
-a = 1       // i64
-b = a.f32() // f32
-c = 1.0     // f32
-d = c.i64() // i64
-
-b.assert_eq(c)
-a.assert_eq(d)
+(1).f32().assert_eq(1.0)
+(1).u8().assert_eq(1u8)
+(1.0).i64().assert_eq(1)
+(1.0).u8().assert_eq(1u8)
+(1u8).f32().assert_eq(1.0)
+(1u8).i64().assert_eq(1)
 ```
 
 ## Arrays
@@ -246,6 +246,36 @@ a.append(c)
 a.len().assert_eq(5)
 a[3].assert_eq(6)
 a[4].assert_eq(7)
+```
+
+## Strings
+
+Strings are u8 slices that are filled UTF-8 characters:
+```rust , skt-sarus_single_func
+a = "Hello, World!"
+
+a.len().assert_eq(13)
+a.cap().assert_eq(13)
+```
+
+They can be appended to like any other slice:
+```rust , skt-sarus_single_func
+// Create slice that points to array of 1000 bytes with 0 len and 1000 cap
+a = [0u8; 1000][0..0] 
+
+a.append("Hello")
+a.append(", ")
+a.append("World")
+a.append("!")
+
+a.assert_eq("Hello, World!")
+a.println()
+```
+
+Keep in mind that [UTF-8 is a variable-width character encoding](https://en.wikipedia.org/wiki/UTF-8) and the number of bytes a UTF-8 character is represented by can vary from character to character. 
+```
+a = "한글"
+a.len().assert_eq(6)
 ```
 
 ## Structs

@@ -47,6 +47,7 @@ pub enum SValue {
     Bool(Value),
     F32(Value),
     I64(Value),
+    U8(Value),
     Array(Box<SValue>, ArraySized),
     Address(Value),
     Tuple(Vec<SValue>),
@@ -60,6 +61,7 @@ impl Display for SValue {
             SValue::Bool(_) => write!(f, "bool"),
             SValue::F32(_) => write!(f, "f32"),
             SValue::I64(_) => write!(f, "i64"),
+            SValue::U8(_) => write!(f, "u8"),
             SValue::Array(sval, size_type) => match size_type {
                 ArraySized::Unsized => write!(f, "&[{}]", sval),
                 ArraySized::Slice => write!(f, "[{}]", sval),
@@ -84,6 +86,7 @@ impl SValue {
             ExprType::Bool(_code_ref) => SValue::Bool(value),
             ExprType::F32(_code_ref) => SValue::F32(value),
             ExprType::I64(_code_ref) => SValue::I64(value),
+            ExprType::U8(_code_ref) => SValue::U8(value),
             ExprType::Array(_code_ref, ty, size_type) => SValue::Array(
                 Box::new(SValue::from(builder, ty, value)?),
                 ArraySized::from(builder, size_type),
@@ -102,6 +105,7 @@ impl SValue {
             SVariable::Bool(_, v) => SValue::Bool(builder.use_var(*v)),
             SVariable::F32(_, v) => SValue::F32(builder.use_var(*v)),
             SVariable::I64(_, v) => SValue::I64(builder.use_var(*v)),
+            SVariable::U8(_, v) => SValue::U8(builder.use_var(*v)),
             SVariable::Address(_, v) => SValue::Address(builder.use_var(*v)),
             SVariable::Array(svar, len) => SValue::Array(
                 Box::new(SValue::get_from_variable(builder, svar)?),
@@ -118,6 +122,7 @@ impl SValue {
             SValue::Bool(_) => SValue::Bool(value),
             SValue::F32(_) => SValue::F32(value),
             SValue::I64(_) => SValue::I64(value),
+            SValue::U8(_) => SValue::U8(value),
             SValue::Array(sval, len) => {
                 SValue::Array(Box::new(sval.replace_value(value)?), len.clone())
             }
@@ -140,6 +145,7 @@ impl SValue {
             SValue::Bool(_) => ExprType::Bool(*code_ref),
             SValue::F32(_) => ExprType::F32(*code_ref),
             SValue::I64(_) => ExprType::I64(*code_ref),
+            SValue::U8(_) => ExprType::U8(*code_ref),
             SValue::Array(sval, size_type) => ExprType::Array(
                 *code_ref,
                 Box::new(sval.expr_type(code_ref)?),
@@ -157,6 +163,7 @@ impl SValue {
             SValue::Bool(v) => Ok(*v),
             SValue::F32(v) => Ok(*v),
             SValue::I64(v) => Ok(*v),
+            SValue::U8(v) => Ok(*v),
             SValue::Array(sval, _len) => Ok(sval.inner(ctx)?),
             SValue::Address(v) => Ok(*v),
             SValue::Void => anyhow::bail!("void has no inner {}", ctx),
@@ -184,6 +191,7 @@ pub enum SVariable {
     Bool(String, Variable),
     F32(String, Variable),
     I64(String, Variable),
+    U8(String, Variable),
     Array(Box<SVariable>, ArraySized),
     Address(String, Variable),
     Struct(String, String, Variable, bool),
@@ -196,6 +204,7 @@ impl Display for SVariable {
             SVariable::Bool(name, _) => write!(f, "{}", name),
             SVariable::F32(name, _) => write!(f, "{}", name),
             SVariable::I64(name, _) => write!(f, "{}", name),
+            SVariable::U8(name, _) => write!(f, "{}", name),
             SVariable::Array(svar, size_type) => match size_type {
                 ArraySized::Unsized => write!(f, "&[{}]", svar),
                 ArraySized::Slice => write!(f, "[{}]", svar),
@@ -216,6 +225,7 @@ impl SVariable {
             SVariable::Bool(_, v) => *v,
             SVariable::F32(_, v) => *v,
             SVariable::I64(_, v) => *v,
+            SVariable::U8(_, v) => *v,
             SVariable::Array(svar, _len) => svar.inner(),
             SVariable::Address(_, v) => *v,
             SVariable::Struct(_, _, v, _) => *v,
@@ -227,6 +237,7 @@ impl SVariable {
             SVariable::Bool(_, _) => ExprType::Bool(*code_ref),
             SVariable::F32(_, _) => ExprType::F32(*code_ref),
             SVariable::I64(_, _) => ExprType::I64(*code_ref),
+            SVariable::U8(_, _) => ExprType::U8(*code_ref),
             SVariable::Array(svar, size_type) => ExprType::Array(
                 *code_ref,
                 Box::new(svar.expr_type(code_ref)?),
@@ -241,19 +252,25 @@ impl SVariable {
     pub fn expect_f32(&self, code_ref: &CodeRef, ctx: &str) -> anyhow::Result<Variable> {
         match self {
             SVariable::F32(_, v) => Ok(*v),
-            v => anyhow::bail!("{} incorrect type {} expected Float {}", code_ref, v, ctx),
+            v => anyhow::bail!("{} incorrect type {} expected f32 {}", code_ref, v, ctx),
         }
     }
     pub fn expect_i64(&self, code_ref: &CodeRef, ctx: &str) -> anyhow::Result<Variable> {
         match self {
             SVariable::I64(_, v) => Ok(*v),
-            v => anyhow::bail!("{} incorrect type {} expected Int {}", code_ref, v, ctx),
+            v => anyhow::bail!("{} incorrect type {} expected i64 {}", code_ref, v, ctx),
+        }
+    }
+    pub fn expect_u8(&self, code_ref: &CodeRef, ctx: &str) -> anyhow::Result<Variable> {
+        match self {
+            SVariable::U8(_, v) => Ok(*v),
+            v => anyhow::bail!("{} incorrect type {} expected u8 {}", code_ref, v, ctx),
         }
     }
     pub fn expect_bool(&self, code_ref: &CodeRef, ctx: &str) -> anyhow::Result<Variable> {
         match self {
             SVariable::Bool(_, v) => Ok(*v),
-            v => anyhow::bail!("{} incorrect type {} expected Bool {}", code_ref, v, ctx),
+            v => anyhow::bail!("{} incorrect type {} expected bool {}", code_ref, v, ctx),
         }
     }
     pub fn expect_array(
@@ -329,6 +346,7 @@ impl SVariable {
             ExprType::Bool(_code_ref) => SVariable::Bool(name, var),
             ExprType::F32(_code_ref) => SVariable::F32(name, var),
             ExprType::I64(_code_ref) => SVariable::I64(name, var),
+            ExprType::U8(_code_ref) => SVariable::U8(name, var),
             ExprType::Array(_code_ref, ty, size_type) => SVariable::Array(
                 Box::new(SVariable::from(builder, ty, name, var)?),
                 ArraySized::from(builder, size_type),
@@ -511,6 +529,16 @@ pub fn declare_variable(
                 variables.insert(name.into(), SVariable::I64(name.into(), var));
                 per_scope_vars.insert(name.into());
                 builder.declare_var(var, types::I64);
+                *index += 1;
+            }
+        }
+        ExprType::U8(code_ref) => {
+            if !variables.contains_key(name) {
+                trace!("{} {} {}", code_ref, expr_type, name);
+                let var = Variable::new(*index);
+                variables.insert(name.into(), SVariable::U8(name.into(), var));
+                per_scope_vars.insert(name.into());
+                builder.declare_var(var, types::I8);
                 *index += 1;
             }
         }

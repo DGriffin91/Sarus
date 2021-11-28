@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
-use std::ffi::CStr;
+use std::slice;
 
 use crate::frontend::Expr;
 use crate::function_translator::SVariable;
 use crate::jit::{ArraySized, Env, SValue, StructDef};
-use crate::validator::{address_t, bool_t, f32_t, i64_t, ArraySizedExpr, ExprType, TypeError};
+use crate::validator::{bool_t, f32_t, i64_t, u8_t, ArraySizedExpr, ExprType, TypeError};
 use crate::{
     decl,
     frontend::{Arg, CodeRef, Declaration, Function},
@@ -14,6 +14,25 @@ use cranelift::frontend::FunctionBuilder;
 use cranelift::prelude::{types, InstBuilder};
 use cranelift_jit::JITBuilder;
 
+#[repr(C)]
+pub struct SarusSlice<T> {
+    start_ptr: *const T,
+    len: i64,
+    cap: i64,
+}
+
+impl<T> SarusSlice<T> {
+    pub fn slice(&self) -> &[T] {
+        unsafe { slice::from_raw_parts(self.start_ptr, self.len as usize) }
+    }
+    pub fn len(&self) -> i64 {
+        self.len
+    }
+    pub fn cap(&self) -> i64 {
+        self.cap
+    }
+}
+
 extern "C" fn f32_print(x: f32) {
     print!("{}", x);
 }
@@ -22,14 +41,16 @@ extern "C" fn i64_print(x: i64) {
     print!("{}", x);
 }
 
+extern "C" fn u8_print(x: u8) {
+    print!("{}", x);
+}
+
 extern "C" fn bool_print(x: bool) {
     print!("{}", x);
 }
 
-extern "C" fn str_print(s: *const i8) {
-    unsafe {
-        print!("{}", CStr::from_ptr(s).to_str().unwrap());
-    }
+extern "C" fn str_print(s: SarusSlice<u8>) {
+    print!("{}", std::str::from_utf8(s.slice()).unwrap());
 }
 
 extern "C" fn f32_println(x: f32) {
@@ -40,14 +61,16 @@ extern "C" fn i64_println(x: i64) {
     println!("{}", x);
 }
 
+extern "C" fn u8_println(x: u8) {
+    println!("{}", x);
+}
+
 extern "C" fn bool_println(x: bool) {
     println!("{}", x);
 }
 
-extern "C" fn str_println(s: *const i8) {
-    unsafe {
-        println!("{}", CStr::from_ptr(s).to_str().unwrap());
-    }
+extern "C" fn str_println(s: SarusSlice<u8>) {
+    println!("{}", std::str::from_utf8(s.slice()).unwrap());
 }
 
 extern "C" fn f32_assert_eq(x: f32, y: f32) {
@@ -58,20 +81,22 @@ extern "C" fn i64_assert_eq(x: i64, y: i64) {
     assert_eq!(x, y);
 }
 
+extern "C" fn u8_assert_eq(x: u8, y: u8) {
+    assert_eq!(x, y);
+}
+
 extern "C" fn bool_assert_eq(x: bool, y: bool) {
     assert_eq!(x, y);
 }
 
-extern "C" fn str_assert_eq(s1: *const i8, s2: *const i8) {
-    unsafe {
-        let s1 = CStr::from_ptr(s1).to_str().unwrap();
-        let s2 = CStr::from_ptr(s2).to_str().unwrap();
-        assert_eq!(s1, s2);
-    }
+extern "C" fn str_assert_eq(s1: SarusSlice<u8>, s2: SarusSlice<u8>) {
+    let s1 = std::str::from_utf8(s1.slice()).unwrap();
+    let s2 = std::str::from_utf8(s2.slice()).unwrap();
+    assert_eq!(s1, s2);
 }
 
-extern "C" fn spanic(s: *const i8) {
-    unsafe { panic!("{}", CStr::from_ptr(s).to_str().unwrap()) }
+extern "C" fn spanic(s: SarusSlice<u8>) {
+    panic!("{}", std::str::from_utf8(s.slice()).unwrap())
 }
 
 #[rustfmt::skip]
@@ -153,12 +178,14 @@ pub fn append_std(prog: &mut Vec<Declaration>, jit_builder: &mut JITBuilder) {
     for n in ["f32.ceil", "f32.floor", "f32.trunc", "f32.fract", "f32.abs", "f32.round"] {
         prog.push(make_decl(n, vec![("x", f32_t())], vec![("y", f32_t())]));
     }
-    for n in ["f32.i64"] {
-        prog.push(make_decl(n, vec![("x", f32_t())], vec![("y", i64_t())]));
-    }
-    for n in ["i64.f32"] {
-        prog.push(make_decl(n, vec![("x", i64_t())], vec![("y", f32_t())]));
-    }
+
+    prog.push(make_decl("f32.i64", vec![("x", f32_t())], vec![("y", i64_t())]));
+    prog.push(make_decl("i64.f32", vec![("x", i64_t())], vec![("y", f32_t())]));
+    prog.push(make_decl("u8.f32", vec![("x", u8_t())], vec![("y", f32_t())]));
+    prog.push(make_decl("u8.i64", vec![("x", u8_t())], vec![("y", i64_t())]));
+    prog.push(make_decl("f32.u8", vec![("x", f32_t())], vec![("y", u8_t())]));
+    prog.push(make_decl("i64.u8", vec![("x", i64_t())], vec![("y", u8_t())]));
+
     for n in ["f32.min", "f32.max"] {
         prog.push(make_decl(
             n,
@@ -174,23 +201,36 @@ pub fn append_std(prog: &mut Vec<Declaration>, jit_builder: &mut JITBuilder) {
         ));
     }
 
+    for n in ["u8.min", "u8.max"] {
+        prog.push(make_decl(
+            n,
+            vec![("x", u8_t()), ("y", u8_t())],
+            vec![("z", u8_t())],
+        ));
+    }
+
+    let str_ty = ExprType::Array(CodeRef::z(), Box::new(ExprType::U8(CodeRef::z())), ArraySizedExpr::Slice);
+
     decl!(prog, jb, "f32.print",           f32_print,           (f32_t()),                 ());
     decl!(prog, jb, "i64.print",           i64_print,           (i64_t()),                 ());
+    decl!(prog, jb, "u8.print",            u8_print,            (u8_t()),                  ());
     decl!(prog, jb, "bool.print",          bool_print,          (bool_t()),                ());
-    decl!(prog, jb, "&.print",             str_print,           (address_t()),             ()); //TODO setup actual str type
+    decl!(prog, jb, "[u8].print",          str_print,           (str_ty.clone()),          ()); //TODO setup actual str type
 
     decl!(prog, jb, "f32.println",         f32_println,         (f32_t()),                 ());
     decl!(prog, jb, "i64.println",         i64_println,         (i64_t()),                 ());
+    decl!(prog, jb, "u8.println",          u8_println,          (u8_t()),                  ());
     decl!(prog, jb, "bool.println",        bool_println,        (bool_t()),                ());
-    decl!(prog, jb, "&.println",           str_println,         (address_t()),             ());
+    decl!(prog, jb, "[u8].println",        str_println,         (str_ty.clone()),          ());
 
     
     decl!(prog, jb, "f32.assert_eq",       f32_assert_eq,       (f32_t(), f32_t()),        ());
     decl!(prog, jb, "i64.assert_eq",       i64_assert_eq,       (i64_t(), i64_t()),        ());
+    decl!(prog, jb, "u8.assert_eq",        u8_assert_eq,        (u8_t(), u8_t()),          ());
     decl!(prog, jb, "bool.assert_eq",      bool_assert_eq,      (bool_t(), bool_t()),      ());
-    decl!(prog, jb, "&.assert_eq",         str_assert_eq,       (address_t(), address_t()),());
+    decl!(prog, jb, "[u8].assert_eq",      str_assert_eq,       (str_ty.clone(), str_ty.clone()),());
     
-    decl!(prog, jb, "panic",               spanic,              (address_t()),             ());
+    decl!(prog, jb, "panic",               spanic,              (str_ty),                  ());
     
     prog.push(make_decl("src_line", vec![], vec![("line", i64_t())]));
 
@@ -390,13 +430,24 @@ pub(crate) fn translate_std(
         "f32.i64" => Some(SValue::I64(
             builder.ins().fcvt_to_sint(types::I64, v!(args[0])),
         )),
+        "f32.u8" => {
+            let i_val = builder.ins().fcvt_to_sint(types::I32, v!(args[0]));
+            Some(SValue::U8(builder.ins().ireduce(types::I8, i_val)))
+        }
         "i64.f32" => Some(SValue::F32(
             builder.ins().fcvt_from_sint(types::F32, v!(args[0])),
         )),
+        "i64.u8" => Some(SValue::U8(builder.ins().ireduce(types::I8, v!(args[0])))),
+        "u8.f32" => Some(SValue::F32(
+            builder.ins().fcvt_from_uint(types::F32, v!(args[0])),
+        )),
+        "u8.i64" => Some(SValue::I64(builder.ins().uextend(types::I64, v!(args[0])))),
         "f32.min" => Some(SValue::F32(builder.ins().fmin(v!(args[0]), v!(args[1])))),
         "f32.max" => Some(SValue::F32(builder.ins().fmax(v!(args[0]), v!(args[1])))),
         "i64.min" => Some(SValue::I64(builder.ins().imin(v!(args[0]), v!(args[1])))),
         "i64.max" => Some(SValue::I64(builder.ins().imax(v!(args[0]), v!(args[1])))),
+        "u8.min" => Some(SValue::U8(builder.ins().umax(v!(args[0]), v!(args[1])))),
+        "u8.max" => Some(SValue::U8(builder.ins().umin(v!(args[0]), v!(args[1])))),
         "src_line" => {
             let line = code_ref.line.unwrap_or(0) as i64;
             Some(SValue::I64(builder.ins().iconst(types::I64, line)))

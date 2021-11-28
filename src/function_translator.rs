@@ -13,7 +13,6 @@ pub use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::ffi::CString;
 use tracing::info;
 use tracing::instrument;
 use tracing::trace;
@@ -92,6 +91,7 @@ impl<'a> FunctionTranslator<'a> {
         let v = match expr {
             Expr::LiteralFloat(_code_ref, literal) => Ok(SValue::F32(self.f32const(*literal))),
             Expr::LiteralInt(_code_ref, literal) => Ok(SValue::I64(self.i64const(*literal))),
+            Expr::LiteralU8(_code_ref, literal) => Ok(SValue::U8(self.u8const(*literal))),
             Expr::LiteralString(_code_ref, literal) => self.translate_string(literal),
             Expr::LiteralArray(code_ref, item, len) => {
                 self.translate_array_create(code_ref, item, *len)
@@ -187,8 +187,7 @@ impl<'a> FunctionTranslator<'a> {
     }
 
     fn translate_string(&mut self, literal: &str) -> anyhow::Result<SValue> {
-        let cstr = CString::new(literal.replace("\\n", "\n")).unwrap();
-        let bytes = cstr.to_bytes_with_nul();
+        let bytes = literal.as_bytes();
         let stack_slot = self.builder.create_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
             types::I8.bytes() * bytes.len() as u32,
@@ -200,7 +199,7 @@ impl<'a> FunctionTranslator<'a> {
         //TODO use self.alloc (returns_a_fixed_array_in_a_struct_basic is failing if the deep stack is always used)
         //let stack_slot_address = self.alloc((types::I8.bytes() * bytes.len() as u32) as i64);
 
-        //TODO Is this really how this is done?
+        //TODO store larger strings with `create_data` at compile time
         for (i, c) in bytes.iter().enumerate() {
             let v = self.i64const(*c as i64);
             self.builder.ins().istore8(
@@ -210,7 +209,18 @@ impl<'a> FunctionTranslator<'a> {
                 Offset32::new(i as i32),
             );
         }
-        Ok(SValue::Address(stack_slot_address))
+        let len_val = self.i64const(bytes.len() as i64);
+
+        let slice_start = self.alloc((self.ptr_width + 2 * 8) as usize);
+
+        self.store(stack_slot_address, slice_start, 0);
+        self.store(len_val, slice_start, self.ptr_width);
+        self.store(len_val, slice_start, self.ptr_width + 8);
+
+        Ok(SValue::Array(
+            Box::new(SValue::U8(slice_start)),
+            ArraySized::Slice,
+        ))
     }
 
     fn translate_array_create(
@@ -284,7 +294,11 @@ impl<'a> FunctionTranslator<'a> {
 
             //Essentially same as below
             match first_item_type {
-                ExprType::Bool(_) | ExprType::F32(_) | ExprType::I64(_) | ExprType::Address(_) => {
+                ExprType::Bool(_)
+                | ExprType::F32(_)
+                | ExprType::I64(_)
+                | ExprType::U8(_)
+                | ExprType::Address(_) => {
                     self.store(set_val, stack_slot_address_abs_pos, 0);
                 }
                 ExprType::Struct(_code_ref, _) | ExprType::Array(_code_ref, _, _) => {
@@ -319,6 +333,7 @@ impl<'a> FunctionTranslator<'a> {
                     ExprType::Bool(_)
                     | ExprType::F32(_)
                     | ExprType::I64(_)
+                    | ExprType::U8(_)
                     | ExprType::Address(_) => {
                         self.store(val, stack_slot_address, (i * item_width) as i64);
                     }
@@ -492,6 +507,7 @@ impl<'a> FunctionTranslator<'a> {
                 | Expr::GlobalDataAddr(code_ref, ..)
                 | Expr::LiteralFloat(code_ref, ..)
                 | Expr::LiteralInt(code_ref, ..)
+                | Expr::LiteralU8(code_ref, ..)
                 | Expr::LiteralBool(code_ref, ..) => anyhow::bail!(
                     "{} dot binop not supported, try putting expression in parenthesis: ({})",
                     code_ref,
@@ -549,6 +565,10 @@ impl<'a> FunctionTranslator<'a> {
                 SValue::I64(b) => Ok(SValue::I64(self.binop_int(op, a, b)?)),
                 _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs_v, op, rhs_v),
             },
+            SValue::U8(a) => match rhs_v {
+                SValue::U8(b) => Ok(SValue::U8(self.binop_u8(op, a, b)?)),
+                _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs_v, op, rhs_v),
+            },
             SValue::Bool(a) => match rhs_v {
                 SValue::Bool(b) => Ok(SValue::Bool(self.binop_bool(op, a, b)?)),
                 _ => anyhow::bail!("operation not supported: {:?} {} {:?}", lhs_v, op, rhs_v),
@@ -581,6 +601,7 @@ impl<'a> FunctionTranslator<'a> {
                 SValue::Void
                 | SValue::F32(_)
                 | SValue::I64(_)
+                | SValue::U8(_)
                 | SValue::Unknown(_)
                 | SValue::Array(_, _)
                 | SValue::Address(_)
@@ -593,6 +614,7 @@ impl<'a> FunctionTranslator<'a> {
                 SValue::F32(lhs) => SValue::F32(self.fneg(lhs)),
                 SValue::I64(lhs) => SValue::I64(self.ineg(lhs)),
                 SValue::Void
+                | SValue::U8(_)
                 | SValue::Bool(_)
                 | SValue::Unknown(_)
                 | SValue::Array(_, _)
@@ -878,6 +900,7 @@ impl<'a> FunctionTranslator<'a> {
                 },
                 SValue::F32(_)
                 | SValue::I64(_)
+                | SValue::U8(_)
                 | SValue::Void
                 | SValue::Bool(_)
                 | SValue::Unknown(_)
@@ -914,6 +937,19 @@ impl<'a> FunctionTranslator<'a> {
         })
     }
 
+    //TODO error for overflow when in debug
+    fn binop_u8(&mut self, op: Binop, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
+        Ok(match op {
+            Binop::Add => self.iadd(lhs, rhs),
+            Binop::Sub => self.isub(lhs, rhs),
+            Binop::Mul => self.imul(lhs, rhs),
+            Binop::Div => self.udiv(lhs, rhs),
+            Binop::LogicalAnd | Binop::LogicalOr | Binop::DotAccess => {
+                anyhow::bail!("operation not supported: {:?} {} {:?}", lhs, op, rhs)
+            }
+        })
+    }
+
     fn binop_bool(&mut self, op: Binop, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
         Ok(match op {
             Binop::LogicalAnd => self.band(lhs, rhs),
@@ -944,6 +980,16 @@ impl<'a> FunctionTranslator<'a> {
             },
             SValue::I64(a) => match rhs {
                 SValue::I64(b) => Ok(SValue::Bool(self.icmp(cmp, a, b))),
+                _ => anyhow::bail!(
+                    "{} compare not supported: {:?} {} {:?}",
+                    lhs_expr.get_code_ref(),
+                    lhs,
+                    cmp,
+                    rhs
+                ),
+            },
+            SValue::U8(a) => match rhs {
+                SValue::U8(b) => Ok(SValue::Bool(self.icmp(cmp, a, b))),
                 _ => anyhow::bail!(
                     "{} compare not supported: {:?} {} {:?}",
                     lhs_expr.get_code_ref(),
@@ -1179,6 +1225,7 @@ impl<'a> FunctionTranslator<'a> {
                 | SValue::Bool(_)
                 | SValue::F32(_)
                 | SValue::I64(_)
+                | SValue::U8(_)
                 | SValue::Array(_, _)
                 | SValue::Address(_)
                 | SValue::Struct(_, _) => anyhow::bail!("operation not supported {:?}", src_exprs),
@@ -1306,6 +1353,7 @@ impl<'a> FunctionTranslator<'a> {
                     ExprType::Bool(_) => (),
                     ExprType::F32(_) => (),
                     ExprType::I64(_) => (),
+                    ExprType::U8(_) => (),
                     //array items are arrays
                     ExprType::Array(_, expr_type, size_type) => match size_type {
                         ArraySizedExpr::Unsized => (),
@@ -1504,6 +1552,7 @@ impl<'a> FunctionTranslator<'a> {
             SValue::Bool(_) => todo!(),
             SValue::F32(_) => {}
             SValue::I64(_) => todo!(),
+            SValue::U8(_) => todo!(),
             SValue::Array(_, _) => todo!(),
             SValue::Tuple(_) => todo!(),
             SValue::Address(address) => {
@@ -2299,6 +2348,7 @@ impl<'a> FunctionTranslator<'a> {
                 | SValue::Bool(_)
                 | SValue::F32(_)
                 | SValue::I64(_)
+                | SValue::U8(_)
                 | SValue::Address(_)
                 | SValue::Tuple(_) => None,
             };
@@ -2533,6 +2583,7 @@ impl<'a> FunctionTranslator<'a> {
             | ExprType::Bool(_)
             | ExprType::F32(_)
             | ExprType::I64(_)
+            | ExprType::U8(_)
             | ExprType::Tuple(_, _)
             | ExprType::Address(_) => None,
             ExprType::Array(_code_ref, expr_type, size_type) => match size_type {
@@ -3259,6 +3310,10 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.ins().iconst(types::I64, x)
     }
 
+    fn u8const(&mut self, x: u8) -> Value {
+        self.builder.ins().iconst(types::I8, x as i64)
+    }
+
     fn ptr_const(&mut self, x: i64) -> Value {
         self.builder.ins().iconst(self.ptr_ty, x)
     }
@@ -3289,6 +3344,10 @@ impl<'a> FunctionTranslator<'a> {
 
     fn sdiv(&mut self, x: Value, y: Value) -> Value {
         self.builder.ins().sdiv(x, y)
+    }
+
+    fn udiv(&mut self, x: Value, y: Value) -> Value {
+        self.builder.ins().udiv(x, y)
     }
 
     fn fadd(&mut self, x: Value, y: Value) -> Value {

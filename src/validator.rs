@@ -56,6 +56,7 @@ pub enum ExprType {
     Bool(CodeRef),
     F32(CodeRef),
     I64(CodeRef),
+    U8(CodeRef),
     Array(CodeRef, Box<ExprType>, ArraySizedExpr),
     Address(CodeRef),
     Tuple(CodeRef, Vec<ExprType>),
@@ -68,6 +69,10 @@ pub fn f32_t() -> ExprType {
 
 pub fn i64_t() -> ExprType {
     ExprType::I64(CodeRef::z())
+}
+
+pub fn u8_t() -> ExprType {
+    ExprType::U8(CodeRef::z())
 }
 
 pub fn bool_t() -> ExprType {
@@ -109,6 +114,11 @@ impl PartialEq for ExprType {
                     return true;
                 }
             }
+            ExprType::U8(_) => {
+                if let ExprType::U8(_) = other {
+                    return true;
+                }
+            }
             ExprType::Array(_, a, sa) => {
                 if let ExprType::Array(_, b, sb) = other {
                     return a == b && sa == sb;
@@ -141,6 +151,7 @@ impl Display for ExprType {
             ExprType::Bool(_) => write!(f, "bool"),
             ExprType::F32(_) => write!(f, "f32"),
             ExprType::I64(_) => write!(f, "i64"),
+            ExprType::U8(_) => write!(f, "u8"),
             ExprType::Array(_, ty, size_type) => match size_type {
                 ArraySizedExpr::Unsized => write!(f, "&[{}]", ty),
                 ArraySizedExpr::Slice => write!(f, "[{}]", ty),
@@ -243,6 +254,7 @@ impl ExprType {
             ExprType::Bool(code_ref) => code_ref,
             ExprType::F32(code_ref) => code_ref,
             ExprType::I64(code_ref) => code_ref,
+            ExprType::U8(code_ref) => code_ref,
             ExprType::Address(code_ref) => code_ref,
             ExprType::Tuple(code_ref, ..) => code_ref,
             ExprType::Struct(code_ref, ..) => code_ref,
@@ -255,6 +267,7 @@ impl ExprType {
             ExprType::Bool(code_ref) => *code_ref = new_code_ref,
             ExprType::F32(code_ref) => *code_ref = new_code_ref,
             ExprType::I64(code_ref) => *code_ref = new_code_ref,
+            ExprType::U8(code_ref) => *code_ref = new_code_ref,
             ExprType::Address(code_ref) => *code_ref = new_code_ref,
             ExprType::Tuple(code_ref, ..) => *code_ref = new_code_ref,
             ExprType::Struct(code_ref, ..) => *code_ref = new_code_ref,
@@ -276,6 +289,7 @@ impl ExprType {
             ExprType::Bool(_) => Some(types::I8.bytes() as usize),
             ExprType::F32(_) => Some(types::F32.bytes() as usize),
             ExprType::I64(_) => Some(types::I64.bytes() as usize),
+            ExprType::U8(_) => Some(types::I8.bytes() as usize),
             ExprType::Address(_) => Some(ptr_ty.bytes() as usize),
             ExprType::Tuple(_code_ref, _expr_types) => None,
             ExprType::Struct(_code_ref, name) => Some(struct_map[&name.to_string()].size),
@@ -307,8 +321,13 @@ impl ExprType {
             }
             Expr::LiteralFloat(code_ref, _) => ExprType::F32(*code_ref),
             Expr::LiteralInt(code_ref, _) => ExprType::I64(*code_ref),
+            Expr::LiteralU8(code_ref, _) => ExprType::U8(*code_ref),
             Expr::LiteralBool(code_ref, _) => ExprType::Bool(*code_ref),
-            Expr::LiteralString(code_ref, _) => ExprType::Address(*code_ref), //TODO change to char
+            Expr::LiteralString(code_ref, _) => ExprType::Array(
+                *code_ref,
+                Box::new(ExprType::U8(*code_ref)),
+                ArraySizedExpr::Slice,
+            ),
             Expr::LiteralArray(code_ref, es, len) => {
                 let first_typ = ExprType::of(&es[0], env, func_name, variables)?;
                 for e in es.iter().next() {
@@ -493,6 +512,7 @@ impl ExprType {
                             | Expr::GlobalDataAddr(..)
                             | Expr::LiteralFloat(..)
                             | Expr::LiteralInt(..)
+                            | Expr::LiteralU8(..)
                             | Expr::LiteralBool(..) => {
                                 return Err(TypeError::UnsupportedExpr(
                                     expr.get_code_ref().s(&env.file_idx),
@@ -846,6 +866,7 @@ impl ExprType {
             ExprType::Bool(_)
             | ExprType::F32(_)
             | ExprType::I64(_)
+            | ExprType::U8(_)
             | ExprType::Address(_)
             | ExprType::Struct(_, _)
             | ExprType::Array(_, _, _) => 1,
@@ -871,6 +892,7 @@ impl ExprType {
             }),
             ExprType::F32(_code_ref) => Ok(cranelift::prelude::types::F32),
             ExprType::I64(_code_ref) => Ok(cranelift::prelude::types::I64),
+            ExprType::U8(_code_ref) => Ok(cranelift::prelude::types::I8),
             ExprType::Array(_code_ref, _, _) => Ok(ptr_type),
             ExprType::Address(_code_ref) => Ok(ptr_type),
             ExprType::Struct(_code_ref, _) => Ok(ptr_type),

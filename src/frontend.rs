@@ -166,6 +166,7 @@ impl Display for CodeRef {
 pub enum Expr {
     LiteralFloat(CodeRef, f32),
     LiteralInt(CodeRef, i64),
+    LiteralU8(CodeRef, u8),
     LiteralBool(CodeRef, bool),
     LiteralString(CodeRef, String),
     LiteralArray(CodeRef, Vec<Expr>, usize),
@@ -200,6 +201,7 @@ impl Expr {
         match self {
             Expr::LiteralFloat(code_ref, ..) => code_ref,
             Expr::LiteralInt(code_ref, ..) => code_ref,
+            Expr::LiteralU8(code_ref, ..) => code_ref,
             Expr::LiteralBool(code_ref, ..) => code_ref,
             Expr::LiteralString(code_ref, ..) => code_ref,
             Expr::LiteralArray(code_ref, ..) => code_ref,
@@ -227,6 +229,7 @@ impl Expr {
         match self {
             Expr::LiteralFloat(code_ref, ..) => code_ref,
             Expr::LiteralInt(code_ref, ..) => code_ref,
+            Expr::LiteralU8(code_ref, ..) => code_ref,
             Expr::LiteralBool(code_ref, ..) => code_ref,
             Expr::LiteralString(code_ref, ..) => code_ref,
             Expr::LiteralArray(code_ref, ..) => code_ref,
@@ -344,6 +347,7 @@ impl Display for Expr {
         match self {
             Expr::LiteralFloat(_, s) => write!(f, "{}", s),
             Expr::LiteralInt(_, s) => write!(f, "{}", s),
+            Expr::LiteralU8(_, s) => write!(f, "{}u8", s),
             Expr::LiteralString(_, s) => write!(f, "\"{}\"", s),
             Expr::LiteralArray(_, es, len) => {
                 if es.len() == 1 {
@@ -779,6 +783,7 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
     rule type_label() -> ExprType
         = _ pos:position!() "f32" { ExprType::F32(CodeRef::new(pos, code_ctx)) }
         / _ pos:position!() "i64" { ExprType::I64(CodeRef::new(pos, code_ctx)) }
+        / _ pos:position!() "u8" { ExprType::U8(CodeRef::new(pos, code_ctx)) }
         / _ pos:position!() "&[" ty:type_label() "]" { ExprType::Array(CodeRef::new(pos, code_ctx), Box::new(ty), ArraySizedExpr::Unsized) }
         / _ pos:position!() "[" ty:type_label() "]" { ExprType::Array(CodeRef::new(pos, code_ctx), Box::new(ty), ArraySizedExpr::Slice) }
         / _ pos:position!() "&" { ExprType::Address(CodeRef::new(pos, code_ctx)) }
@@ -899,10 +904,6 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         / _ pos:position!() i:identifier() { Expr::Identifier(CodeRef::new(pos, code_ctx), i) }
         / _ pos:position!() "(" e:expression() _ ")" { Expr::Parentheses(CodeRef::new(pos, code_ctx), Box::new(e)) }
         / _ pos:position!() "\"" body:$[^'"']* "\"" { Expr::LiteralString(CodeRef::new(pos, code_ctx), body.join("")) }
-        / _ pos:position!() "[" "\"" repstr:$[^'\"']* "\"" _ ";" _ len:$(['0'..='9']+) _ "]" {
-            //Temp solution for creating empty strings
-            Expr::LiteralString(CodeRef::new(pos, code_ctx), repstr.join("").repeat( len.parse().unwrap()))
-        } //[" "; 10]
         / _ pos:position!() "[" e:expression()  _ ";" _ len:$(['0'..='9']+) _ "]" {
             Expr::LiteralArray(CodeRef::new(pos, code_ctx), vec![e], len.parse::<usize>().unwrap())
         }
@@ -917,7 +918,8 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         = n:$((!"true"!"false")['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']* "::"? ['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.into() }
 
     rule literal() -> Expr
-        = _ pos:position!() n:$(['-']?['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat(CodeRef::new(pos, code_ctx), n.parse::<f32>().unwrap()) }
+        = _ pos:position!() n:$(['0'..='9']+) "u8" { Expr::LiteralU8(CodeRef::new(pos, code_ctx), n.parse::<u8>().unwrap()) }
+        / _ pos:position!() n:$(['-']?['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat(CodeRef::new(pos, code_ctx), n.parse::<f32>().unwrap()) }
         / _ pos:position!() n:$(['-']?['0'..='9']+) { Expr::LiteralInt(CodeRef::new(pos, code_ctx), n.parse::<i64>().unwrap()) }
         / _ pos:position!() "*" i:identifier() { Expr::GlobalDataAddr(CodeRef::new(pos, code_ctx), i) }
         / _ pos:position!() "true" { Expr::LiteralBool(CodeRef::new(pos, code_ctx), true) }

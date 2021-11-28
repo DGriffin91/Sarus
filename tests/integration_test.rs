@@ -994,24 +994,21 @@ fn main(a: f32, b: f32) -> (c: f32) {
     Ok(())
 }
 
-extern "C" fn prt2(s: *const i8) {
-    unsafe {
-        print!("{}", CStr::from_ptr(s).to_str().unwrap());
-    }
+extern "C" fn prt2(s: sarus_std_lib::SarusSlice<u8>) {
+    print!("{}", std::str::from_utf8(s.slice()).unwrap());
 }
 
 #[test]
 fn create_string() -> anyhow::Result<()> {
-    let code = r#"
+    let code = "
 fn main(a: f32, b: f32) -> (c: f32) {
-    print("HELLO\n")
-    print(["-"; 5])
-    print("WORLD\n")
+    print(\"HELLO\n\")
+    print(\"WORLD\n\")
     c = a
 }
 
-extern fn print(s: &) -> () {}
-"#;
+extern fn print(s: [u8]) -> () {}
+";
     let a = 100.0f32;
     let b = 100.0f32;
     let ast = parse(code)?;
@@ -4484,6 +4481,103 @@ fn main() -> () {
         a = 1.0 //does not live outside if statement
     }
     a = true
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn u8_math() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+fn main() -> () {
+    a = 0
+    b = 255
+    c = 100
+    d = 5
+    ua = (0).u8()
+    ub = (255).u8()
+    uc = (100).u8()
+    ud = (5).u8()
+    (ua+ub).assert_eq((a+b).u8())
+    (ua-uc).assert_eq((a-c).u8())
+    (ua/uc).assert_eq((a/c).u8())
+    (ua*uc).assert_eq((a*c).u8())
+    (ud*ud).assert_eq((d*d).u8())
+    (ua+ub).i64().assert_eq(a+b)
+    (ua/uc).i64().assert_eq(a/c)
+    (ua*uc).i64().assert_eq(a*c)
+    (ud*ud).i64().assert_eq(d*d)
+    ua.assert_eq(0u8)
+    ub.assert_eq(255u8)
+    uc.assert_eq(100u8)
+    ud.assert_eq(5u8)
+    (0u8+255u8).assert_eq((0+255).u8())
+    (0u8-100u8).assert_eq((0-100).u8())
+    (0u8/100u8).assert_eq((0/100).u8())
+    (0u8*100u8).assert_eq((0*100).u8())
+    (5u8*5u8).assert_eq((5*5).u8())
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+extern "C" fn rust_check_slice(a: sarus_std_lib::SarusSlice<u8>) {
+    assert_eq!(a.len(), 43);
+    assert_eq!(a.cap(), 1000);
+    assert_eq!(
+        std::str::from_utf8(a.slice()).unwrap(),
+        "Hello World !\"#$%&'()*+,-./0123456789:;<=>?"
+    );
+}
+
+#[test]
+fn extern_func_slice() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+    extern fn rust_check_slice(a: [u8]) -> () {}
+
+    fn main() -> () {
+        a = [0u8;1000][0..0]
+        a.append("Hello")
+        a.append(" ")
+        a.append("World")
+        i = 0u8
+        while i < 32u8 {
+            a.push(i + 32u8)
+            i += 1u8
+        }
+        rust_check_slice(a)
+    }
+"#;
+    let ast = parse(code)?;
+    let mut jit = default_std_jit_from_code_with_importer(ast, None, |_ast, jit_builder| {
+        jit_builder.symbols([("rust_check_slice", rust_check_slice as *const u8)]);
+    })?;
+
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn tmp() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+fn main() -> () {
+    a = "한글"
+    a.len().println()
+    b = "hello world"
+    b.len().println()
 }
 "#;
     let mut jit = default_std_jit_from_code(code)?;
