@@ -4611,6 +4611,106 @@ fn main() -> () {
     Ok(())
 }
 
+#[test]
+fn while_break() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+fn main() -> () {
+
+    arr = [0; 10]
+    a = 5
+    
+    i = 0 while i < 10 {
+        j = 0 
+        while j < 10 {
+            if i > 5 && j > 5 {
+                "!!!!".println()
+                a = j
+                break
+            }
+            j += 1
+        }
+        if i > 8 {
+            break
+        }
+        i += 1
+    }
+
+    a.assert_eq(6)
+    i.assert_eq(9)
+
+    i = 0 while true {i+=1 if i > 3 {break}} : {
+        a = 2
+    }
+    i.assert_eq(4)
+
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
+#[test]
+fn while_continue() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+fn main() -> () {
+    arr = [0; 10]
+
+    a = 0
+    i = 0 while i < 10 {i += 1} : {
+        if i > 5 {
+            continue
+        }
+        a = i
+    }
+    i.assert_eq(10)
+    a.assert_eq(5)
+
+    a = 0
+    i = 0 while i < 10 {i += 1} : {
+        if i > 5 {
+            continue
+        } else {
+            continue
+        }
+        a = i
+    }
+    i.assert_eq(10)
+    a.assert_eq(0)
+
+    a = 0
+    i = 0 while i < 10 {i += 1} : {
+        if i > 5 {
+            j = 0 while j < 10 {j += 1} : {
+                if j > 5 {
+                    a += 1
+                    break
+                } else {
+                    a += 2
+                    continue
+                }
+            }
+        } else {
+            continue
+        }
+        a += i
+    }
+    i.assert_eq(10)
+    a.assert_eq(82)
+
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
 // TODO this parses very slowly
 /*
 sl.append([

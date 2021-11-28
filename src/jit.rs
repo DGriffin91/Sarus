@@ -441,6 +441,8 @@ impl JIT {
             deep_stack_widths: vec![0],
             use_deep_stack: self.use_deep_stack,
             max_deep_stack_size: 0,
+            while_exit_blocks: Vec::new(),
+            while_continue_blocks: Vec::new(),
         };
         for expr in &func.body {
             trans.translate_expr(expr)?;

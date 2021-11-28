@@ -64,6 +64,14 @@ pub struct FunctionTranslator<'a> {
     pub deep_stack_widths: Vec<usize>,
     pub use_deep_stack: bool,
     pub max_deep_stack_size: usize,
+
+    // Each time a while block in entered, the exit is pushed here. This is for
+    // doing early exits with break
+    pub while_exit_blocks: Vec<Block>,
+
+    // Each time a while block in entered, the exit is pushed here. This is for
+    // doing early exits with break
+    pub while_continue_blocks: Vec<Block>,
 }
 
 impl<'a> FunctionTranslator<'a> {
@@ -79,6 +87,13 @@ impl<'a> FunctionTranslator<'a> {
             expr.debug_get_name(),
             self.expr_depth,
         );
+
+        if self.builder.is_filled() {
+            anyhow::bail!(
+                "{} unreachable code",
+                expr.get_code_ref().s(&self.env.file_idx)
+            )
+        }
 
         let _ = ExprType::of(
             expr,
@@ -156,6 +171,8 @@ impl<'a> FunctionTranslator<'a> {
                 Ok(SValue::Void)
             }
             Expr::Block(_code_ref, b) => b.iter().map(|e| self.translate_expr(e)).last().unwrap(),
+            Expr::Break(code_ref) => self.translate_break(code_ref),
+            Expr::Continue(code_ref) => self.translate_continue(code_ref),
             Expr::LiteralBool(_code_ref, b) => Ok(SValue::Bool(self.bconst(*b))),
             Expr::Parentheses(_code_ref, expr) => self.translate_expr(expr),
             Expr::ArrayAccess(code_ref, expr, idx_expr) => {
@@ -184,6 +201,30 @@ impl<'a> FunctionTranslator<'a> {
                 name
             ),
         }
+    }
+
+    fn translate_break(&mut self, code_ref: &CodeRef) -> anyhow::Result<SValue> {
+        if let Some(current_exit_block) = self.while_exit_blocks.last() {
+            self.builder.ins().jump(*current_exit_block, &[]);
+        } else {
+            anyhow::bail!(
+                "{} break outside while loop",
+                code_ref.s(&self.env.file_idx)
+            )
+        }
+        Ok(SValue::Void)
+    }
+
+    fn translate_continue(&mut self, code_ref: &CodeRef) -> anyhow::Result<SValue> {
+        if let Some(current_continue_block) = self.while_continue_blocks.last() {
+            self.builder.ins().jump(*current_continue_block, &[]);
+        } else {
+            anyhow::bail!(
+                "{} continue outside while loop",
+                code_ref.s(&self.env.file_idx)
+            )
+        }
+        Ok(SValue::Void)
     }
 
     fn translate_string(&mut self, literal: &str) -> anyhow::Result<SValue> {
@@ -504,6 +545,8 @@ impl<'a> FunctionTranslator<'a> {
                 | Expr::Assign(code_ref, ..)
                 | Expr::WhileLoop(code_ref, ..)
                 | Expr::Block(code_ref, ..)
+                | Expr::Break(code_ref, ..)
+                | Expr::Continue(code_ref, ..)
                 | Expr::GlobalDataAddr(code_ref, ..)
                 | Expr::LiteralFloat(code_ref, ..)
                 | Expr::LiteralInt(code_ref, ..)
@@ -1591,9 +1634,10 @@ impl<'a> FunctionTranslator<'a> {
         for expr in then_body {
             self.translate_expr(expr).unwrap();
         }
-
-        // Jump to the merge block, passing it the block return value.
-        self.builder.ins().jump(merge_block, &[]);
+        if !self.builder.is_filled() {
+            // Jump to the merge block, passing it the block return value.
+            self.builder.ins().jump(merge_block, &[]);
+        }
         // Switch to the merge block for subsequent statements.
         self.builder.switch_to_block(merge_block);
         // We've now seen all the predecessors of the merge block.
@@ -1653,8 +1697,10 @@ impl<'a> FunctionTranslator<'a> {
             }
         };
 
-        // Jump to the merge block, passing it the block return value.
-        self.builder.ins().jump(merge_block, &then_return);
+        if !self.builder.is_filled() {
+            // Jump to the merge block, passing it the block return value.
+            self.builder.ins().jump(merge_block, &then_return);
+        }
 
         self.builder.switch_to_block(else_block);
         self.builder.seal_block(else_block);
@@ -1685,9 +1731,10 @@ impl<'a> FunctionTranslator<'a> {
                 vec![v]
             }
         };
-
-        // Jump to the merge block, passing it the block return value.
-        self.builder.ins().jump(merge_block, &else_return);
+        if !self.builder.is_filled() {
+            // Jump to the merge block, passing it the block return value.
+            self.builder.ins().jump(merge_block, &else_return);
+        }
 
         // Switch to the merge block for subsequent statements.
         self.builder.switch_to_block(merge_block);
@@ -1777,7 +1824,9 @@ impl<'a> FunctionTranslator<'a> {
             for expr in body {
                 self.translate_expr(expr).unwrap();
             }
-            self.builder.ins().jump(merge_block, &[]);
+            if !self.builder.is_filled() {
+                self.builder.ins().jump(merge_block, &[]);
+            }
         }
 
         // Switch to the merge block for subsequent statements.
@@ -1873,7 +1922,9 @@ impl<'a> FunctionTranslator<'a> {
             } else {
                 first_branch_block_value = Some(branch_block_value)
             }
-            self.builder.ins().jump(merge_block, &branch_block_return);
+            if !self.builder.is_filled() {
+                self.builder.ins().jump(merge_block, &branch_block_return);
+            }
         }
 
         // ELSE BLOCK //
@@ -1906,8 +1957,10 @@ impl<'a> FunctionTranslator<'a> {
             }
         };
 
-        // Jump to the merge block, passing it the block return value.
-        self.builder.ins().jump(merge_block, &else_return);
+        if !self.builder.is_filled() {
+            // Jump to the merge block, passing it the block return value.
+            self.builder.ins().jump(merge_block, &else_return);
+        }
 
         // Switch to the merge block for subsequent statements.
         self.builder.switch_to_block(merge_block);
@@ -1953,6 +2006,11 @@ impl<'a> FunctionTranslator<'a> {
         let header_block = self.builder.create_block();
         let body_block = self.builder.create_block();
         let exit_block = self.builder.create_block();
+        let iter_block = self.builder.create_block();
+
+        self.while_exit_blocks.push(exit_block);
+
+        self.while_continue_blocks.push(iter_block);
 
         self.builder.ins().jump(header_block, &[]);
         self.builder.switch_to_block(header_block);
@@ -1965,7 +2023,6 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.ins().jump(body_block, &[]);
 
         self.builder.switch_to_block(body_block);
-        self.builder.seal_block(body_block);
 
         if self.use_deep_stack {
             self.deep_stack_widths.push(0);
@@ -1976,10 +2033,16 @@ impl<'a> FunctionTranslator<'a> {
         }
 
         if let Some(iter_body) = iter_body {
+            self.builder.ins().jump(iter_block, &[]);
+            self.builder.switch_to_block(iter_block);
             for expr in iter_body {
                 self.translate_expr(expr)?;
             }
+            self.builder.seal_block(iter_block);
         }
+
+        self.while_exit_blocks.pop();
+        self.while_continue_blocks.pop();
 
         self.dealloc_deep_stack();
 
@@ -1991,6 +2054,7 @@ impl<'a> FunctionTranslator<'a> {
         // more backedges to the header to exits to the bottom.
         self.builder.seal_block(header_block);
         self.builder.seal_block(exit_block);
+        self.builder.seal_block(body_block);
 
         self.per_scope_vars_leave_scope();
 

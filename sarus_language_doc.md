@@ -468,7 +468,7 @@ i.assert_eq(100)
 a[99].assert_eq(99)
 ```
 
-While loop have an optional block for iteration. This block runs after the main block. Defineing the while loop iteration all in one place can make it easier to spot potential errors.
+While loops have an optional block for iteration. This block is executed after the main block. Defineing the while loop iteration all in one place can make it easier to spot potential errors.
 ```rust , skt-sarus_single_func
 a = [0; 100][0..0] // Slice with length of 0 and capacity of 100
 
@@ -494,6 +494,23 @@ i = 0 while i < a.cap() {
 b.assert_eq(500)
 i.assert_eq(100)
 a[99].assert_eq(99)
+```
+
+While loops support `break` and `continue`
+```rust , skt-sarus_single_func
+b = 0
+i = 0 while i < 10 {i += 1} : {
+    b += 1
+    if i > 5 {
+        b += 2
+        break
+    } else if i > 2 {
+        b += 3
+        continue
+    }
+    b *= 10
+}
+b.assert_eq(1125)
 ```
 
 # Functions

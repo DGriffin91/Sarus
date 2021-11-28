@@ -182,6 +182,8 @@ pub enum Expr {
     NewStruct(CodeRef, String, Vec<StructAssignField>),
     WhileLoop(CodeRef, Box<Expr>, Option<Vec<Expr>>, Vec<Expr>), //Should this take a block instead of Vec<Expr>?
     Block(CodeRef, Vec<Expr>),
+    Break(CodeRef),
+    Continue(CodeRef),
     Call(CodeRef, String, Vec<Expr>, bool),
     GlobalDataAddr(CodeRef, String),
     Parentheses(CodeRef, Box<Expr>),
@@ -217,6 +219,8 @@ impl Expr {
             Expr::NewStruct(code_ref, ..) => code_ref,
             Expr::WhileLoop(code_ref, ..) => code_ref,
             Expr::Block(code_ref, ..) => code_ref,
+            Expr::Break(code_ref, ..) => code_ref,
+            Expr::Continue(code_ref, ..) => code_ref,
             Expr::Call(code_ref, ..) => code_ref,
             Expr::GlobalDataAddr(code_ref, ..) => code_ref,
             Expr::Parentheses(code_ref, ..) => code_ref,
@@ -245,6 +249,8 @@ impl Expr {
             Expr::NewStruct(code_ref, ..) => code_ref,
             Expr::WhileLoop(code_ref, ..) => code_ref,
             Expr::Block(code_ref, ..) => code_ref,
+            Expr::Break(code_ref, ..) => code_ref,
+            Expr::Continue(code_ref, ..) => code_ref,
             Expr::Call(code_ref, ..) => code_ref,
             Expr::GlobalDataAddr(code_ref, ..) => code_ref,
             Expr::Parentheses(code_ref, ..) => code_ref,
@@ -475,6 +481,14 @@ impl Display for Expr {
                 for expr in block.iter() {
                     writeln!(f, "{}", expr)?;
                 }
+                Ok(())
+            }
+            Expr::Break(_) => {
+                writeln!(f, "break")?;
+                Ok(())
+            }
+            Expr::Continue(_) => {
+                writeln!(f, "continue")?;
                 Ok(())
             }
             Expr::Call(_, func_name, args, _) => {
@@ -812,10 +826,17 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
 
     rule statement() -> Expr
         //TODO allow for multiple expressions like: a, b, c returned from if/then/else, etc...
-        = expression_declaration() / while_loop() / assignment() / expression()
+        = break_() / continue_() / expression_declaration() / while_loop() / assignment() / expression()
+
+    rule break_() -> Expr
+        = _ pos:position!() "break" {Expr::Break(CodeRef::new(pos, code_ctx))}
+
+
+    rule continue_() -> Expr
+    = _ pos:position!() "continue" {Expr::Continue(CodeRef::new(pos, code_ctx))}
 
     rule expression_declaration() -> Expr
-        = pos:position!() _ i:identifier()  _ c:closure_declaration(i) { Expr::Declaration(CodeRef::new(pos, code_ctx), c) }
+        = _ pos:position!() i:identifier()  _ c:closure_declaration(i) { Expr::Declaration(CodeRef::new(pos, code_ctx), c) }
 
     rule expression() -> Expr
         = if_then()
