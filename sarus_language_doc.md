@@ -468,6 +468,34 @@ i.assert_eq(100)
 a[99].assert_eq(99)
 ```
 
+While loop have an optional block for iteration. This block runs after the main block. Defineing the while loop iteration all in one place can make it easier to spot potential errors.
+```rust , skt-sarus_single_func
+a = [0; 100][0..0] // Slice with length of 0 and capacity of 100
+
+i = 0 while i < a.cap() {i += 1} : {
+    a.push(i)
+}
+
+i.assert_eq(100)
+a[99].assert_eq(99)
+```
+
+The iteration block is a normal block and can contain multiple expressions.
+```rust , skt-sarus_single_func
+a = [0; 100][0..0] // Slice with length of 0 and capacity of 100
+b = 0
+i = 0 while i < a.cap() {
+    i += 1
+    b = i * 5
+} : {
+    a.push(i)
+}
+
+b.assert_eq(500)
+i.assert_eq(100)
+a[99].assert_eq(99)
+```
+
 # Functions
 
 In Sarus both the parameters and the returns are named, and have type definitions:

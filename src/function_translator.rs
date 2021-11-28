@@ -151,8 +151,8 @@ impl<'a> FunctionTranslator<'a> {
             Expr::IfThenElseIfElse(code_ref, expr_bodies, else_body) => {
                 self.translate_if_then_else_if_else(code_ref, expr_bodies, else_body)
             }
-            Expr::WhileLoop(_code_ref, condition, loop_body) => {
-                self.translate_while_loop(condition, loop_body)?;
+            Expr::WhileLoop(_code_ref, condition, iter_body, loop_body) => {
+                self.translate_while_loop(condition, iter_body, loop_body)?;
                 Ok(SValue::Void)
             }
             Expr::Block(_code_ref, b) => b.iter().map(|e| self.translate_expr(e)).last().unwrap(),
@@ -1945,7 +1945,8 @@ impl<'a> FunctionTranslator<'a> {
     fn translate_while_loop(
         &mut self,
         condition: &Expr,
-        loop_body: &[Expr],
+        iter_body: &Option<Vec<Expr>>,
+        loop_body: &Vec<Expr>,
     ) -> anyhow::Result<SValue> {
         self.per_scope_vars_enter_scope();
 
@@ -1972,6 +1973,12 @@ impl<'a> FunctionTranslator<'a> {
 
         for expr in loop_body {
             self.translate_expr(expr)?;
+        }
+
+        if let Some(iter_body) = iter_body {
+            for expr in iter_body {
+                self.translate_expr(expr)?;
+            }
         }
 
         self.dealloc_deep_stack();

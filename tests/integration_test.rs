@@ -4570,14 +4570,38 @@ fn extern_func_slice() -> anyhow::Result<()> {
 }
 
 #[test]
-fn tmp() -> anyhow::Result<()> {
+fn while_iter_block() -> anyhow::Result<()> {
     //setup_logging();
     let code = r#"
 fn main() -> () {
-    a = "한글"
-    a.len().println()
-    b = "hello world"
-    b.len().println()
+
+    arr = [0; 10]
+    
+    i = 0 while i < 10 { i += 1 }:{arr[i] = i}
+
+    i = 0 while i < 10 
+    { i += 1 } : {
+        arr[i].assert_eq(i)
+    }
+
+    i = 0 while i < 10 { i += 1 } : {
+        arr[i].assert_eq(i)
+    }
+
+    a = 5
+
+    i = 0 while i < 10 { 
+        a = i + 1
+        i += 1 
+    } : {
+        arr[i].assert_eq(i)
+    }
+    a.assert_eq(10)
+
+    i = 0 while i < 10 {
+        arr[i].assert_eq(i)
+        i += 1
+    }
 }
 "#;
     let mut jit = default_std_jit_from_code(code)?;

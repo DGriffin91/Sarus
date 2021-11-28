@@ -180,7 +180,7 @@ pub enum Expr {
     IfThenElseIfElse(CodeRef, Vec<(Expr, Vec<Expr>)>, Vec<Expr>),
     Assign(CodeRef, Vec<Expr>, Vec<Expr>),
     NewStruct(CodeRef, String, Vec<StructAssignField>),
-    WhileLoop(CodeRef, Box<Expr>, Vec<Expr>), //Should this take a block instead of Vec<Expr>?
+    WhileLoop(CodeRef, Box<Expr>, Option<Vec<Expr>>, Vec<Expr>), //Should this take a block instead of Vec<Expr>?
     Block(CodeRef, Vec<Expr>),
     Call(CodeRef, String, Vec<Expr>, bool),
     GlobalDataAddr(CodeRef, String),
@@ -317,8 +317,13 @@ impl Expr {
     pub fn new_struct(name: &str, rhs: &Vec<StructAssignField>) -> Self {
         Expr::NewStruct(CodeRef::z(), name.to_string(), rhs.clone())
     }
-    pub fn while_loop(cond: &Expr, body: &Vec<Expr>) -> Self {
-        Expr::WhileLoop(CodeRef::z(), Box::new(cond.clone()), body.clone())
+    pub fn while_loop(cond: &Expr, iter_body: &Option<Vec<Expr>>, body: &Vec<Expr>) -> Self {
+        Expr::WhileLoop(
+            CodeRef::z(),
+            Box::new(cond.clone()),
+            iter_body.clone(),
+            body.clone(),
+        )
     }
     pub fn block(body: &Vec<Expr>) -> Self {
         Expr::Block(CodeRef::z(), body.clone())
@@ -450,8 +455,16 @@ impl Display for Expr {
                 writeln!(f, "}}")?;
                 Ok(())
             }
-            Expr::WhileLoop(_, eval, block) => {
-                writeln!(f, "while {} {{", eval)?;
+            Expr::WhileLoop(_, eval, iter_block, block) => {
+                writeln!(f, "while {} ", eval)?;
+                if let Some(iter_block) = iter_block {
+                    write!(f, "{{")?;
+                    for expr in iter_block.iter() {
+                        writeln!(f, "{}", expr)?;
+                    }
+                    write!(f, "}} : ")?;
+                }
+                write!(f, "{{")?;
                 for expr in block.iter() {
                     writeln!(f, "{}", expr)?;
                 }
@@ -835,8 +848,8 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         { Expr::IfThenElseIfElse(CodeRef::new(pos, code_ctx), expr_bodies, when_false) }
 
     rule while_loop() -> Expr
-        = _ pos:position!() "while" e:expression() body:block()
-        { Expr::WhileLoop(CodeRef::new(pos, code_ctx), Box::new(e), body) }
+        = _ pos:position!() "while" e:expression() iter_body:(b:block()_":"{b})? body:block()
+        { Expr::WhileLoop(CodeRef::new(pos, code_ctx), Box::new(e), iter_body, body) }
 
     rule assignment() -> Expr
         = assignments:((binary_op()) ** comma()) _ pos:position!() "=" args:((_ e:expression() _ {e}) ** comma()) {

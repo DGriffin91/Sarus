@@ -219,6 +219,7 @@ fn build_graph_func(
             Box::new(Expr::identifier("i")),
             Box::new(Expr::literal_int((block_size - 1) as i64)),
         )),
+        None,
         body,
     ));
 

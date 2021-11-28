@@ -723,7 +723,7 @@ impl ExprType {
                 }
                 ExprType::Void(*code_ref)
             }
-            Expr::WhileLoop(code_ref, idx_expr, _stmts) => {
+            Expr::WhileLoop(code_ref, idx_expr, _iter_stmts, _stmts) => {
                 let idx_type = ExprType::of(idx_expr, env, func_name, variables)?;
                 if idx_type != ExprType::Bool(*code_ref) {
                     error!("");
