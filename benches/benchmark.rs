@@ -180,6 +180,15 @@ fn eq_compile_only(b: &mut Bencher) {
 }
 
 #[bench]
+fn eq_parse_only(b: &mut Bencher) {
+    b.iter(|| {
+        test::black_box({
+            let _ast = frontend::parse(EQ_BENCH_CODE).unwrap();
+        });
+    });
+}
+
+#[bench]
 fn eq(b: &mut Bencher) {
     let mut jit = get_eq_jit();
     let mut result = 0.0;

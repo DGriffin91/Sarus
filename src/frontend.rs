@@ -887,6 +887,7 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
     / a:(binary_op()) _ "*=" _ b:expression() {assign_op_to_assign(Binop::Mul, a, b)}
     / a:(binary_op()) _ "/=" _ b:expression() {assign_op_to_assign(Binop::Div, a, b)}
 
+    #[cache]
     rule binary_op() -> Expr = precedence!{
         a:@ _ pos:position!() "&&" _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::LogicalAnd, Box::new(a), Box::new(b)) }
         a:@ _ pos:position!() "||" _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::LogicalOr, Box::new(a), Box::new(b)) }
@@ -912,6 +913,7 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         u:unary()  { u }
     }
 
+
     rule unary_op() -> Expr
         //TODO e:unary() "[" idx:expression() "]" is causing a severe performance regression vs using i:identifier() "[" idx:expression() "]"
         = _ pos:position!() e:unary() "[" r:range() "]" { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Slice(r), Box::new(e)) }
@@ -930,6 +932,7 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         //a compile time thing where start and end are just expressions. The downside
         //with this would be that it is not a value that can be passed around
 
+    #[cache]
     rule unary() -> Expr
         //Having a _ before the () breaks in this case:
         //c = p.x + p.y + p.z
@@ -949,7 +952,6 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
             Expr::LiteralArray(CodeRef::new(pos, code_ctx), exprs, len)
         }
         / l:literal() { l }
-
 
     rule identifier() -> String
         = n:$(['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']* "::"? ['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*)  {?
