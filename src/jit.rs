@@ -448,59 +448,8 @@ impl JIT {
             trans.translate_expr(expr)?;
         }
 
+        trans.return_()?;
         self.total_max_deep_stack_size += trans.max_deep_stack_size;
-        trans.dealloc_deep_stack();
-
-        trans.check_unassigned_return_var_names(&func.name)?;
-
-        // Set up the return variable of the function. Above, we declared a
-        // variable to hold the return value. Here, we just do a use of that
-        // variable.
-        let mut return_values = Vec::new();
-        for ret in func.returns.iter() {
-            let return_variable = trans.get_variable(&CodeRef::z(), &ret.name)?.clone();
-            let v = match &ret.expr_type {
-                ExprType::F32(code_ref) => trans
-                    .builder
-                    .use_var(return_variable.expect_f32(code_ref, "return_variable")?),
-                ExprType::I64(code_ref) => trans
-                    .builder
-                    .use_var(return_variable.expect_i64(code_ref, "return_variable")?),
-                ExprType::U8(code_ref) => trans
-                    .builder
-                    .use_var(return_variable.expect_u8(code_ref, "return_variable")?),
-                ExprType::Array(code_ref, ty, size_type) => match size_type {
-                    ArraySizedExpr::Unsized => {
-                        trans.builder.use_var(return_variable.expect_array(
-                            code_ref,
-                            *ty.clone(),
-                            size_type.clone(),
-                            "return_variable",
-                        )?)
-                    }
-                    // We don't actually return slices, they are passed in as StackSlotKind::StructReturnSlot and written to from there
-                    ArraySizedExpr::Slice => continue,
-                    // We don't actually return fixed sized arrays, they are passed in as StackSlotKind::StructReturnSlot and written to from there
-                    ArraySizedExpr::Fixed(_) => continue,
-                },
-                ExprType::Address(code_ref) => trans
-                    .builder
-                    .use_var(return_variable.expect_address(code_ref, "return_variable")?),
-                ExprType::Void(_code_ref) => continue,
-                ExprType::Bool(code_ref) => trans
-                    .builder
-                    .use_var(return_variable.expect_bool(code_ref, "return_variable")?),
-                ExprType::Tuple(code_ref, _) => {
-                    anyhow::bail!("{} tuple not supported in return", code_ref)
-                }
-                //We don't actually return structs, they are passed in as StackSlotKind::StructReturnSlot and written to from there
-                ExprType::Struct(_code_ref, _) => continue, //trans.builder.use_var(return_variable.expect_struct(n, "codegen return variables")?)
-            };
-            return_values.push(v);
-        }
-
-        // Emit the return instruction.
-        trans.builder.ins().return_(&return_values);
 
         //Keep clif around for later debug/print
         self.clif.insert(

@@ -586,6 +586,21 @@ fn main() -> () {
 }
 ```
 
+Early returns are supported in normal functions. They are not yet supported in inline functions or closures. Variables that are to be returned also need to be declared in the top level scope of the function. This will not be necessary in the future.
+```rust , skt-sarus_multi_func
+fn other(a: i64) -> (b: i64) {
+    b = 0
+    if a > 5 {
+        return
+    }
+    b = a
+}
+fn main() -> () {
+    other(6).assert_eq(0)
+    other(4).assert_eq(4)
+}
+```
+
 # Methods
 
 All types can have methods. Methods operate on their associated types. Methods are declared by using the identifier `self` as the first parameter of a function.

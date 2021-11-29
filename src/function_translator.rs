@@ -82,7 +82,7 @@ impl<'a> FunctionTranslator<'a> {
         self.expr_depth += 1;
         info!(
             "{}: {} | {} (expr_depth {})",
-            expr.get_code_ref(),
+            expr.get_code_ref().s(&self.env.file_idx),
             expr,
             expr.debug_get_name(),
             self.expr_depth,
@@ -173,6 +173,7 @@ impl<'a> FunctionTranslator<'a> {
             Expr::Block(_code_ref, b) => b.iter().map(|e| self.translate_expr(e)).last().unwrap(),
             Expr::Break(code_ref) => self.translate_break(code_ref),
             Expr::Continue(code_ref) => self.translate_continue(code_ref),
+            Expr::Return(code_ref) => self.translate_return(code_ref),
             Expr::LiteralBool(_code_ref, b) => Ok(SValue::Bool(self.bconst(*b))),
             Expr::Parentheses(_code_ref, expr) => self.translate_expr(expr),
             Expr::ArrayAccess(code_ref, expr, idx_expr) => {
@@ -183,7 +184,6 @@ impl<'a> FunctionTranslator<'a> {
                 Declaration::Function(_closure) => Ok(SValue::Void),
                 Declaration::Metadata(_, _) => todo!(),
                 Declaration::Struct(_) => todo!(),
-                Declaration::StructMacro(_, _) => todo!(),
                 Declaration::Include(_) => todo!(),
             },
         };
@@ -201,6 +201,62 @@ impl<'a> FunctionTranslator<'a> {
                 name
             ),
         }
+    }
+
+    pub fn return_(&mut self) -> anyhow::Result<()> {
+        self.dealloc_deep_stack();
+
+        let func = self.func_stack.last().unwrap().clone();
+
+        self.check_unassigned_return_var_names(&func.name)?;
+
+        // Set up the return variable of the function. Above, we declared a
+        // variable to hold the return value. Here, we just do a use of that
+        // variable.
+        let mut return_values = Vec::new();
+        for ret in func.returns.iter() {
+            let return_variable = self.get_variable(&CodeRef::z(), &ret.name)?.clone();
+            let v = match &ret.expr_type {
+                ExprType::F32(code_ref) => self
+                    .builder
+                    .use_var(return_variable.expect_f32(code_ref, "return_variable")?),
+                ExprType::I64(code_ref) => self
+                    .builder
+                    .use_var(return_variable.expect_i64(code_ref, "return_variable")?),
+                ExprType::U8(code_ref) => self
+                    .builder
+                    .use_var(return_variable.expect_u8(code_ref, "return_variable")?),
+                ExprType::Array(code_ref, ty, size_type) => match size_type {
+                    ArraySizedExpr::Unsized => self.builder.use_var(return_variable.expect_array(
+                        code_ref,
+                        *ty.clone(),
+                        size_type.clone(),
+                        "return_variable",
+                    )?),
+                    // We don't actually return slices, they are passed in as StackSlotKind::StructReturnSlot and written to from there
+                    ArraySizedExpr::Slice => continue,
+                    // We don't actually return fixed sized arrays, they are passed in as StackSlotKind::StructReturnSlot and written to from there
+                    ArraySizedExpr::Fixed(_) => continue,
+                },
+                ExprType::Address(code_ref) => self
+                    .builder
+                    .use_var(return_variable.expect_address(code_ref, "return_variable")?),
+                ExprType::Void(_code_ref) => continue,
+                ExprType::Bool(code_ref) => self
+                    .builder
+                    .use_var(return_variable.expect_bool(code_ref, "return_variable")?),
+                ExprType::Tuple(code_ref, _) => {
+                    anyhow::bail!("{} tuple not supported in return", code_ref)
+                }
+                //We don't actually return structs, they are passed in as StackSlotKind::StructReturnSlot and written to from there
+                ExprType::Struct(_code_ref, _) => continue, //self.builder.use_var(return_variable.expect_struct(n, "codegen return variables")?)
+            };
+            return_values.push(v);
+        }
+
+        // Emit the return instruction.
+        self.builder.ins().return_(&return_values);
+        Ok(())
     }
 
     fn translate_break(&mut self, code_ref: &CodeRef) -> anyhow::Result<SValue> {
@@ -224,6 +280,19 @@ impl<'a> FunctionTranslator<'a> {
                 code_ref.s(&self.env.file_idx)
             )
         }
+        Ok(SValue::Void)
+    }
+
+    fn translate_return(&mut self, code_ref: &CodeRef) -> anyhow::Result<SValue> {
+        if self.func_stack.len() > 1 {
+            anyhow::bail!(
+                "{} early return in inline function not yet supported",
+                code_ref.s(&self.env.file_idx)
+            )
+        }
+
+        self.return_()?;
+
         Ok(SValue::Void)
     }
 
@@ -547,6 +616,7 @@ impl<'a> FunctionTranslator<'a> {
                 | Expr::Block(code_ref, ..)
                 | Expr::Break(code_ref, ..)
                 | Expr::Continue(code_ref, ..)
+                | Expr::Return(code_ref, ..)
                 | Expr::GlobalDataAddr(code_ref, ..)
                 | Expr::LiteralFloat(code_ref, ..)
                 | Expr::LiteralInt(code_ref, ..)
@@ -577,7 +647,7 @@ impl<'a> FunctionTranslator<'a> {
         info!(
             "{{{}}} {}: {}{}{} | {}",
             if get_address { "get_address" } else { "" },
-            lhs.get_code_ref(),
+            lhs.get_code_ref().s(&self.env.file_idx),
             lhs,
             op,
             rhs,
@@ -1015,7 +1085,7 @@ impl<'a> FunctionTranslator<'a> {
                 SValue::F32(b) => Ok(SValue::Bool(self.fcmp(cmp, a, b))),
                 _ => anyhow::bail!(
                     "{} compare not supported: {:?} {} {:?}",
-                    lhs_expr.get_code_ref(),
+                    lhs_expr.get_code_ref().s(&self.env.file_idx),
                     lhs,
                     cmp,
                     rhs
@@ -1025,7 +1095,7 @@ impl<'a> FunctionTranslator<'a> {
                 SValue::I64(b) => Ok(SValue::Bool(self.icmp(cmp, a, b))),
                 _ => anyhow::bail!(
                     "{} compare not supported: {:?} {} {:?}",
-                    lhs_expr.get_code_ref(),
+                    lhs_expr.get_code_ref().s(&self.env.file_idx),
                     lhs,
                     cmp,
                     rhs
@@ -1035,7 +1105,7 @@ impl<'a> FunctionTranslator<'a> {
                 SValue::U8(b) => Ok(SValue::Bool(self.icmp(cmp, a, b))),
                 _ => anyhow::bail!(
                     "{} compare not supported: {:?} {} {:?}",
-                    lhs_expr.get_code_ref(),
+                    lhs_expr.get_code_ref().s(&self.env.file_idx),
                     lhs,
                     cmp,
                     rhs
@@ -1045,7 +1115,7 @@ impl<'a> FunctionTranslator<'a> {
                 SValue::Bool(b) => Ok(SValue::Bool(self.cmp_bool(cmp, a, b))),
                 _ => anyhow::bail!(
                     "{} compare not supported: {:?} {} {:?}",
-                    lhs_expr.get_code_ref(),
+                    lhs_expr.get_code_ref().s(&self.env.file_idx),
                     lhs,
                     cmp,
                     rhs
@@ -1059,7 +1129,7 @@ impl<'a> FunctionTranslator<'a> {
             | SValue::Tuple(_) => {
                 anyhow::bail!(
                     "{} compare not supported: {:?} {} {:?}",
-                    lhs_expr.get_code_ref(),
+                    lhs_expr.get_code_ref().s(&self.env.file_idx),
                     lhs,
                     cmp,
                     rhs
@@ -1227,10 +1297,10 @@ impl<'a> FunctionTranslator<'a> {
                         let idx_val = self.idx_expr_to_val(idx_expr)?;
                         self.translate_array_set_from_var(name.to_string(), idx_val, &src_sval)?;
                     }
-                    _ => {
-                        //dbg!(dst_expr);
-                        todo!()
-                    }
+                    _ => anyhow::bail!(
+                        "{} operation not supported",
+                        dst_expr.get_code_ref().s(&self.env.file_idx)
+                    ),
                 }
             }
             Ok(SValue::Void)
@@ -3265,6 +3335,16 @@ impl<'a> FunctionTranslator<'a> {
         } else {
             Ok(())
         }
+        /*
+        // TODO - update to allow
+        fn other(a: i64) -> (b: i64) {
+            if a > 5 {
+                b = 0
+                return
+            }
+            b = a
+        }
+        */
     }
 
     fn update_unassigned_return_var_names(&mut self, name: &str) {
@@ -3333,22 +3413,23 @@ impl<'a> FunctionTranslator<'a> {
 
     pub fn dealloc_deep_stack(&mut self) {
         if self.use_deep_stack {
-            let width_to_remove = self.deep_stack_widths.pop().unwrap();
-            if width_to_remove > 0 {
-                trace!("dealloc_deep_stack width_to_remove {}", width_to_remove);
-                let deep_stack_address =
-                    self.translate_global_data_addr(self.ptr_ty, "__DEEP_STACK__");
+            if let Some(width_to_remove) = self.deep_stack_widths.pop() {
+                if width_to_remove > 0 {
+                    trace!("dealloc_deep_stack width_to_remove {}", width_to_remove);
+                    let deep_stack_address =
+                        self.translate_global_data_addr(self.ptr_ty, "__DEEP_STACK__");
 
-                let stack_slot_address = self.ptr_load(deep_stack_address, 0);
+                    let stack_slot_address = self.ptr_load(deep_stack_address, 0);
 
-                let alloc_size_val = self
-                    .builder
-                    .ins()
-                    .iconst(types::I64, width_to_remove as i64);
+                    let alloc_size_val = self
+                        .builder
+                        .ins()
+                        .iconst(types::I64, width_to_remove as i64);
 
-                let address_new_start = self.isub(stack_slot_address, alloc_size_val);
+                    let address_new_start = self.isub(stack_slot_address, alloc_size_val);
 
-                self.store(address_new_start, deep_stack_address, 0);
+                    self.store(address_new_start, deep_stack_address, 0);
+                }
             }
         }
     }

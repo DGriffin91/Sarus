@@ -4711,6 +4711,44 @@ fn main() -> () {
     Ok(())
 }
 
+#[test]
+fn early_return() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+fn other2(a: i64) -> (b: i64) {
+    b = 0
+    if a > 5 {
+        b = 3
+        return
+    } else {
+        b = 4
+        return
+    }
+    b = a
+}
+
+fn other(a: i64) -> (b: i64) {
+    b = 0
+    if a > 5 {
+        return
+    }
+    b = a
+}
+
+fn main() -> () {
+    other(6).assert_eq(0)
+    other(4).assert_eq(4)
+    other2(1).assert_eq(4)
+    other2(6).assert_eq(3)
+}
+"#;
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    func();
+    Ok(())
+}
+
 // TODO this parses very slowly
 /*
 sl.append([

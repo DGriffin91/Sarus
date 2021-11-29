@@ -511,6 +511,7 @@ impl ExprType {
                             | Expr::Block(..)
                             | Expr::Break(..)
                             | Expr::Continue(..)
+                            | Expr::Return(..)
                             | Expr::GlobalDataAddr(..)
                             | Expr::LiteralFloat(..)
                             | Expr::LiteralInt(..)
@@ -750,6 +751,7 @@ impl ExprType {
                 .unwrap_or(ExprType::Void(*code_ref)),
             Expr::Break(code_ref) => ExprType::Void(*code_ref),
             Expr::Continue(code_ref) => ExprType::Void(*code_ref),
+            Expr::Return(code_ref) => ExprType::Void(*code_ref),
             Expr::Call(code_ref, fn_name, args, is_macro) => {
                 if *is_macro {
                     todo!()

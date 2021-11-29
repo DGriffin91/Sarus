@@ -184,6 +184,7 @@ pub enum Expr {
     Block(CodeRef, Vec<Expr>),
     Break(CodeRef),
     Continue(CodeRef),
+    Return(CodeRef),
     Call(CodeRef, String, Vec<Expr>, bool),
     GlobalDataAddr(CodeRef, String),
     Parentheses(CodeRef, Box<Expr>),
@@ -221,6 +222,7 @@ impl Expr {
             Expr::Block(code_ref, ..) => code_ref,
             Expr::Break(code_ref, ..) => code_ref,
             Expr::Continue(code_ref, ..) => code_ref,
+            Expr::Return(code_ref, ..) => code_ref,
             Expr::Call(code_ref, ..) => code_ref,
             Expr::GlobalDataAddr(code_ref, ..) => code_ref,
             Expr::Parentheses(code_ref, ..) => code_ref,
@@ -251,6 +253,7 @@ impl Expr {
             Expr::Block(code_ref, ..) => code_ref,
             Expr::Break(code_ref, ..) => code_ref,
             Expr::Continue(code_ref, ..) => code_ref,
+            Expr::Return(code_ref, ..) => code_ref,
             Expr::Call(code_ref, ..) => code_ref,
             Expr::GlobalDataAddr(code_ref, ..) => code_ref,
             Expr::Parentheses(code_ref, ..) => code_ref,
@@ -483,14 +486,9 @@ impl Display for Expr {
                 }
                 Ok(())
             }
-            Expr::Break(_) => {
-                writeln!(f, "break")?;
-                Ok(())
-            }
-            Expr::Continue(_) => {
-                writeln!(f, "continue")?;
-                Ok(())
-            }
+            Expr::Break(_) => writeln!(f, "break"),
+            Expr::Continue(_) => writeln!(f, "continue"),
+            Expr::Return(_) => writeln!(f, "return"),
             Expr::Call(_, func_name, args, _) => {
                 //todo print this correctly
                 write!(f, "{}(", func_name)?;
@@ -517,8 +515,7 @@ pub enum Declaration {
     Function(Function),
     Metadata(Vec<String>, String),
     Struct(Struct),
-    StructMacro(String, Box<ExprType>), //Will probably change significantly or be removed
-    Include(String),                    //Naive implementation that will change significantly.
+    Include(String), //Naive implementation that will change significantly.
 }
 
 impl Display for Declaration {
@@ -534,7 +531,6 @@ impl Display for Declaration {
                 Ok(())
             }
             Declaration::Struct(e) => write!(f, "{}", e),
-            Declaration::StructMacro(name, e) => write!(f, "{}({})", name, e),
             Declaration::Include(path) => writeln!(f, "include {}", path),
         }
     }
@@ -718,6 +714,9 @@ pub fn pretty_indent(code: &str) -> String {
     f
 }
 
+//TODO wish this could be a HashSet
+const RESERVED_WORDS: [&str; 5] = ["true", "false", "break", "continue", "return"];
+
 peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
     pub rule program() -> Vec<Declaration>
         = (d:declaration() _ { d })*
@@ -726,7 +725,6 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         = function()
         / metadata()
         / structdef()
-        / structmacro()
         / include()
 
     rule include() -> Declaration
@@ -734,9 +732,6 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
 
     rule structdef() -> Declaration
         = _ ext:("extern")? _ "struct" _ name:$(s:identifier() ("::" (ty:type_label() ** "::"))?) _ "{" _ fields:(a:arg() comma() {a})* _ "}" _ {Declaration::Struct(Struct{name: name.to_string(), fields, extern_struct: ext.is_some()})}
-
-    rule structmacro() -> Declaration
-        = _ name:identifier() _ "for" _ t:type_label() _ {Declaration::StructMacro(name, Box::new(t))}
 
     rule metadata() -> Declaration
         = _ "@" _ headings:(i:(metadata_identifier()** ([' ' | '\t'])) {i}) ([' ' | '\t'])* "\n" body:$[^'@']* "@" _ {Declaration::Metadata(headings, body.join(""))}
@@ -826,14 +821,22 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
 
     rule statement() -> Expr
         //TODO allow for multiple expressions like: a, b, c returned from if/then/else, etc...
-        = break_() / continue_() / expression_declaration() / while_loop() / assignment() / expression()
+        = expression_declaration()
+        / while_loop()
+        / assignment()
+        / expression()
+        / break_()
+        / continue_()
+        / return_()
 
     rule break_() -> Expr
-        = _ pos:position!() "break" {Expr::Break(CodeRef::new(pos, code_ctx))}
-
+        = _ pos:position!() "break" _ {Expr::Break(CodeRef::new(pos, code_ctx))}
 
     rule continue_() -> Expr
-    = _ pos:position!() "continue" {Expr::Continue(CodeRef::new(pos, code_ctx))}
+        = _ pos:position!() "continue" _ {Expr::Continue(CodeRef::new(pos, code_ctx))}
+
+    rule return_() -> Expr
+        = _ pos:position!() "return" _ {Expr::Return(CodeRef::new(pos, code_ctx))}
 
     rule expression_declaration() -> Expr
         = _ pos:position!() i:identifier()  _ c:closure_declaration(i) { Expr::Declaration(CodeRef::new(pos, code_ctx), c) }
@@ -949,7 +952,9 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
 
 
     rule identifier() -> String
-        = n:$((!"true"!"false")['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']* "::"? ['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*) { n.into() }
+        = n:$(['a'..='z' | 'A'..='Z' | '_']['a'..='z' | 'A'..='Z' | '0'..='9' | '_']* "::"? ['a'..='z' | 'A'..='Z' | '0'..='9' | '_']*)  {?
+            if RESERVED_WORDS.contains(&n) {Err("keyword found, expected identifier")} else {Ok(n.into())}
+        }
 
     rule literal() -> Expr
         = _ pos:position!() n:$(['0'..='9']+) "u8" { Expr::LiteralU8(CodeRef::new(pos, code_ctx), n.parse::<u8>().unwrap()) }
@@ -968,6 +973,7 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
     rule comma() = _ ","
 
     rule _() =  quiet!{comment() / [' ' | '\t' | '\n']}*
+    rule require_ws() =  quiet!{comment() / [' ' | '\t' | '\n']}+
 
 });
 
@@ -1081,5 +1087,5 @@ pub fn parse(code: &str) -> anyhow::Result<Vec<Declaration>> {
         code,
         file_index: None,
     };
-    Ok(parser::program(code, &code_ctx)?)
+    Ok(parser::program(&code.replace("\r\n", "\n"), &code_ctx)?)
 }
