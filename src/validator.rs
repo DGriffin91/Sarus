@@ -75,6 +75,14 @@ pub fn u8_t() -> ExprType {
     ExprType::U8(CodeRef::z())
 }
 
+pub fn str_t() -> ExprType {
+    ExprType::Array(
+        CodeRef::z(),
+        Box::new(ExprType::U8(CodeRef::z())),
+        ArraySizedExpr::Slice,
+    )
+}
+
 pub fn bool_t() -> ExprType {
     ExprType::Bool(CodeRef::z())
 }

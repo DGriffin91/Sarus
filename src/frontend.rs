@@ -913,7 +913,6 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         u:unary()  { u }
     }
 
-
     rule unary_op() -> Expr
         //TODO e:unary() "[" idx:expression() "]" is causing a severe performance regression vs using i:identifier() "[" idx:expression() "]"
         = _ pos:position!() e:unary() "[" r:range() "]" { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Slice(r), Box::new(e)) }

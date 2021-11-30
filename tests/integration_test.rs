@@ -17,6 +17,14 @@ use sarus::logging::setup_logging;
 
 use sarus::*;
 
+fn only_run_func(code: &str) -> anyhow::Result<()> {
+    let mut jit = default_std_jit_from_code(code)?;
+    let func_ptr = jit.get_func("main")?;
+    let funcc = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
+    funcc();
+    Ok(())
+}
+
 #[test]
 fn parentheses() -> anyhow::Result<()> {
     let code = r#"
@@ -622,11 +630,7 @@ fn main() -> () {
     d.assert_eq(8)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -773,11 +777,7 @@ fn main() -> () {
     b.assert_eq(-1.0)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -2373,11 +2373,7 @@ fn main() -> () {
     src_line().assert_eq(7)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -2452,11 +2448,7 @@ fn main() -> () {
     //TODO n.len()
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -2501,11 +2493,7 @@ fn main() -> () {
     takes_an_array(n)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[cfg(test)]
@@ -2967,11 +2955,7 @@ fn main() -> () {
 }
 
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -3094,11 +3078,7 @@ fn main(a: f32) -> () {
     float_to_int(6.0).assert_eq(0)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -3160,11 +3140,7 @@ fn main(a: f32) -> () {
     float_to_int2(6.0).assert_eq(0)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 fn get_test_dir() -> PathBuf {
@@ -3256,11 +3232,7 @@ fn main() -> () {
 }
 "#;
 
-        let mut jit = default_std_jit_from_code(code)?;
-        let func_ptr = jit.get_func("main")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-        func();
-        Ok(())
+        only_run_func(code)
     }
 
     #[test]
@@ -3285,11 +3257,7 @@ fn main() -> () {
 }
 "#;
 
-        let mut jit = default_std_jit_from_code(code)?;
-        let func_ptr = jit.get_func("main")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-        func();
-        Ok(())
+        only_run_func(code)
     }
 
     #[test]
@@ -3318,11 +3286,7 @@ fn main() -> () {
 }
 "#;
 
-        let mut jit = default_std_jit_from_code(code)?;
-        let func_ptr = jit.get_func("main")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-        func();
-        Ok(())
+        only_run_func(code)
     }
 
     #[test]
@@ -3363,11 +3327,7 @@ fn main() -> () {
 }
 "#;
 
-        let mut jit = default_std_jit_from_code(code)?;
-        let func_ptr = jit.get_func("main")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-        func();
-        Ok(())
+        only_run_func(code)
     }
 
     #[test]
@@ -3387,11 +3347,7 @@ fn main() -> () {
 }
 "#;
 
-        let mut jit = default_std_jit_from_code(code)?;
-        let func_ptr = jit.get_func("main")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-        func();
-        Ok(())
+        only_run_func(code)
     }
 
     #[test]
@@ -3413,11 +3369,7 @@ fn main() -> () {
 }
 "#;
 
-        let mut jit = default_std_jit_from_code(code)?;
-        let func_ptr = jit.get_func("main")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-        func();
-        Ok(())
+        only_run_func(code)
     }
 
     #[test]
@@ -3437,11 +3389,7 @@ fn main() -> () {
 }
 "#;
 
-        let mut jit = default_std_jit_from_code(code)?;
-        let func_ptr = jit.get_func("main")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-        func();
-        Ok(())
+        only_run_func(code)
     }
 
     #[test]
@@ -3457,11 +3405,7 @@ fn main() -> () {
     c.assert_eq(110.0)
 }
 "#;
-        let mut jit = default_std_jit_from_code(code)?;
-        let func_ptr = jit.get_func("main")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-        func();
-        Ok(())
+        only_run_func(code)
     }
 
     #[test]
@@ -3482,11 +3426,7 @@ fn main() -> () {
 }
 "#;
 
-        let mut jit = default_std_jit_from_code(code)?;
-        let func_ptr = jit.get_func("main")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-        func();
-        Ok(())
+        only_run_func(code)
     }
 
     #[test]
@@ -3518,11 +3458,7 @@ fn main() -> () {
 }
 "#;
 
-        let mut jit = default_std_jit_from_code(code)?;
-        let func_ptr = jit.get_func("main")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-        func();
-        Ok(())
+        only_run_func(code)
     }
 
     #[test]
@@ -3543,11 +3479,7 @@ fn main() -> () {
     c.assert_eq(110.0)
 }
 "#;
-        let mut jit = default_std_jit_from_code(code)?;
-        let func_ptr = jit.get_func("main")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-        func();
-        Ok(())
+        only_run_func(code)
     }
 
     #[test]
@@ -3569,11 +3501,7 @@ fn main() -> () {
 }
 "#;
 
-        let mut jit = default_std_jit_from_code(code)?;
-        let func_ptr = jit.get_func("main")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-        func();
-        Ok(())
+        only_run_func(code)
     }
 
     #[test]
@@ -3609,11 +3537,7 @@ fn main() -> () {
 }
 "#;
 
-        let mut jit = default_std_jit_from_code(code)?;
-        let func_ptr = jit.get_func("main")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-        func();
-        Ok(())
+        only_run_func(code)
     }
 
     #[test]
@@ -3646,11 +3570,7 @@ fn main() -> () {
 }
 "#;
 
-        let mut jit = default_std_jit_from_code(code)?;
-        let func_ptr = jit.get_func("main")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-        func();
-        Ok(())
+        only_run_func(code)
     }
 
     #[test]
@@ -3697,11 +3617,7 @@ fn main() -> () {
 }
 "#;
 
-        let mut jit = default_std_jit_from_code(code)?;
-        let func_ptr = jit.get_func("main")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-        func();
-        Ok(())
+        only_run_func(code)
     }
 
     #[test]
@@ -3729,11 +3645,7 @@ fn main() -> () {
 }
 "#;
 
-        let mut jit = default_std_jit_from_code(code)?;
-        let func_ptr = jit.get_func("main")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-        func();
-        Ok(())
+        only_run_func(code)
     }
 
     #[test]
@@ -3752,11 +3664,7 @@ fn main() -> () {
 }
 "#;
 
-        let mut jit = default_std_jit_from_code(code)?;
-        let func_ptr = jit.get_func("main")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-        func();
-        Ok(())
+        only_run_func(code)
     }
 
     #[test]
@@ -3780,11 +3688,7 @@ fn main() -> () {
 }
 "#;
 
-        let mut jit = default_std_jit_from_code(code)?;
-        let func_ptr = jit.get_func("main")?;
-        let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-        func();
-        Ok(())
+        only_run_func(code)
     }
 }
 
@@ -3813,11 +3717,7 @@ fn main() -> () {
 }
 
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -3830,11 +3730,7 @@ fn main() -> () {
     (if false {1.0} else if true {-1.0} else {0.0}).assert_eq(-1.0)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -3856,11 +3752,7 @@ fn main() -> () {
     }
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -3895,11 +3787,7 @@ fn main() -> () {
     (two + (-four + two)).assert_eq(0)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -3920,11 +3808,7 @@ fn main() -> () {
     arr(4.0)[1].assert_eq(4.0)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -3939,11 +3823,7 @@ fn main() -> () {
     }
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -3972,11 +3852,7 @@ fn main() -> () {
 }
 
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -3995,11 +3871,7 @@ fn main() -> () {
     a[1].assert_eq(1.0)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -4014,11 +3886,7 @@ fn main() -> () {
     b[1].assert_eq(2)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -4036,11 +3904,7 @@ fn main() -> () {
     }
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -4059,11 +3923,7 @@ fn main() -> () {
     
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -4114,11 +3974,7 @@ fn main() -> () {
     a[2].assert_eq(6.0)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -4178,11 +4034,7 @@ fn main() -> () {
     a[2].y.assert_eq(6.0)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -4225,11 +4077,7 @@ fn main() -> () {
     a[2].y.assert_eq(10.0)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -4247,11 +4095,7 @@ fn main() -> () {
     sl1[5].assert_eq(1.0)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -4331,11 +4175,7 @@ fn main() -> () {
     c[5].assert_eq(5)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -4351,11 +4191,7 @@ fn main() -> () {
     arr[4].assert_eq(4.0)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -4381,11 +4217,7 @@ fn main() -> () {
     (sl.unsized())[2].assert_eq(arr[2])
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -4411,11 +4243,7 @@ fn main() -> () {
     (sl[0..sl.len()+1])[9].assert_eq(2.0)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -4446,11 +4274,7 @@ fn main() -> () {
     sl[2].z.assert_eq(9.0)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -4465,11 +4289,7 @@ fn main() -> () {
     b[20].assert_eq(5.0)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -4483,11 +4303,7 @@ fn main() -> () {
     a = true
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -4523,11 +4339,7 @@ fn main() -> () {
     (5u8*5u8).assert_eq((5*5).u8())
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 extern "C" fn rust_check_slice(a: sarus_std_lib::SarusSlice<u8>) {
@@ -4604,11 +4416,7 @@ fn main() -> () {
     }
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -4646,11 +4454,7 @@ fn main() -> () {
 
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -4704,11 +4508,7 @@ fn main() -> () {
 
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
 #[test]
@@ -4742,22 +4542,69 @@ fn main() -> () {
     other2(6).assert_eq(3)
 }
 "#;
-    let mut jit = default_std_jit_from_code(code)?;
-    let func_ptr = jit.get_func("main")?;
-    let func = unsafe { mem::transmute::<_, extern "C" fn()>(func_ptr) };
-    func();
-    Ok(())
+    only_run_func(code)
 }
 
-// TODO this parses very slowly
-/*
-sl.append([
-        Point { x: 1.0, y: 2.0, z: 2.0, },
-        Point { x: 2.0, y: 1.0, z: 2.0, },
-        Point { x: 2.0, y: 2.0, z: 1.0, }
-    ])
-*/
+#[cfg(test)]
+mod string_tests {
 
-// TODO don't allow vars that are only declared in a
-// while loop, if/then, or if/then/elseif
-// to be accessed outside of that scope. They may not be initialized
+    use super::*;
+    #[test]
+    fn find() -> anyhow::Result<()> {
+        only_run_func(
+            r#"
+fn main() -> () {
+    "hello".find("l").assert_eq(2)
+    "hello".find("x").assert_eq(-1)
+    "ประเทศไทย中华Việt Nam".find("华").assert_eq(30)
+}
+        "#,
+        )
+    }
+
+    #[test]
+    fn rfind() -> anyhow::Result<()> {
+        only_run_func(
+            r#"
+fn main() -> () {
+    "hello".rfind("l").assert_eq(3)
+    "hello".rfind("x").assert_eq(-1)
+    "ประเทศไทย中华Việt Nam".rfind("华").assert_eq(30)
+}
+        "#,
+        )
+    }
+
+    #[test]
+    fn starts_with() -> anyhow::Result<()> {
+        only_run_func(
+            r#"
+fn main() -> () {
+    "".starts_with("").assert_eq(true)
+    "abc".starts_with("").assert_eq(true)
+    "abc".starts_with("a").assert_eq(true)
+    "a".starts_with("abc").assert_eq(false)
+    "".starts_with("abc").assert_eq(false)
+    "ödd".starts_with("-").assert_eq(false)
+    "ödd".starts_with("öd").assert_eq(true)
+}
+        "#,
+        )
+    }
+    #[test]
+    fn ends_with() -> anyhow::Result<()> {
+        only_run_func(
+            r#"
+fn main() -> () {
+    "".ends_with("").assert_eq(true)
+    "abc".ends_with("").assert_eq(true)
+    "abc".ends_with("c").assert_eq(true)
+    "a".ends_with("abc").assert_eq(false)
+    "".ends_with("abc").assert_eq(false)
+    "ddö".ends_with("-").assert_eq(false)
+    "ddö".ends_with("dö").assert_eq(true)
+}
+        "#,
+        )
+    }
+}

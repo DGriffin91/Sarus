@@ -4,7 +4,7 @@ use std::slice;
 use crate::frontend::Expr;
 use crate::function_translator::SVariable;
 use crate::jit::{ArraySized, Env, SValue, StructDef};
-use crate::validator::{bool_t, f32_t, i64_t, u8_t, ArraySizedExpr, ExprType, TypeError};
+use crate::validator::{bool_t, f32_t, i64_t, str_t, u8_t, ArraySizedExpr, ExprType, TypeError};
 use crate::{
     decl,
     frontend::{Arg, CodeRef, Declaration, Function},
@@ -22,15 +22,23 @@ pub struct SarusSlice<T> {
 }
 
 impl<T> SarusSlice<T> {
+    #[inline]
     pub fn slice(&self) -> &[T] {
         unsafe { slice::from_raw_parts(self.start_ptr, self.len as usize) }
     }
+    #[inline]
     pub fn len(&self) -> i64 {
         self.len
     }
+    #[inline]
     pub fn cap(&self) -> i64 {
         self.cap
     }
+}
+
+#[inline]
+fn utf8<'a>(s: &'a SarusSlice<u8>) -> &'a str {
+    std::str::from_utf8(s.slice()).unwrap()
 }
 
 extern "C" fn f32_print(x: f32) {
@@ -209,31 +217,86 @@ pub fn append_std(prog: &mut Vec<Declaration>, jit_builder: &mut JITBuilder) {
         ));
     }
 
-    let str_ty = ExprType::Array(CodeRef::z(), Box::new(ExprType::U8(CodeRef::z())), ArraySizedExpr::Slice);
 
     decl!(prog, jb, "f32.print",           f32_print,           (f32_t()),                 ());
     decl!(prog, jb, "i64.print",           i64_print,           (i64_t()),                 ());
     decl!(prog, jb, "u8.print",            u8_print,            (u8_t()),                  ());
     decl!(prog, jb, "bool.print",          bool_print,          (bool_t()),                ());
-    decl!(prog, jb, "[u8].print",          str_print,           (str_ty.clone()),          ()); //TODO setup actual str type
+    decl!(prog, jb, "[u8].print",          str_print,           (str_t()),                 ());
 
     decl!(prog, jb, "f32.println",         f32_println,         (f32_t()),                 ());
     decl!(prog, jb, "i64.println",         i64_println,         (i64_t()),                 ());
     decl!(prog, jb, "u8.println",          u8_println,          (u8_t()),                  ());
     decl!(prog, jb, "bool.println",        bool_println,        (bool_t()),                ());
-    decl!(prog, jb, "[u8].println",        str_println,         (str_ty.clone()),          ());
+    decl!(prog, jb, "[u8].println",        str_println,         (str_t()),                 ());
 
     
     decl!(prog, jb, "f32.assert_eq",       f32_assert_eq,       (f32_t(), f32_t()),        ());
     decl!(prog, jb, "i64.assert_eq",       i64_assert_eq,       (i64_t(), i64_t()),        ());
     decl!(prog, jb, "u8.assert_eq",        u8_assert_eq,        (u8_t(), u8_t()),          ());
     decl!(prog, jb, "bool.assert_eq",      bool_assert_eq,      (bool_t(), bool_t()),      ());
-    decl!(prog, jb, "[u8].assert_eq",      str_assert_eq,       (str_ty.clone(), str_ty.clone()),());
+    decl!(prog, jb, "[u8].assert_eq",      str_assert_eq,       (str_t(), str_t()),        ());
     
-    decl!(prog, jb, "panic",               spanic,              (str_ty),                  ());
+    decl!(prog, jb, "panic",               spanic,              (str_t()),                 ());
     
     prog.push(make_decl("src_line", vec![], vec![("line", i64_t())]));
 
+}
+
+extern "C" fn str_find(s: SarusSlice<u8>, pat: SarusSlice<u8>) -> i64 {
+    if let Some(n) = utf8(&s).find(utf8(&pat)) {
+        n as i64
+    } else {
+        -1
+    }
+}
+
+extern "C" fn str_rfind(s: SarusSlice<u8>, pat: SarusSlice<u8>) -> i64 {
+    if let Some(n) = utf8(&s).rfind(utf8(&pat)) {
+        n as i64
+    } else {
+        -1
+    }
+}
+
+extern "C" fn str_starts_with(s: SarusSlice<u8>, pat: SarusSlice<u8>) -> bool {
+    utf8(&s).starts_with(utf8(&pat))
+}
+
+extern "C" fn str_ends_with(s: SarusSlice<u8>, pat: SarusSlice<u8>) -> bool {
+    utf8(&s).ends_with(utf8(&pat))
+}
+
+pub fn append_std_strings(prog: &mut Vec<Declaration>, jit_builder: &mut JITBuilder) {
+    let jb = jit_builder;
+
+    prog.push(make_decl(
+        "[u8].starts_with",
+        vec![("src", str_t()), ("pattern", str_t())],
+        vec![("result", bool_t())],
+    ));
+    jb.symbol("[u8].starts_with", str_starts_with as *const u8);
+
+    prog.push(make_decl(
+        "[u8].ends_with",
+        vec![("src", str_t()), ("pattern", str_t())],
+        vec![("result", bool_t())],
+    ));
+    jb.symbol("[u8].ends_with", str_ends_with as *const u8);
+
+    prog.push(make_decl(
+        "[u8].find",
+        vec![("src", str_t()), ("pattern", str_t())],
+        vec![("position", i64_t())],
+    ));
+    jb.symbol("[u8].find", str_find as *const u8);
+
+    prog.push(make_decl(
+        "[u8].rfind",
+        vec![("src", str_t()), ("pattern", str_t())],
+        vec![("position", i64_t())],
+    ));
+    jb.symbol("[u8].rfind", str_rfind as *const u8);
 }
 
 pub(crate) fn check_core_generics(fn_name: &str, impl_val: Option<SValue>) -> bool {

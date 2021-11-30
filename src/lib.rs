@@ -34,6 +34,7 @@ pub fn default_std_jit_from_code(code: &str) -> anyhow::Result<jit::JIT> {
     let mut jit_builder = jit::new_jit_builder();
     sarus_std_lib::append_std(&mut ast, &mut jit_builder);
     sarus_std_lib::append_std_math(&mut ast, &mut jit_builder);
+    sarus_std_lib::append_std_strings(&mut ast, &mut jit_builder);
 
     let mut jit = jit::JIT::from(jit_builder, true);
 
@@ -50,6 +51,7 @@ pub fn default_std_jit_from_code_with_importer(
     let mut jit_builder = jit::new_jit_builder();
     sarus_std_lib::append_std(&mut ast, &mut jit_builder);
     sarus_std_lib::append_std_math(&mut ast, &mut jit_builder);
+    sarus_std_lib::append_std_strings(&mut ast, &mut jit_builder);
 
     importer(&mut ast, &mut jit_builder);
 
