@@ -417,6 +417,9 @@ fn main() -> () {
 ## Enums
 
 The syntax and implementation of enums in Sarus is in progress. A match statement will also be eventually avaliable but is not yet implemented. The current state is illustrated below (adapted from [Rust by Example](https://doc.rust-lang.org/rust-by-example/custom_types/enum.html))
+
+An attempt to access an enum field that is not the currently active one will result in a runtime panic.
+
 ```rust , skt-sarus_multi_func
 // Create an `enum` to classify a web event. Note how both
 // names and type information together specify the variant:
