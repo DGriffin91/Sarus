@@ -6,6 +6,7 @@
     - [Slices](#slices)
     - [Strings](#strings)
     - [Structs](#structs)
+    - [Enums](#enums)
 
 - [Control Flow](#control-flow)
     - [While Loop](#while-loop)

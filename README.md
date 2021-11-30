@@ -16,6 +16,7 @@ In Progress: (more or less usable)
 - Base types: bool, u8, f32, i64
 - Composite types: Fixed length arrays [f32; 100], Slices [f32], Strings [u8]
 - `repr(C)` Structs with method implementations
+- enums with both c style enum and union like fields
 - Functions with multiple return variables, and optional inlineing 
 - Basic branching (if/then, if/then/else, etc...)
 - While loop   
