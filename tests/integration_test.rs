@@ -4608,3 +4608,214 @@ fn main() -> () {
         )
     }
 }
+#[cfg(test)]
+mod enum_tests {
+
+    use super::*;
+    #[test]
+    fn enums_num() -> anyhow::Result<()> {
+        only_run_func(
+            r#"
+enum Num {
+    int: i64,
+    float: f32,
+    byte: u8,
+}
+
+fn f32(self: Num) -> (n: f32) {
+    n = 0.0
+    if self.type == Num::int {
+        n = self.int.f32()
+    } else if self.type == Num::float {
+        n = self.float
+    } else {
+        n = self.byte.f32()
+    }
+}
+
+fn println(self: Num) -> () {
+    if self.type == Num::int {
+        self.int.println()
+    } else if self.type == Num::float {
+        self.float.println()
+    } else {
+        self.byte.println()
+    }
+}
+
+fn assert_eq(self: Num, other: Num) -> () {
+    self.unify(other)
+    if self.type == Num::int {
+        self.int.assert_eq(other.int)
+    } else if self.type == Num::float {
+        self.float.assert_eq(other.float)
+    } else {
+        self.byte.assert_eq(other.byte)
+    }
+}
+
+fn unify(self: Num, other: Num) -> () {
+    if self.type == other.type {
+        return
+    } else {
+        self = Num::float(self.f32())
+        other = Num::float(other.f32())
+    }
+}
+
+fn add(self: Num, other: Num) -> (z: Num) {
+    self.unify(other)
+    z = Num::int(100)
+    if self.type == Num::int {
+        z = Num::int(self.int + other.int)
+    } else if self.type == Num::float {
+        z = Num::float(self.float + other.float)
+    } else {
+        z = Num::byte(self.byte + other.byte)
+    }
+}
+
+fn main() -> () {
+    a = Num::int(5)
+    b = Num::float(5.0)
+    Num::int(5).add(Num::int(5)).assert_eq(Num::int(10))
+    Num::float(5.0).add(Num::float(5.0)).assert_eq(Num::float(10.0))
+    Num::int(5).add(Num::float(5.0)).assert_eq(Num::float(10.0))
+    Num::byte(5u8).add(Num::byte(5u8)).assert_eq(Num::byte(10u8))
+    Num::byte(5u8).add(Num::float(5.0)).assert_eq(Num::float(10.0))
+}
+    "#,
+        )
+    }
+
+    #[test]
+    fn enums_traditional() -> anyhow::Result<()> {
+        only_run_func(
+            r#"
+enum Num {
+    int,
+    float,
+    byte,
+}
+
+fn main() -> () {
+    Num::int().type.assert_eq(Num::int)
+    Num::float().type.assert_eq(Num::float)
+    Num::byte().type.assert_eq(Num::byte)
+    a = Num::int()
+    b = Num::float()
+    c = Num::byte()
+    a.type.assert_eq(0)
+    b.type.assert_eq(1)
+    c.type.assert_eq(2)
+}
+    "#,
+        )
+    }
+
+    #[test]
+    fn enums_mixed() -> anyhow::Result<()> {
+        only_run_func(
+            r#"
+enum Num {
+    int,
+    float,
+    something: f32,
+    byte,
+    something_else: i64,
+}
+
+fn main() -> () {
+    Num::int().type.assert_eq(Num::int)
+    Num::float().type.assert_eq(Num::float)
+    Num::something(100.0).type.assert_eq(Num::something)
+    Num::byte().type.assert_eq(Num::byte)
+    Num::something_else(200).type.assert_eq(Num::something_else)
+    a = Num::int()
+    b = Num::float()
+    c = Num::something(100.0)
+    d = Num::byte()
+    e = Num::something_else(200)
+
+    a.type.assert_eq(0)
+    b.type.assert_eq(1)
+
+    c.type.assert_eq(2)
+    c.something.assert_eq(100.0)
+
+    d.type.assert_eq(3)
+
+    e.type.assert_eq(4)
+    e.something_else.assert_eq(200)
+    
+}
+    "#,
+        )
+    }
+
+    #[test]
+    fn rust_by_example_enum() -> anyhow::Result<()> {
+        //adapted from: https://doc.rust-lang.org/rust-by-example/custom_types/enum.html
+        only_run_func(
+            r#"
+// Create an `enum` to classify a web event. Note how both
+// names and type information together specify the variant:
+// `page_load != page_unload` and `key_press: [u8] != paste: [u8]`.
+// Each is different and independent.
+struct Click {
+    x: i64, 
+    y: i64,
+}
+
+enum WebEvent {
+    // An `enum` may either be `unit-like`,
+    page_load,
+    page_unload,
+    // or have associated types
+    key_press: [u8],
+    paste: [u8],
+    click: Click,
+}
+
+// A function which takes a `WebEvent` enum as an argument and
+// returns nothing.
+fn inspect(event: WebEvent) -> () {
+    if event.type == WebEvent::page_load {
+        "page loaded".println()
+    } else if event.type == WebEvent::page_unload {
+        "page unloaded".println()
+    } else if event.type == WebEvent::key_press {
+        "pressed ".print() event.key_press.println()
+    } else if event.type == WebEvent::paste {
+        "pasted ".print() event.paste.println()
+    } else if event.type == WebEvent::click {
+        "clicked at ".print() 
+        "x= ".print() event.click.x.print()
+        ", y= ".print() event.click.x.print()
+        ".".println()
+    } 
+}
+
+fn main() -> () {
+    pressed = WebEvent::key_press("x"[..])
+    pasted = WebEvent::paste("my text"[..])
+    click = WebEvent::click(Click{ x: 20, y: 80, }) 
+    load = WebEvent::page_load()
+    unload = WebEvent::page_unload()
+
+    inspect(pressed)
+    inspect(pasted)
+    inspect(click)
+    inspect(load)
+    inspect(unload)
+
+    pressed.type.assert_eq(WebEvent::key_press)
+    pasted.type.assert_eq(WebEvent::paste)
+    click.type.assert_eq(WebEvent::click)
+    load.type.assert_eq(WebEvent::page_load)
+    unload.type.assert_eq(WebEvent::page_unload)
+}
+    "#,
+        )
+    }
+}

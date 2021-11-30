@@ -413,6 +413,64 @@ fn main() -> () {
 }
 ```
 
+## Enums
+
+The syntax and implementation of enums in Sarus is in progress. A match statement will also be eventually avaliable but is not yet implemented. The current state is illustrated below (adapted from [Rust by Example](https://doc.rust-lang.org/rust-by-example/custom_types/enum.html))
+```rust , skt-sarus_multi_func
+// Create an `enum` to classify a web event. Note how both
+// names and type information together specify the variant:
+// `page_load != page_unload` and `key_press: [u8] != paste: [u8]`.
+// Each is different and independent.
+
+enum WebEvent {
+    // An `enum` may either be `unit-like`,
+    page_load,
+    page_unload,
+    // or have associated types
+    key_press: [u8],
+    paste: [u8],
+    click: Click,
+}
+
+struct Click {
+    x: i64, 
+    y: i64,
+}
+
+// A function which takes a `WebEvent` enum as an argument and
+// returns nothing.
+fn inspect(event: WebEvent) -> () {
+    if event.type == WebEvent::page_load {
+        "page loaded".println()
+    } else if event.type == WebEvent::page_unload {
+        "page unloaded".println()
+    } else if event.type == WebEvent::key_press {
+        "pressed ".print() event.key_press.println()
+    } else if event.type == WebEvent::paste {
+        "pasted ".print() event.paste.println()
+    } else if event.type == WebEvent::click {
+        "clicked at ".print() 
+        "x= ".print() event.click.x.print()
+        ", y= ".print() event.click.x.print()
+        ".".println()
+    } 
+}
+
+fn main() -> () {
+    pressed = WebEvent::key_press("x"[..])
+    pasted = WebEvent::paste("my text"[..])
+    click = WebEvent::click(Click{ x: 20, y: 80, }) 
+    load = WebEvent::page_load()
+    unload = WebEvent::page_unload()
+
+    inspect(pressed)
+    inspect(pasted)
+    inspect(click)
+    inspect(load)
+    inspect(unload)
+}
+```
+
 # Control Flow
 
 `if` expressions conditionally branch based on the state of a boolean value

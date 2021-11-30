@@ -12,14 +12,17 @@ pub struct StructDef {
     pub size: usize,
     pub name: String,
     pub fields: HashMap<String, StructField>,
+    pub enum_struct: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct StructField {
+    pub index: usize,
     pub offset: usize,
     pub size: usize,
     pub name: String,
     pub expr_type: ExprType,
+    pub enum_typeless_field: bool,
 }
 
 pub fn create_struct_map(
@@ -28,7 +31,18 @@ pub fn create_struct_map(
 ) -> anyhow::Result<HashMap<String, StructDef>> {
     let mut in_structs = HashMap::new();
     for decl in prog {
-        if let Declaration::Struct(s) = decl {
+        if let Declaration::Struct(mut s) = decl.clone() {
+            if s.enum_struct {
+                s.fields.insert(
+                    0,
+                    Arg {
+                        name: "type".to_string(),
+                        expr_type: ExprType::I64(CodeRef::z()),
+                        no_type_listed: false,
+                        closure_arg: None,
+                    },
+                )
+            }
             in_structs.insert(s.name.to_string(), s);
         }
     }
@@ -38,30 +52,51 @@ pub fn create_struct_map(
 
     for struct_name in structs_order {
         let mut largest_field_in_struct = 0;
-        let fields_def = &in_structs[&struct_name].fields;
+        let struct_def = &in_structs[&struct_name];
+        let fields_def = &struct_def.fields;
         let mut fields = HashMap::new();
         let mut fields_v = Vec::new();
         let mut struct_size = 0usize;
         trace!("determine size of struct {}", struct_name);
         for (i, field) in fields_def.iter().enumerate() {
-            let (field_size, is_struct) =
-                get_field_size(&field.expr_type, &structs, ptr_type, false)?;
-            let new_field = StructField {
-                offset: struct_size,
-                size: field_size,
-                name: field.name.to_string(),
-                expr_type: field.expr_type.clone(),
-            };
-            fields.insert(field.name.to_string(), new_field.clone());
-            fields_v.push(new_field);
+            let enum_typeless_field = struct_def.enum_struct && field.no_type_listed;
+            let mut is_struct = false;
+            if enum_typeless_field {
+                // This is a traditional enum field type
+                // it takes no space and only uses the enum type indicator i64
+                let new_field = StructField {
+                    index: i,
+                    offset: 0,
+                    size: 0,
+                    name: field.name.to_string(),
+                    expr_type: ExprType::Void(CodeRef::z()),
+                    enum_typeless_field: struct_def.enum_struct && field.no_type_listed,
+                };
+                fields.insert(field.name.to_string(), new_field.clone());
+                fields_v.push(new_field);
+            } else {
+                let (field_size, field_is_struct) =
+                    get_field_size(&field.expr_type, &structs, ptr_type, false)?;
+                is_struct = field_is_struct;
+                let new_field = StructField {
+                    index: i,
+                    offset: struct_size,
+                    size: field_size,
+                    name: field.name.to_string(),
+                    expr_type: field.expr_type.clone(),
+                    enum_typeless_field: struct_def.enum_struct && field.no_type_listed,
+                };
+                fields.insert(field.name.to_string(), new_field.clone());
+                fields_v.push(new_field);
 
-            struct_size += field_size;
-            trace!(
-                "struct {} field {} with size {} \t",
-                struct_name,
-                field.name,
-                field_size
-            );
+                struct_size += field_size;
+                trace!(
+                    "struct {} field {} with size {} \t",
+                    struct_name,
+                    field.name,
+                    field_size
+                );
+            }
 
             if i < fields_def.len() - 1 {
                 //repr(C) alignment see memoffset crate
@@ -108,6 +143,7 @@ pub fn create_struct_map(
                 size: struct_size,
                 name: struct_name.to_string(),
                 fields,
+                enum_struct: in_structs[&struct_name].enum_struct,
             },
         );
     }
@@ -186,7 +222,7 @@ fn can_insert_into_map(
     struct_name: &str,
     field_name: &str,
     expr_type: &ExprType,
-    in_structs: &HashMap<String, &Struct>,
+    in_structs: &HashMap<String, Struct>,
     structs_order: &[String],
     can_insert: bool,
 ) -> anyhow::Result<bool> {
@@ -227,7 +263,7 @@ fn can_insert_into_map(
     })
 }
 
-fn order_structs(in_structs: &HashMap<String, &Struct>) -> anyhow::Result<Vec<String>> {
+fn order_structs(in_structs: &HashMap<String, Struct>) -> anyhow::Result<Vec<String>> {
     // find order of structs based on dependency hierarchy
     let mut structs_order = Vec::new();
     let mut last_structs_len = 0usize;

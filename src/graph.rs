@@ -232,7 +232,7 @@ fn build_graph_func(
                 Box::new(ExprType::F32(CodeRef::z())),
                 ArraySizedExpr::Unsized,
             ),
-            default_to_float: false,
+            no_type_listed: false,
             closure_arg: None,
         }],
         returns: vec![],

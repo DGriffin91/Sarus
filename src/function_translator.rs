@@ -126,6 +126,21 @@ impl<'a> FunctionTranslator<'a> {
                 ArraySized::Unsized,
             )),
             Expr::Identifier(code_ref, name) => {
+                if name.contains("::") {
+                    //check if this is an enum
+                    let parts = name.split("::").collect::<Vec<_>>();
+                    if let Some(struct_) = self.env.struct_map.get(parts[0]) {
+                        if struct_.enum_struct {
+                            let struct_ = struct_.clone();
+                            if let Some(field) = struct_.fields.get(parts[1]) {
+                                let field_index_val = self.i64const((field.index - 1) as i64);
+                                return Ok(SValue::I64(field_index_val));
+                            } else {
+                                panic!("field {} not found", parts[1]) //TODO make an error for this
+                            }
+                        }
+                    }
+                }
                 if let Ok(svar) = self.get_variable(code_ref, name) {
                     let svar = svar.clone();
                     SValue::get_from_variable(&mut self.builder, &svar)
@@ -152,6 +167,9 @@ impl<'a> FunctionTranslator<'a> {
             Expr::NewStruct(code_ref, struct_name, fields) => {
                 self.translate_new_struct(code_ref, struct_name, fields)
             }
+            Expr::Match(code_ref, expr_arg, fields) => {
+                self.translate_match(code_ref, expr_arg, fields)
+            }
             Expr::IfThen(_code_ref, condition, then_body) => {
                 self.translate_if_then(condition, then_body)?;
                 Ok(SValue::Void)
@@ -170,7 +188,11 @@ impl<'a> FunctionTranslator<'a> {
                 self.translate_while_loop(condition, iter_body, loop_body)?;
                 Ok(SValue::Void)
             }
-            Expr::Block(_code_ref, b) => b.iter().map(|e| self.translate_expr(e)).last().unwrap(),
+            Expr::Block(_code_ref, b) => b
+                .iter()
+                .map(|e| self.translate_expr(e))
+                .last()
+                .unwrap_or(Ok(SValue::Void)),
             Expr::Break(code_ref) => self.translate_break(code_ref),
             Expr::Continue(code_ref) => self.translate_continue(code_ref),
             Expr::Return(code_ref) => self.translate_return(code_ref),
@@ -488,15 +510,16 @@ impl<'a> FunctionTranslator<'a> {
         lhs: &Expr,
         rhs: &Expr,
         get_address: bool,
-    ) -> anyhow::Result<(SValue, Option<StructField>, bool)> {
+    ) -> anyhow::Result<(SValue, Option<StructDef>, Option<StructField>, bool)> {
         if let Binop::DotAccess = op {
         } else {
-            return Ok((self.translate_math_binop(op, lhs, rhs)?, None, false));
+            return Ok((self.translate_math_binop(op, lhs, rhs)?, None, None, false));
         }
 
         let mut path = Vec::new();
         let mut lhs_val = None;
         let mut struct_field_def = None;
+        let mut parent_struct_def = None;
         let mut array_field = false;
 
         let mut curr_expr = Some(lhs);
@@ -526,8 +549,9 @@ impl<'a> FunctionTranslator<'a> {
                                 .iter()
                                 .map(|lhs_i: &Expr| lhs_i.to_string())
                                 .collect::<Vec<String>>();
-                            let (sval_address, struct_def) =
+                            let (sval_address, parent_struct, struct_def) =
                                 self.get_struct_field_address(code_ref, spath, lhs_val)?;
+                            parent_struct_def = Some(parent_struct);
                             if let ExprType::Struct(_code_ref, _name) = struct_def.clone().expr_type
                             {
                                 struct_field_def = Some(struct_def);
@@ -575,8 +599,9 @@ impl<'a> FunctionTranslator<'a> {
                             anyhow::bail!("{} array access on dot binop of non identifier not supported yet {}", code_ref, expr)
                         };
                         spath.push(name.to_string());
-                        let (sval_address, struct_def) =
+                        let (sval_address, parent_struct, struct_def) =
                             self.get_struct_field_address(code_ref, spath, lhs_val)?;
+                        parent_struct_def = Some(parent_struct);
                         struct_field_def = Some(struct_def.clone());
                         let array_address = if let ExprType::Struct(_code_ref, _name) =
                             struct_def.clone().expr_type
@@ -611,6 +636,7 @@ impl<'a> FunctionTranslator<'a> {
                 | Expr::IfElse(code_ref, ..)
                 | Expr::IfThenElseIf(code_ref, ..)
                 | Expr::IfThenElseIfElse(code_ref, ..)
+                | Expr::Match(code_ref, ..)
                 | Expr::Assign(code_ref, ..)
                 | Expr::WhileLoop(code_ref, ..)
                 | Expr::Block(code_ref, ..)
@@ -633,9 +659,10 @@ impl<'a> FunctionTranslator<'a> {
                 .iter()
                 .map(|lhs_i: &Expr| lhs_i.to_string())
                 .collect::<Vec<String>>();
-            let (sval_address, struct_def) =
+            let (sval_address, parent_struct, struct_def) =
                 self.get_struct_field_address(path[0].get_code_ref(), spath, lhs_val)?;
             let code_ref = struct_def.expr_type.get_code_ref();
+            parent_struct_def = Some(parent_struct);
             if get_address {
                 struct_field_def = Some(struct_def);
                 lhs_val = Some(sval_address);
@@ -655,7 +682,7 @@ impl<'a> FunctionTranslator<'a> {
         );
 
         if let Some(lhs_val) = lhs_val {
-            Ok((lhs_val, struct_field_def, array_field))
+            Ok((lhs_val, parent_struct_def, struct_field_def, array_field))
         } else {
             anyhow::bail!("No value found");
         }
@@ -1155,11 +1182,16 @@ impl<'a> FunctionTranslator<'a> {
             'expression: for (i, dst_expr) in dst_exprs.iter().enumerate() {
                 let src_sval = self.translate_expr(src_exprs.get(i).unwrap())?;
                 match dst_expr {
-                    Expr::Binop(_code_ref, op, lhs, rhs) => {
-                        let (struct_field_address, struct_field, array_field) =
+                    Expr::Binop(code_ref, op, lhs, rhs) => {
+                        let (struct_field_address, parent_struct, struct_field, array_field) =
                             self.translate_binop(*op, lhs, rhs, true)?;
 
                         if let Some(struct_field_def) = struct_field {
+                            if let Some(parent_struct) = parent_struct {
+                                if parent_struct.enum_struct && struct_field_def.name == "type" {
+                                    anyhow::bail!("{} cannot assign to enum type field", code_ref)
+                                }
+                            }
                             self.set_struct_field_at_address(
                                 struct_field_address,
                                 src_sval,
@@ -2131,6 +2163,54 @@ impl<'a> FunctionTranslator<'a> {
         Ok(SValue::Void)
     }
 
+    fn translate_new_enum(
+        &mut self,
+        code_ref: &CodeRef,
+        struct_: StructDef,
+        enum_name: String,
+        field_name: String,
+        args: &[Expr],
+    ) -> anyhow::Result<SValue> {
+        if args.len() > 1 {
+            anyhow::bail!(
+                "{} only one parameter expected for enum {}",
+                code_ref,
+                enum_name
+            )
+        }
+        if let Some(field) = struct_.fields.get(&field_name) {
+            if args.len() == 0 {
+                let struct_address = self.alloc(struct_.size);
+                let field_index_val = self.i64const((field.index - 1) as i64);
+                //the enum type is stored at the first position
+                self.store(field_index_val, struct_address, 0);
+                return Ok(SValue::Struct(enum_name, struct_address));
+            }
+            let struct_address = self.alloc(struct_.size);
+            let field_index_val = self.i64const((field.index - 1) as i64);
+            //the enum type is stored at the first position
+            self.store(field_index_val, struct_address, 0);
+            let arg = self.translate_expr(&args[0])?;
+            let field_value_offset = self.i64const(field.offset as i64);
+            let struct_field_address = self.iadd(field_value_offset, struct_address);
+            self.set_struct_field_at_address(
+                SValue::Address(struct_field_address),
+                arg,
+                field.clone(),
+                false,
+            )?;
+
+            return Ok(SValue::Struct(enum_name, struct_address));
+        } else {
+            anyhow::bail!(
+                "{} field {} not found for enum {}",
+                code_ref,
+                field_name,
+                enum_name
+            );
+        }
+    }
+
     fn translate_call(
         &mut self,
         code_ref: &CodeRef,
@@ -2139,6 +2219,29 @@ impl<'a> FunctionTranslator<'a> {
         impl_val: Option<SValue>,
         is_macro: bool,
     ) -> anyhow::Result<SValue> {
+        if fn_name.contains("::") {
+            //check if this is an enum
+            let parts = fn_name.split("::").collect::<Vec<_>>();
+            let enum_struct = if let Some(struct_) = self.env.struct_map.get(parts[0]) {
+                if struct_.enum_struct {
+                    Some(struct_.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if let Some(enum_struct) = enum_struct {
+                return self.translate_new_enum(
+                    code_ref,
+                    enum_struct,
+                    parts[0].to_string(),
+                    parts[1].to_string(),
+                    args,
+                );
+            }
+        }
+
         let orig_fn_name = fn_name;
         let mut fn_name = fn_name.to_string();
         trace!(
@@ -2401,6 +2504,16 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.func.dfg.value_type(val)
     }
 
+    fn translate_match(
+        &mut self,
+        _code_ref: &CodeRef,
+        _match_arg: &Expr,
+        _fields: &[MatchField],
+    ) -> anyhow::Result<SValue> {
+        //TODO - look at translate_if_then_else_if & translate_if_then_else_if_else
+        Ok(SValue::Void)
+    }
+
     fn translate_new_struct(
         &mut self,
         code_ref: &CodeRef,
@@ -2552,7 +2665,7 @@ impl<'a> FunctionTranslator<'a> {
         &mut self,
         parts: Vec<String>,
         lhs_val: Option<SValue>,
-    ) -> anyhow::Result<(StructField, Value, usize)> {
+    ) -> anyhow::Result<(StructField, StructDef, Value, usize)> {
         let mut struct_name: String;
         let start: usize;
         //println!("get_struct_field_location {:?}", &parts);
@@ -2576,13 +2689,15 @@ impl<'a> FunctionTranslator<'a> {
             }
         };
 
-        let mut parent_struct_field = &self.env.struct_map[&struct_name].fields[&parts[start]];
+        let mut parent_struct = &self.env.struct_map[&struct_name];
+        let mut parent_struct_field = &parent_struct.fields[&parts[start]];
         let mut offset = parent_struct_field.offset;
         if parts.len() > 2 {
             offset = 0;
             for part in parts.iter().skip(start) {
                 if let ExprType::Struct(_code_ref, _name) = &parent_struct_field.expr_type {
-                    parent_struct_field = &self.env.struct_map[&struct_name].fields[part];
+                    parent_struct = &self.env.struct_map[&struct_name];
+                    parent_struct_field = &parent_struct.fields[part];
                     offset += parent_struct_field.offset;
                     struct_name = parent_struct_field.expr_type.to_string();
                 } else {
@@ -2590,7 +2705,12 @@ impl<'a> FunctionTranslator<'a> {
                 }
             }
         }
-        Ok(((*parent_struct_field).clone(), base_struct_var_ptr, offset))
+        Ok((
+            (parent_struct_field).clone(),
+            parent_struct.clone(),
+            base_struct_var_ptr,
+            offset,
+        ))
     }
 
     fn get_struct_field_address(
@@ -2598,8 +2718,8 @@ impl<'a> FunctionTranslator<'a> {
         code_ref: &CodeRef,
         parts: Vec<String>,
         lhs_val: Option<SValue>,
-    ) -> anyhow::Result<(SValue, StructField)> {
-        let (parent_struct_field_def, base_struct_var_ptr, offset) =
+    ) -> anyhow::Result<(SValue, StructDef, StructField)> {
+        let (parent_struct_field_def, parent_struct, base_struct_var_ptr, offset) =
             self.get_struct_field_location(parts, lhs_val)?;
         trace!(
             "{}: get_struct_field_address\n{:?} base_struct_var_ptr {} offset {}",
@@ -2608,6 +2728,24 @@ impl<'a> FunctionTranslator<'a> {
             base_struct_var_ptr,
             offset
         );
+
+        if parent_struct.enum_struct && parent_struct_field_def.name != "type" {
+            let current_index = self.builder.ins().load(
+                types::I64,
+                MemFlags::new(),
+                base_struct_var_ptr,
+                Offset32::new(0),
+            );
+            let field_index_val = self.i64const((parent_struct_field_def.index - 1) as i64);
+            let not_current_enum_field = self.icmp(Cmp::Ne, current_index, field_index_val);
+            self.call_panic_if(
+                not_current_enum_field,
+                &format!(
+                    "{} enum {} is not currently set to field {}",
+                    code_ref, parent_struct.name, parent_struct_field_def.name
+                ),
+            )?;
+        }
 
         let offset_v = self.ptr_const(offset as i64);
         let address = self.iadd(base_struct_var_ptr, offset_v);
@@ -2620,6 +2758,7 @@ impl<'a> FunctionTranslator<'a> {
             //If the struct field is a struct, return address of sub struct
             Ok((
                 SValue::Struct(name.to_string(), address),
+                parent_struct,
                 parent_struct_field_def,
             ))
         } else if let ExprType::Array(code_ref, item_type, size_type) =
@@ -2632,16 +2771,22 @@ impl<'a> FunctionTranslator<'a> {
                 size_type
             );
             match size_type {
-                ArraySizedExpr::Unsized => Ok((SValue::Address(address), parent_struct_field_def)),
-                ArraySizedExpr::Slice => Ok((SValue::Address(address), parent_struct_field_def)),
-                ArraySizedExpr::Fixed(_len) => {
-                    Ok((SValue::Address(address), parent_struct_field_def))
+                ArraySizedExpr::Unsized | ArraySizedExpr::Slice | ArraySizedExpr::Fixed(..) => {
+                    Ok((
+                        SValue::Address(address),
+                        parent_struct,
+                        parent_struct_field_def,
+                    ))
                 }
             }
         } else {
             trace!("SValue::Address");
             //If the struct field is not a struct, return address of value
-            Ok((SValue::Address(address), parent_struct_field_def))
+            Ok((
+                SValue::Address(address),
+                parent_struct,
+                parent_struct_field_def,
+            ))
         }
     }
 

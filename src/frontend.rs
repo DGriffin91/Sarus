@@ -180,6 +180,7 @@ pub enum Expr {
     IfThenElseIfElse(CodeRef, Vec<(Expr, Vec<Expr>)>, Vec<Expr>),
     Assign(CodeRef, Vec<Expr>, Vec<Expr>),
     NewStruct(CodeRef, String, Vec<StructAssignField>),
+    Match(CodeRef, Box<Expr>, Vec<MatchField>),
     WhileLoop(CodeRef, Box<Expr>, Option<Vec<Expr>>, Vec<Expr>), //Should this take a block instead of Vec<Expr>?
     Block(CodeRef, Vec<Expr>),
     Break(CodeRef),
@@ -218,6 +219,7 @@ impl Expr {
             Expr::IfElse(code_ref, ..) => code_ref,
             Expr::Assign(code_ref, ..) => code_ref,
             Expr::NewStruct(code_ref, ..) => code_ref,
+            Expr::Match(code_ref, ..) => code_ref,
             Expr::WhileLoop(code_ref, ..) => code_ref,
             Expr::Block(code_ref, ..) => code_ref,
             Expr::Break(code_ref, ..) => code_ref,
@@ -249,6 +251,7 @@ impl Expr {
             Expr::IfElse(code_ref, ..) => code_ref,
             Expr::Assign(code_ref, ..) => code_ref,
             Expr::NewStruct(code_ref, ..) => code_ref,
+            Expr::Match(code_ref, ..) => code_ref,
             Expr::WhileLoop(code_ref, ..) => code_ref,
             Expr::Block(code_ref, ..) => code_ref,
             Expr::Break(code_ref, ..) => code_ref,
@@ -464,6 +467,14 @@ impl Display for Expr {
                 writeln!(f, "}}")?;
                 Ok(())
             }
+            Expr::Match(_, struct_name, args) => {
+                writeln!(f, "match {}{{", struct_name)?;
+                for arg in args.iter() {
+                    writeln!(f, "{},", arg)?;
+                }
+                writeln!(f, "}}")?;
+                Ok(())
+            }
             Expr::WhileLoop(_, eval, iter_block, block) => {
                 writeln!(f, "while {} ", eval)?;
                 if let Some(iter_block) = iter_block {
@@ -540,13 +551,13 @@ impl Display for Declaration {
 pub struct Arg {
     pub name: String,
     pub expr_type: ExprType,
-    pub default_to_float: bool,
+    pub no_type_listed: bool,
     pub closure_arg: Option<Function>,
 }
 
 impl Display for Arg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.default_to_float {
+        if self.no_type_listed {
             write!(f, "{}", self.name)
         } else if let Some(closure_arg) = &self.closure_arg {
             write!(f, "{}: {}", self.name, closure_arg)
@@ -563,6 +574,18 @@ pub struct StructAssignField {
 }
 
 impl Display for StructAssignField {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.field_name, self.expr)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MatchField {
+    pub field_name: String,
+    pub expr: Expr,
+}
+
+impl Display for MatchField {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}: {}", self.field_name, self.expr)
     }
@@ -667,6 +690,7 @@ pub struct Struct {
     pub name: String,
     pub fields: Vec<Arg>,
     pub extern_struct: bool,
+    pub enum_struct: bool,
 }
 
 impl Display for Struct {
@@ -715,7 +739,7 @@ pub fn pretty_indent(code: &str) -> String {
 }
 
 //TODO wish this could be a HashSet
-const RESERVED_WORDS: [&str; 5] = ["true", "false", "break", "continue", "return"];
+const RESERVED_WORDS: [&str; 6] = ["true", "false", "break", "continue", "return", "match"];
 
 peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
     pub rule program() -> Vec<Declaration>
@@ -731,7 +755,8 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         = _ "include" _ "\"" body:$[^'"']* "\"" { Declaration::Include(body.join("")) }
 
     rule structdef() -> Declaration
-        = _ ext:("extern")? _ "struct" _ name:$(s:identifier() ("::" (ty:type_label() ** "::"))?) _ "{" _ fields:(a:arg() comma() {a})* _ "}" _ {Declaration::Struct(Struct{name: name.to_string(), fields, extern_struct: ext.is_some()})}
+        = _ ext:("extern")? _ kind:$("struct"/"enum") _ name:$(s:identifier() ("::" (ty:type_label() ** "::"))?) _ "{" _ fields:(a:arg() comma() {a})* _ "}" _
+          {Declaration::Struct(Struct{name: name.to_string(), fields, extern_struct: ext.is_some(), enum_struct: if kind == "enum" {true} else {false} })}
 
     rule metadata() -> Declaration
         = _ "@" _ headings:(i:(metadata_identifier()** ([' ' | '\t'])) {i}) ([' ' | '\t'])* "\n" body:$[^'@']* "@" _ {Declaration::Metadata(headings, body.join(""))}
@@ -798,9 +823,9 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
     / "always_inline" {InlineKind::Always}
 
     rule arg() -> Arg
-        = _ i:identifier() _ ":" _ c:closure_definition(i) _ { Arg {name: c.name.to_string(), expr_type: ExprType::Void(CodeRef::z()), default_to_float: false, closure_arg: Some(c) } }
-        / _ i:identifier() _ ":" _ t:type_label() _ { Arg {name: i, expr_type: t, default_to_float: false, closure_arg: None } }
-        / _ pos:position!() i:identifier() _ { Arg {name: i, expr_type: ExprType::F32(CodeRef::new(pos, code_ctx)), default_to_float: true, closure_arg: None } }
+        = _ i:identifier() _ ":" _ c:closure_definition(i) _ { Arg {name: c.name.to_string(), expr_type: ExprType::Void(CodeRef::z()), no_type_listed: false, closure_arg: Some(c) } }
+        / _ i:identifier() _ ":" _ t:type_label() _ { Arg {name: i, expr_type: t, no_type_listed: false, closure_arg: None } }
+        / _ pos:position!() i:identifier() _ { Arg {name: i, expr_type: ExprType::F32(CodeRef::new(pos, code_ctx)), no_type_listed: true, closure_arg: None } }
 
     rule type_label() -> ExprType
         = _ pos:position!() "f32" { ExprType::F32(CodeRef::new(pos, code_ctx)) }
@@ -939,7 +964,8 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         = _ pos:position!() i:identifier() _macro:("!")? "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
             Expr::Call(CodeRef::new(pos, code_ctx), i, args, _macro.is_some())
         }
-        / _ pos:position!() i:identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" { Expr::NewStruct(CodeRef::new(pos, code_ctx), i, args) }
+        / _ pos:position!() "match" _ e:expression() _ "{" args:((_ e:match_field() _ {e})*) "}" {Expr::Match(CodeRef::new(pos, code_ctx), Box::new(e), args)}
+        / _ pos:position!() i:identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" {Expr::NewStruct(CodeRef::new(pos, code_ctx), i, args)}
         / _ pos:position!() i:identifier() { Expr::Identifier(CodeRef::new(pos, code_ctx), i) }
         / _ pos:position!() "(" e:expression() _ ")" { Expr::Parentheses(CodeRef::new(pos, code_ctx), Box::new(e)) }
         / _ pos:position!() "\"" body:$[^'"']* "\"" { Expr::LiteralString(CodeRef::new(pos, code_ctx), body.join("")) }
@@ -967,6 +993,9 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
 
     rule struct_assign_field() -> StructAssignField
         = _ i:identifier() _ ":" _ e:expression() comma() { StructAssignField {field_name: i.into(), expr: e } }
+
+    rule match_field() -> MatchField
+        = _ i:identifier() _ ":" _ pos:position!() b:block() comma() { MatchField {field_name: i.into(), expr: Expr::Block(CodeRef::new(pos, code_ctx), b) } }
 
     rule comment() -> ()
         = quiet!{"//" [^'\n']*"\n"}

@@ -313,6 +313,18 @@ impl ExprType {
         trace!("of {}", expr);
         let res = match expr {
             Expr::Identifier(code_ref, id_name) => {
+                if id_name.contains("::") {
+                    let parts = id_name.split("::").collect::<Vec<_>>();
+                    if let Some(struct_) = env.struct_map.get(parts[0]) {
+                        if struct_.enum_struct {
+                            if let Some(_field) = struct_.fields.get(parts[1]) {
+                                return Ok(ExprType::I64(*code_ref));
+                            } else {
+                                panic!("field {} not found", parts[1]) //TODO make an error for this
+                            }
+                        }
+                    }
+                }
                 if variables.contains_key(id_name) {
                     variables[id_name].expr_type(code_ref).unwrap()
                 } else if let Some(v) = env.constant_vars.get(id_name) {
@@ -517,6 +529,7 @@ impl ExprType {
                             | Expr::NewStruct(..)
                             | Expr::WhileLoop(..)
                             | Expr::Block(..)
+                            | Expr::Match(..)
                             | Expr::Break(..)
                             | Expr::Continue(..)
                             | Expr::Return(..)
@@ -597,9 +610,8 @@ impl ExprType {
                 }
                 ExprType::Void(*code_ref)
             }
-            //TODO this should work for IfThenElseIfElse
+
             Expr::IfThenElseIfElse(code_ref, expr_bodies, else_body) => {
-                //TODO should we check ExprType::of of every line of body?
                 let mut last_body_type = None;
                 for (econd, body) in expr_bodies {
                     let tcond = ExprType::of(econd, env, func_name, variables)?;
@@ -761,6 +773,35 @@ impl ExprType {
             Expr::Continue(code_ref) => ExprType::Void(*code_ref),
             Expr::Return(code_ref) => ExprType::Void(*code_ref),
             Expr::Call(code_ref, fn_name, args, is_macro) => {
+                if fn_name.contains("::") {
+                    //check if this is an enum
+                    let parts = fn_name.split("::").collect::<Vec<_>>();
+                    if let Some(struct_) = env.struct_map.get(parts[0]) {
+                        if struct_.enum_struct {
+                            if let Some(_field) = struct_.fields.get(parts[1]) {
+                                if _field.enum_typeless_field {
+                                    return Ok(ExprType::Struct(
+                                        *code_ref,
+                                        Box::new(struct_.name.to_string()),
+                                    ));
+                                }
+                                let targ = ExprType::of(&args[0], env, func_name, variables)?;
+                                if _field.expr_type != targ {
+                                    return Err(TypeError::TypeMismatchSpecific {
+                                        c: code_ref.s(&env.file_idx),
+                                        s: format!("enum {} expected input to be of type {} but type {} was found", fn_name, _field.expr_type, targ)
+                                    });
+                                }
+                                return Ok(ExprType::Struct(
+                                    *code_ref,
+                                    Box::new(struct_.name.to_string()),
+                                ));
+                            } else {
+                                panic!("field {} not found", parts[1]) //TODO make an error for this
+                            }
+                        }
+                    }
+                }
                 if *is_macro {
                     todo!()
                     // Here the macro can check if the args works and will return
@@ -863,6 +904,10 @@ impl ExprType {
                     ));
                 }
                 ExprType::Struct(*code_ref, Box::new(struct_name.to_string()))
+            }
+            Expr::Match(code_ref, _match_expr, _fields) => {
+                //TODO - look at translate_if_then_else_if & translate_if_then_else_if_else
+                ExprType::Void(*code_ref)
             }
             Expr::Declaration(code_ref, _declaration) => {
                 // TODO check contents

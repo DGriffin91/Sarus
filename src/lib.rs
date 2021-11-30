@@ -73,7 +73,7 @@ macro_rules! decl {
                     params.push(Arg {
                         name: format!("in{}", params.len()),
                         expr_type: $param,
-                        default_to_float: false,
+                        no_type_listed: false,
                         closure_arg: None,
                     });
                 )*
@@ -84,7 +84,7 @@ macro_rules! decl {
                     returns.push(Arg {
                         name: format!("out{}", returns.len()),
                         expr_type: $ret,
-                        default_to_float: false,
+                        no_type_listed: false,
                         closure_arg: None,
                     });
                 )*
@@ -109,7 +109,7 @@ fn make_decl(
             .map(|(name, expr)| Arg {
                 name: name.to_string(),
                 expr_type: expr,
-                default_to_float: false,
+                no_type_listed: false,
                 closure_arg: None,
             })
             .collect(),
@@ -118,7 +118,7 @@ fn make_decl(
             .map(|(name, expr)| Arg {
                 name: name.to_string(),
                 expr_type: expr,
-                default_to_float: false,
+                no_type_listed: false,
                 closure_arg: None,
             })
             .collect(),
