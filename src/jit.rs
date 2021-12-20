@@ -49,6 +49,11 @@ pub struct JIT {
     // at run time, when something is added to the deep stack, this is incremented
     // when something is removed from the deep stack, this is decremented
     deep_stack_pointer: Option<*mut u64>,
+
+    // pointer to start of deep stack, this is where we keep the last address we
+    // will go back to when leaving a stack frame
+    bottom_of_deep_stack_pointer: Option<*mut u64>,
+
     /*
     TODO
         to determine size of auto deep stack:
@@ -77,6 +82,7 @@ impl Default for JIT {
             use_deep_stack: true,
             deep_stack: None,
             deep_stack_pointer: None,
+            bottom_of_deep_stack_pointer: None,
             total_max_deep_stack_size: 0,
         }
     }
@@ -119,6 +125,7 @@ impl JIT {
             use_deep_stack,
             deep_stack: None,
             deep_stack_pointer: None,
+            bottom_of_deep_stack_pointer: None,
             total_max_deep_stack_size: 0,
         }
     }
@@ -158,73 +165,66 @@ impl JIT {
             }
         }
 
-        for d in prog.clone() {
-            match d {
-                Declaration::Function(func) => {
-                    if func.extern_func {
-                        // Don't compile the contents of std func, it will be empty
-                        trace!(
-                            "Function {} is an external function, skipping codegen.",
-                            func.sig_string()?,
-                        );
-                        //TODO self.module.lookup_symbol(func.name);
-                        continue;
-                    }
-                    if let InlineKind::Always = func.inline {
-                        // Don't compile the contents of Inline::Always func
-                        // it should always be inlined
-                        trace!(
-                            "Function {} is Inline::Always, skipping codegen",
-                            func.sig_string()?
-                        );
-                        continue;
-                    }
+        //let _ = order_funcs(&funcs);
 
-                    // Then, translate the AST nodes into Cranelift IR.
-                    self.codegen(
-                        &func,
-                        funcs.to_owned(),
-                        &struct_map,
-                        &constant_vars,
-                        &file_index_table,
-                        &inline_closures,
-                    )?;
-                    // Next, declare the function to jit. Functions must be declared
-                    // before they can be called, or defined.
-                    let id = self
-                        .module
-                        .declare_function(&func.name, Linkage::Export, &self.ctx.func.signature)
-                        .map_err(|e| {
-                            anyhow::anyhow!("{}:{}:{} {:?}", file!(), line!(), column!(), e)
-                        })?;
+        for (_func_name, func) in &funcs {
+            if func.extern_func {
+                // Don't compile the contents of std func, it will be empty
+                trace!(
+                    "Function {} is an external function, skipping codegen.",
+                    func.sig_string()?,
+                );
+                //TODO self.module.lookup_symbol(func.name);
+                continue;
+            }
+            if let InlineKind::Always = func.inline {
+                // Don't compile the contents of Inline::Always func
+                // it should always be inlined
+                trace!(
+                    "Function {} is Inline::Always, skipping codegen",
+                    func.sig_string()?
+                );
+                continue;
+            }
 
-                    trace!("cranelift func id is {}", id);
-                    // Define the function to jit. This finishes compilation, although
-                    // there may be outstanding relocations to perform. Currently, jit
-                    // cannot finish relocations until all functions to be called are
-                    // defined. For this toy demo for now, we'll just finalize the
-                    // function below.
-                    self.module
-                        .define_function(
-                            id,
-                            &mut self.ctx,
-                            &mut codegen::binemit::NullTrapSink {},
-                            &mut codegen::binemit::NullStackMapSink {},
-                        )
-                        .map_err(|e| {
-                            anyhow::anyhow!("{}:{}:{} {:?}", file!(), line!(), column!(), e)
-                        })?;
+            // Then, translate the AST nodes into Cranelift IR.
+            self.codegen(
+                &func,
+                funcs.to_owned(),
+                &struct_map,
+                &constant_vars,
+                &file_index_table,
+                &inline_closures,
+            )?;
+            // Next, declare the function to jit. Functions must be declared
+            // before they can be called, or defined.
+            let id = self
+                .module
+                .declare_function(&func.name, Linkage::Export, &self.ctx.func.signature)
+                .map_err(|e| anyhow::anyhow!("{}:{}:{} {:?}", file!(), line!(), column!(), e))?;
 
-                    // Now that compilation is finished, we can clear out the context state.
-                    self.module.clear_context(&mut self.ctx);
+            trace!("cranelift func id is {}", id);
+            // Define the function to jit. This finishes compilation, although
+            // there may be outstanding relocations to perform. Currently, jit
+            // cannot finish relocations until all functions to be called are
+            // defined. For this toy demo for now, we'll just finalize the
+            // function below.
+            self.module
+                .define_function(
+                    id,
+                    &mut self.ctx,
+                    &mut codegen::binemit::NullTrapSink {},
+                    &mut codegen::binemit::NullStackMapSink {},
+                )
+                .map_err(|e| anyhow::anyhow!("{}:{}:{} {:?}", file!(), line!(), column!(), e))?;
 
-                    // Finalize the functions which we just defined, which resolves any
-                    // outstanding relocations (patching in addresses, now that they're
-                    // available).
-                    self.module.finalize_definitions();
-                }
-                _ => continue,
-            };
+            // Now that compilation is finished, we can clear out the context state.
+            self.module.clear_context(&mut self.ctx);
+
+            // Finalize the functions which we just defined, which resolves any
+            // outstanding relocations (patching in addresses, now that they're
+            // available).
+            self.module.finalize_definitions();
         }
 
         if self.use_deep_stack {
@@ -232,14 +232,40 @@ impl JIT {
                 "total_max_deep_stack_size {}",
                 self.total_max_deep_stack_size
             );
-            let deep_stack = Heap::new(self.total_max_deep_stack_size).unwrap();
-            let deep_stack_pointer = Box::into_raw(Box::new(deep_stack.get_ptr() as u64));
+            let deep_stack = Heap::new(
+                self.total_max_deep_stack_size
+                    + 1024 * self.module.target_config().pointer_bytes() as usize, //extra space for deep stack checkpoints
+            )
+            .unwrap();
+            let deep_stack_ptr = deep_stack.get_ptr() as u64;
+            let deep_stack_pointer = Box::into_raw(Box::new(deep_stack_ptr));
+            let bottom_of_deep_stack_pointer = Box::into_raw(Box::new(deep_stack_ptr));
             self.create_data(
-                "__DEEP_STACK__",
+                "__DEEP_STACK_CURSOR__",
                 (deep_stack_pointer as u64).to_ne_bytes().to_vec(),
             )?;
             self.deep_stack = Some(deep_stack);
             self.deep_stack_pointer = Some(deep_stack_pointer);
+
+            self.create_data(
+                "__DEEP_STACK_BOTTOM__",
+                (bottom_of_deep_stack_pointer as u64).to_ne_bytes().to_vec(),
+            )?;
+            self.bottom_of_deep_stack_pointer = Some(bottom_of_deep_stack_pointer);
+
+            // write checkpoints to the deep stack itself
+            //             &0              &1      &28
+            // Deep Stack: latest func_top data... last(1) data... last(28) data...
+            //                                    ^---------------v
+            //             ^----------------------v
+
+            // When entering a new stack write the current location to latest
+            // write the location of the last latest to the current cursor location on the deep stack
+            // if entering a function, write current cursor location also to func_top
+
+            // something also needs to hold the cursor position for the start
+            // of the current function to be able to deal with early returns form
+            // inside a while loop or other stack frame
         }
 
         for (name, val) in constant_vars.iter() {
@@ -438,17 +464,20 @@ impl JIT {
             variables: vec![variables],
             per_scope_vars,
             expr_depth: 0,
-            deep_stack_widths: vec![0],
+            deep_stack_widths: Vec::new(),
             use_deep_stack: self.use_deep_stack,
             max_deep_stack_size: 0,
             while_exit_blocks: Vec::new(),
             while_continue_blocks: Vec::new(),
+            deep_stack_debug: false,
         };
+        trans.deep_stack_init();
+        trans.add_deep_stack_frame(true);
         for expr in &func.body {
             trans.translate_expr(expr)?;
         }
 
-        trans.return_()?;
+        trans.return_(false)?;
         self.total_max_deep_stack_size += trans.max_deep_stack_size;
 
         //Keep clif around for later debug/print
@@ -509,6 +538,128 @@ impl Env {
         };
         None
     }
+}
+
+fn find_calls(expr: &Expr, calls: &mut Vec<String>) {
+    match expr {
+        Expr::LiteralFloat(..)
+        | Expr::LiteralInt(..)
+        | Expr::LiteralU8(..)
+        | Expr::LiteralBool(..)
+        | Expr::LiteralString(..)
+        | Expr::Break(..)
+        | Expr::Continue(..)
+        | Expr::Return(..)
+        | Expr::Declaration(..)
+        | Expr::Identifier(..)
+        | Expr::GlobalDataAddr(_, _) => return,
+        Expr::LiteralArray(_, a, _) => {
+            for e in a {
+                find_calls(e, calls)
+            }
+        }
+        Expr::Binop(_, _, a, b) => {
+            find_calls(a, calls);
+            find_calls(b, calls)
+        }
+        Expr::Unaryop(_, _, a) => find_calls(a, calls),
+        Expr::Compare(_, _, a, b) => {
+            find_calls(a, calls);
+            find_calls(b, calls)
+        }
+        Expr::IfThen(_, a, b) => {
+            find_calls(a, calls);
+            for e in b {
+                find_calls(e, calls)
+            }
+        }
+        Expr::IfElse(_, a, b, c) => {
+            find_calls(a, calls);
+            for e in b {
+                find_calls(e, calls)
+            }
+            for e in c {
+                find_calls(e, calls)
+            }
+        }
+        Expr::IfThenElseIf(_, aa) => {
+            for (a, b) in aa {
+                find_calls(a, calls);
+                for e in b {
+                    find_calls(e, calls)
+                }
+            }
+        }
+        Expr::IfThenElseIfElse(_, aa, c) => {
+            for (a, b) in aa {
+                find_calls(a, calls);
+                for e in b {
+                    find_calls(e, calls)
+                }
+            }
+            for e in c {
+                find_calls(e, calls)
+            }
+        }
+        Expr::Assign(_, a, b) => {
+            for e in a {
+                find_calls(e, calls)
+            }
+            for e in b {
+                find_calls(e, calls)
+            }
+        }
+        Expr::NewStruct(_, _, a) => {
+            for e in a {
+                find_calls(&e.expr, calls)
+            }
+        }
+        Expr::Match(_, a, b) => {
+            find_calls(&a, calls);
+            for e in b {
+                find_calls(&e.expr, calls)
+            }
+        }
+        Expr::WhileLoop(_, a, b, c) => {
+            find_calls(&a, calls);
+            if let Some(b) = b {
+                for e in b {
+                    find_calls(&e, calls)
+                }
+            }
+            for e in c {
+                find_calls(&e, calls)
+            }
+        }
+        Expr::Block(_, a) => {
+            for e in a {
+                find_calls(&e, calls)
+            }
+        }
+        Expr::Call(_, _, a, _) => {
+            for e in a {
+                find_calls(&e, calls)
+            }
+        }
+        Expr::Parentheses(_, a) => find_calls(&a, calls),
+        Expr::ArrayAccess(_, a, b) => {
+            find_calls(a, calls);
+            find_calls(b, calls)
+        }
+    }
+}
+
+fn order_funcs(funcs: &HashMap<String, Function>) -> Vec<String> {
+    let mut func_calls: HashMap<String, Vec<String>> = HashMap::new(); //func_name: its calls
+    for (func_name, func) in funcs {
+        let mut calls = Vec::new();
+        for expr in &func.body {
+            find_calls(&expr, &mut calls)
+        }
+        func_calls.insert(func_name.to_string(), calls);
+    }
+    dbg!(func_calls);
+    todo!()
 }
 
 //TODO move to its own file if we use this

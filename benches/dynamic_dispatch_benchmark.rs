@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use basic_audio_filters::second_order_iir::{IIR2Coefficients, IIR2};
 use test::Bencher;
 
-const STEP_SIZE: usize = 128usize;
+const STEP_SIZE: usize = 4usize;
 
 #[test]
 fn compare_eq() {

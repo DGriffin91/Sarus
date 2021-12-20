@@ -142,7 +142,7 @@ Types of any size can be allocated (given there is sufficient memory avaliable)
 ```rust , ignore
 a = [0.0; 800000000] // 3200MB of floats
 ```
-Most data in Sarus is allocated on the stack. However, the amount of memory avaliable on the stack is limited. To enable larger allocations without relying on runtime heap allocations the memory for this operation is allocated at compile time using the *deep stack*. The deep stack operates similarly to the stack, but is allocated on the heap at compile time. Currently, anything over 4KB is allocated on the deep stack. The deep stack can also be optionally disabled.
+Most data in Sarus is allocated on the stack. However, the amount of memory available on the stack is limited. To enable larger allocations without relying on runtime heap allocations the memory for this operation is allocated at compile time using the *deep stack*. The deep stack operates similarly to the stack, but is allocated on the heap at compile time. Currently, anything over 4KB is allocated on the deep stack. The deep stack can also be optionally disabled.
 
 When arrays are assigned to another variable, the new variable refers to the same array:
 ```rust , skt-sarus_single_func

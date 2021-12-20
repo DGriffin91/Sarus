@@ -65,6 +65,8 @@ pub struct FunctionTranslator<'a> {
     pub use_deep_stack: bool,
     pub max_deep_stack_size: usize,
 
+    pub deep_stack_debug: bool,
+
     // Each time a while block in entered, the exit is pushed here. This is for
     // doing early exits with break
     pub while_exit_blocks: Vec<Block>,
@@ -225,9 +227,7 @@ impl<'a> FunctionTranslator<'a> {
         }
     }
 
-    pub fn return_(&mut self) -> anyhow::Result<()> {
-        self.dealloc_deep_stack();
-
+    pub fn return_(&mut self, early_return: bool) -> anyhow::Result<()> {
         let func = self.func_stack.last().unwrap().clone();
 
         self.check_unassigned_return_var_names(&func.name)?;
@@ -275,7 +275,7 @@ impl<'a> FunctionTranslator<'a> {
             };
             return_values.push(v);
         }
-
+        self.dealloc_deep_stack(!early_return, early_return);
         // Emit the return instruction.
         self.builder.ins().return_(&return_values);
         Ok(())
@@ -313,7 +313,7 @@ impl<'a> FunctionTranslator<'a> {
             )
         }
 
-        self.return_()?;
+        self.return_(true)?;
 
         Ok(SValue::Void)
     }
@@ -2103,8 +2103,6 @@ impl<'a> FunctionTranslator<'a> {
         iter_body: &Option<Vec<Expr>>,
         loop_body: &Vec<Expr>,
     ) -> anyhow::Result<SValue> {
-        self.per_scope_vars_enter_scope();
-
         let header_block = self.builder.create_block();
         let body_block = self.builder.create_block();
         let exit_block = self.builder.create_block();
@@ -2117,6 +2115,8 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.ins().jump(header_block, &[]);
         self.builder.switch_to_block(header_block);
 
+        self.per_scope_vars_enter_scope();
+
         let b_condition_value = self
             .translate_expr(condition)?
             .inner("translate_while_loop")?;
@@ -2126,9 +2126,7 @@ impl<'a> FunctionTranslator<'a> {
 
         self.builder.switch_to_block(body_block);
 
-        if self.use_deep_stack {
-            self.deep_stack_widths.push(0);
-        }
+        self.add_deep_stack_frame(false);
 
         for expr in loop_body {
             self.translate_expr(expr)?;
@@ -2146,7 +2144,8 @@ impl<'a> FunctionTranslator<'a> {
         self.while_exit_blocks.pop();
         self.while_continue_blocks.pop();
 
-        self.dealloc_deep_stack();
+        self.dealloc_deep_stack(false, false);
+        self.per_scope_vars_leave_scope();
 
         self.builder.ins().jump(header_block, &[]);
 
@@ -2157,8 +2156,6 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.seal_block(header_block);
         self.builder.seal_block(exit_block);
         self.builder.seal_block(body_block);
-
-        self.per_scope_vars_leave_scope();
 
         Ok(SValue::Void)
     }
@@ -2972,6 +2969,57 @@ impl<'a> FunctionTranslator<'a> {
         Ok(())
     }
 
+    #[allow(dead_code)]
+    fn call_i64_print(&mut self, i64val: Value, new_line: bool) -> anyhow::Result<()> {
+        let fn_name = if new_line { "i64.println" } else { "i64.print" };
+        let func = self.env.funcs.get(fn_name).unwrap().clone();
+        self.call_with_svalues(
+            &CodeRef::z(),
+            fn_name,
+            Some(&func),
+            None,
+            false,
+            false,
+            vec![SValue::I64(i64val)],
+            None,
+        )?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    fn call_f32_print(&mut self, f32val: Value, new_line: bool) -> anyhow::Result<()> {
+        let fn_name = if new_line { "f32.println" } else { "f32.print" };
+        let func = self.env.funcs.get(fn_name).unwrap().clone();
+        self.call_with_svalues(
+            &CodeRef::z(),
+            fn_name,
+            Some(&func),
+            None,
+            false,
+            false,
+            vec![SValue::F32(f32val)],
+            None,
+        )?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    fn call_print(&mut self, message: &str, new_line: bool) -> anyhow::Result<()> {
+        let arg_values = vec![Expr::LiteralString(CodeRef::z(), message.to_string())];
+        self.translate_call(
+            &CodeRef::z(),
+            if new_line {
+                "[u8].println"
+            } else {
+                "[u8].print"
+            },
+            &arg_values,
+            None,
+            false,
+        )?;
+        Ok(())
+    }
+
     fn call_with_svalues(
         &mut self,
         code_ref: &CodeRef,
@@ -3140,8 +3188,8 @@ impl<'a> FunctionTranslator<'a> {
             self.func_stack.push(func.clone()); //push inlined func onto func_stack
             self.variables.push(HashMap::new()); //new variable func scope for inline func
             self.per_scope_vars.push(vec![HashSet::new()]);
-            if self.use_deep_stack && !inline_scope {
-                self.deep_stack_widths.push(0);
+            if !inline_scope {
+                self.add_deep_stack_frame(true);
             }
 
             if let Some(closure_src_scope_name) = closure_src_scope_name {
@@ -3232,8 +3280,8 @@ impl<'a> FunctionTranslator<'a> {
             self.variables.pop();
             self.per_scope_vars.pop();
             self.unassigned_return_var_names.pop();
-            if self.use_deep_stack && !inline_scope {
-                self.dealloc_deep_stack();
+            if !inline_scope {
+                self.dealloc_deep_stack(false, false);
             }
 
             _return
@@ -3537,45 +3585,167 @@ impl<'a> FunctionTranslator<'a> {
         //TODO consider bumping downwards (possible alignment issues?)
         //https://fitzgeraldnick.com/2019/11/01/always-bump-downwards.html
 
-        trace!("alloc_deep_stack {}", width);
+        //trace!("alloc_deep_stack {}", width);
         *self.deep_stack_widths.last_mut().unwrap() += width;
         self.max_deep_stack_size = self
             .max_deep_stack_size
             .max(self.deep_stack_widths.iter().sum());
         trace!("max_deep_stack_size {}", self.max_deep_stack_size);
 
-        let deep_stack_address = self.translate_global_data_addr(self.ptr_ty, "__DEEP_STACK__");
+        let ptr_to_cursor = self.translate_global_data_addr(self.ptr_ty, "__DEEP_STACK_CURSOR__");
 
-        let address = self.ptr_load(deep_stack_address, 0);
+        // address of current cursor location
+        let cursor = self.ptr_load(ptr_to_cursor, 0);
 
+        // bytes we need to allocate
         let alloc_size_val = self.i64const(width as i64);
 
-        let address_new_start = self.iadd(address, alloc_size_val);
+        // new cursor location after allocation
+        let new_cursor = self.iadd(cursor, alloc_size_val);
 
-        self.store(address_new_start, deep_stack_address, 0);
-        address
+        // save new cursor location to deep stack pointer
+        self.store(new_cursor, ptr_to_cursor, 0);
+
+        if self.deep_stack_debug {
+            let prv_setting = self.use_deep_stack;
+            self.use_deep_stack = false;
+
+            let ptr_to_deep_stack_top =
+                self.translate_global_data_addr(self.ptr_ty, "__DEEP_STACK_BOTTOM__");
+            let deep_stack_bottom_address = self.ptr_load(ptr_to_deep_stack_top, 0);
+
+            self.call_print("--- alloc_deep_stack() ---", true).unwrap();
+            self.call_print("        prev deep stack cursor: ", false)
+                .unwrap();
+            let cursor_rel = self.isub(cursor, deep_stack_bottom_address);
+            self.call_i64_print(cursor_rel, true).unwrap();
+            self.call_print("                    alloc size: ", false)
+                .unwrap();
+            self.call_i64_print(alloc_size_val, true).unwrap();
+            self.call_print("         new deep stack cursor: ", false)
+                .unwrap();
+            let address_new_start_rel = self.isub(new_cursor, deep_stack_bottom_address);
+            self.call_i64_print(address_new_start_rel, true).unwrap();
+            self.use_deep_stack = prv_setting;
+        }
+
+        cursor
     }
 
-    pub fn dealloc_deep_stack(&mut self) {
+    pub fn deep_stack_init(&mut self) {
         if self.use_deep_stack {
-            if let Some(width_to_remove) = self.deep_stack_widths.pop() {
-                if width_to_remove > 0 {
-                    trace!("dealloc_deep_stack width_to_remove {}", width_to_remove);
-                    let deep_stack_address =
-                        self.translate_global_data_addr(self.ptr_ty, "__DEEP_STACK__");
+            let ptr_to_cursor =
+                self.translate_global_data_addr(self.ptr_ty, "__DEEP_STACK_CURSOR__");
+            let cursor = self.ptr_load(ptr_to_cursor, 0);
 
-                    let stack_slot_address = self.ptr_load(deep_stack_address, 0);
+            let ptr_width_v = self.i64const(self.ptr_width);
 
-                    let alloc_size_val = self
-                        .builder
-                        .ins()
-                        .iconst(types::I64, width_to_remove as i64);
+            // move cursor down 1 ptr width
+            let cursor_plus_ptr = self.iadd(cursor, ptr_width_v);
 
-                    let address_new_start = self.isub(stack_slot_address, alloc_size_val);
+            // store new cursor address at bottom and bottom + ptr_width
+            self.store(cursor_plus_ptr, cursor, 0);
+            self.store(cursor_plus_ptr, cursor_plus_ptr, 0);
+        }
+    }
 
-                    self.store(address_new_start, deep_stack_address, 0);
-                }
+    pub fn add_deep_stack_frame(&mut self, function: bool) {
+        //TODO skip this if the function never allocates enough to use it
+        if self.use_deep_stack {
+            let ptr_to_cursor =
+                self.translate_global_data_addr(self.ptr_ty, "__DEEP_STACK_CURSOR__");
+            let cursor = self.ptr_load(ptr_to_cursor, 0);
+            let ptr_to_deep_stack_bottom_address =
+                self.translate_global_data_addr(self.ptr_ty, "__DEEP_STACK_BOTTOM__");
+            let deep_stack_bottom_address = self.ptr_load(ptr_to_deep_stack_bottom_address, 0);
+
+            // get last checkpoint stored at bottom address
+            let last_checkpoint = self.ptr_load(deep_stack_bottom_address, 0);
+
+            // save last checkpoint to current cursor location
+            self.store(last_checkpoint, cursor, 0);
+
+            // store current cursor at bottom address
+            self.store(cursor, deep_stack_bottom_address, 0);
+
+            if function {
+                // TODO only do this for functions that actually have an early return
+                // used for early return
+                // store current cursor at bottom address + ptr_width
+                self.store(cursor, deep_stack_bottom_address, self.ptr_width);
             }
+
+            // move cursor forward by ptr width to make room for checkpoint
+            let ptr_width = self.i64const(self.ptr_width);
+            let new_cursor = self.iadd(cursor, ptr_width);
+            self.store(new_cursor, ptr_to_cursor, 0);
+
+            if self.deep_stack_debug {
+                let prv_setting = self.use_deep_stack;
+                self.use_deep_stack = false;
+                self.call_print("--- add_deep_stack_frame() ---", true)
+                    .unwrap();
+                self.call_print("       last checkpoint: ", false).unwrap();
+                let last_checkpoint_rel = self.isub(last_checkpoint, deep_stack_bottom_address);
+                self.call_i64_print(last_checkpoint_rel, true).unwrap();
+                self.call_print("        new checkpoint: ", false).unwrap();
+                let cursor_rel = self.isub(cursor, deep_stack_bottom_address);
+                self.call_i64_print(cursor_rel, true).unwrap();
+                self.use_deep_stack = prv_setting;
+            }
+
+            self.deep_stack_widths.push(0);
+        }
+    }
+
+    pub fn dealloc_deep_stack(&mut self, full_exit: bool, early_return: bool) {
+        //TODO skip this if the function never allocates enough to use it
+        //full_exit is when *not* using early return and continue
+        if self.use_deep_stack {
+            let ptr_to_cursor =
+                self.translate_global_data_addr(self.ptr_ty, "__DEEP_STACK_CURSOR__");
+            let cursor = self.ptr_load(ptr_to_cursor, 0);
+            let ptr_to_deep_stack_bottom_address =
+                self.translate_global_data_addr(self.ptr_ty, "__DEEP_STACK_BOTTOM__");
+            let deep_stack_bottom_address = self.ptr_load(ptr_to_deep_stack_bottom_address, 0);
+
+            // get current checkpoint from bottom address
+            let current_checkpoint = if early_return {
+                self.ptr_load(deep_stack_bottom_address, self.ptr_width)
+            } else {
+                self.ptr_load(deep_stack_bottom_address, 0)
+            };
+
+            // get last checkpoint from current checkpoint
+            let last_checkpoint = self.ptr_load(current_checkpoint, 0);
+
+            // store current checkpoint as new cursor location (move cursor back to checkpoint)
+            self.store(current_checkpoint, ptr_to_cursor, 0);
+
+            // store last checkpoint at bottom
+            self.store(last_checkpoint, deep_stack_bottom_address, 0);
+
+            if self.deep_stack_debug {
+                let prv_setting = self.use_deep_stack;
+                self.use_deep_stack = false;
+                self.call_print("-- dealloc_deep_stack() --", true).unwrap();
+                self.call_print("    we were on address: ", false).unwrap();
+                let cursor_rel = self.isub(cursor, deep_stack_bottom_address);
+                self.call_i64_print(cursor_rel, true).unwrap();
+                self.call_print("       rolling back to: ", false).unwrap();
+                let current_checkpoint_rel =
+                    self.isub(current_checkpoint, deep_stack_bottom_address);
+                self.call_i64_print(current_checkpoint_rel, true).unwrap();
+                self.use_deep_stack = prv_setting;
+            }
+
+            if full_exit {
+                let max_width_to_remove = self.deep_stack_widths.pop().unwrap();
+                trace!(
+                    "dealloc_deep_stack max_width_to_remove {}",
+                    max_width_to_remove
+                );
+            };
         }
     }
 

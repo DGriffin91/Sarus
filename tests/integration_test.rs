@@ -4614,6 +4614,7 @@ mod enum_tests {
     use super::*;
     #[test]
     fn enums_num() -> anyhow::Result<()> {
+        //setup_logging();
         only_run_func(
             r#"
 enum Num {
@@ -4818,4 +4819,137 @@ fn main() -> () {
     "#,
         )
     }
+}
+
+#[test]
+fn loop_lifetime() -> anyhow::Result<()> {
+    only_run_func(
+        r#"
+fn main() -> () {
+    a = [0;10000][..]
+    i = 0 while i < 5 {i+=1} : {
+        c = [1.0;10000]
+        if i == 0 {
+            b = [2;10000] //(while)inner, copy
+            a = b[..] //TODO compiler error
+        }
+        d = [1.0;10000]
+    }
+    e = [1.0;10000]
+    //a[5].println()
+}
+"#,
+    )
+}
+
+#[test]
+fn loop_lifetime_simple() -> anyhow::Result<()> {
+    //setup_logging();
+    only_run_func(
+        r#"
+fn main() -> () {
+    //a = [0;100][..]
+    i = 0 while i < 1 {i+=1} : {
+        d = [1.0;100]
+    }
+    //(1.0).println()
+    //a = 1.0
+    //i = 0 while i < 100000000 {i+=1} : {
+    //    a *= (1.0).sin()
+    //}
+    //(2.0).println()
+
+}
+"#,
+    )
+}
+
+#[test]
+fn deep_stack_while_loop2() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+fn blank() -> () {
+}
+
+fn other() -> () {
+    a = [1234; 10000]
+}
+
+fn first() -> () {
+    
+    blank()
+    blank()
+    other()
+    a = [1234; 10000]
+    other()
+}
+
+fn main() -> () { 
+    i = 0 while i <= 10 {
+        if i == 0 {
+        }
+        a = [1234; 10000]
+        b = [1234; 10000]
+        i += 1
+    }
+    if true {
+        
+    }
+    first()
+}
+"#;
+    only_run_func(code)
+}
+
+#[test]
+fn deep_stack_while_loop3() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+fn blank() -> () {
+}
+
+fn other() -> () {
+    a = [1234; 10000]
+}
+
+fn first() -> () {
+    
+    blank()
+    blank()
+    other()
+    a = [1234; 10000]
+    other()
+}
+
+fn main() -> () { 
+     i = 0 while i <= 10 {
+        first()
+        i += 1
+    }
+    
+}
+"#;
+    only_run_func(code)
+}
+
+#[test]
+fn deep_stack_while_loop_early_return() -> anyhow::Result<()> {
+    //setup_logging();
+    let code = r#"
+fn other(return_early: bool) -> () {
+    a = [1234; 10000]
+    i = 0 while i <= 5 {i+=1}:{
+        b = [1234; 10000]
+        if return_early {
+            return
+        }
+    }
+}
+
+fn main() -> () { 
+    other(true)
+    other(false)
+}
+"#;
+    only_run_func(code)
 }
