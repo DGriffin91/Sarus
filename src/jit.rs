@@ -71,7 +71,7 @@ pub struct JIT {
 
 impl Default for JIT {
     fn default() -> Self {
-        let builder = JITBuilder::new(cranelift_module::default_libcall_names());
+        let builder = JITBuilder::new(cranelift_module::default_libcall_names()).unwrap();
         let module = JITModule::new(builder);
         Self {
             builder_context: FunctionBuilderContext::new(),
@@ -109,7 +109,9 @@ pub fn new_jit_builder() -> JITBuilder {
     let isa_builder = cranelift_native::builder().unwrap_or_else(|msg| {
         panic!("host machine is not supported: {}", msg);
     });
-    let isa = isa_builder.finish(settings::Flags::new(flag_builder));
+    let isa = isa_builder
+        .finish(settings::Flags::new(flag_builder))
+        .unwrap();
     JITBuilder::with_isa(isa, cranelift_module::default_libcall_names())
 }
 
@@ -210,12 +212,7 @@ impl JIT {
             // defined. For this toy demo for now, we'll just finalize the
             // function below.
             self.module
-                .define_function(
-                    id,
-                    &mut self.ctx,
-                    &mut codegen::binemit::NullTrapSink {},
-                    &mut codegen::binemit::NullStackMapSink {},
-                )
+                .define_function(id, &mut self.ctx)
                 .map_err(|e| anyhow::anyhow!("{}:{}:{} {:?}", file!(), line!(), column!(), e))?;
 
             // Now that compilation is finished, we can clear out the context state.
@@ -483,9 +480,9 @@ impl JIT {
         //Keep clif around for later debug/print
         self.clif.insert(
             func.name.to_string(),
-            trans.builder.func.display(None).to_string(),
+            trans.builder.func.display().to_string(),
         );
-        trace!("{}", trans.builder.func.display(None).to_string());
+        trace!("{}", trans.builder.func.display().to_string());
 
         // Tell the builder we're done with this function.
         trans.builder.finalize();
