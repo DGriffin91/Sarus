@@ -32,7 +32,7 @@ fn main() -> () {
 }
 "#;
     // Get jit default instance
-    let mut jit = default_std_jit_from_code(code).unwrap();
+    let mut jit = default_std_jit_from_code(code, false).unwrap();
 
     // Get pointer to Sarus main function
     let func_ptr = jit.get_func("main").unwrap();
@@ -826,7 +826,7 @@ fn main(p1: Point) -> (c: f32) {
 }
 "#;
     // Get jit default instance
-    let mut jit = default_std_jit_from_code(code).unwrap();
+    let mut jit = default_std_jit_from_code(code, false).unwrap();
 
     // Get pointer to Sarus main function
     let func_ptr = jit.get_func("main").unwrap();
@@ -880,7 +880,7 @@ fn main(p1: Point) -> () {
         // Give Rust function pointer to Sarus compiler
         // When a function is a method, we use the format struct_name.method_name
         jit_builder.symbols([("Point.length", length as *const u8)]);
-    }).unwrap();
+    }, false).unwrap();
     let func_ptr = jit.get_func("main").unwrap();
     let func = unsafe { mem::transmute::<_, extern "C" fn(Point) >(func_ptr) };
 

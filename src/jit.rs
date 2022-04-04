@@ -468,14 +468,18 @@ impl JIT {
             while_continue_blocks: Vec::new(),
             deep_stack_debug: false,
         };
-        trans.deep_stack_init();
-        trans.add_deep_stack_frame(true);
+        if self.use_deep_stack {
+            trans.deep_stack_init();
+            trans.add_deep_stack_frame(true);
+        }
         for expr in &func.body {
             trans.translate_expr(expr)?;
         }
 
         trans.return_(false)?;
-        self.total_max_deep_stack_size += trans.max_deep_stack_size;
+        if self.use_deep_stack {
+            self.total_max_deep_stack_size += trans.max_deep_stack_size;
+        }
 
         //Keep clif around for later debug/print
         self.clif.insert(

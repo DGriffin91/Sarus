@@ -29,14 +29,14 @@ macro_rules! hashmap {
     }}
 }
 
-pub fn default_std_jit_from_code(code: &str) -> anyhow::Result<jit::JIT> {
+pub fn default_std_jit_from_code(code: &str, use_deep_stack: bool) -> anyhow::Result<jit::JIT> {
     let mut ast = parse(code)?;
     let mut jit_builder = jit::new_jit_builder();
     sarus_std_lib::append_std(&mut ast, &mut jit_builder);
     sarus_std_lib::append_std_math(&mut ast, &mut jit_builder);
     sarus_std_lib::append_std_strings(&mut ast, &mut jit_builder);
 
-    let mut jit = jit::JIT::from(jit_builder, true);
+    let mut jit = jit::JIT::from(jit_builder, use_deep_stack);
 
     jit.translate(ast, None)?;
     Ok(jit)
@@ -47,6 +47,7 @@ pub fn default_std_jit_from_code_with_importer(
     mut ast: Vec<Declaration>,
     file_index_table: Option<Vec<PathBuf>>,
     importer: impl FnOnce(&mut Vec<Declaration>, &mut JITBuilder),
+    use_deep_stack: bool,
 ) -> anyhow::Result<jit::JIT> {
     let mut jit_builder = jit::new_jit_builder();
     sarus_std_lib::append_std(&mut ast, &mut jit_builder);
@@ -55,7 +56,7 @@ pub fn default_std_jit_from_code_with_importer(
 
     importer(&mut ast, &mut jit_builder);
 
-    let mut jit = jit::JIT::from(jit_builder, true);
+    let mut jit = jit::JIT::from(jit_builder, use_deep_stack);
 
     jit.translate(ast, file_index_table)?;
     Ok(jit)

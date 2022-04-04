@@ -5,7 +5,7 @@ fn main() {{
     let code = r#"fn main() -> () {{ {}
 }}
 "#;
-    let mut jit = default_std_jit_from_code(code).unwrap();
+    let mut jit = default_std_jit_from_code(code, false).unwrap();
     let func_ptr = jit.get_func("main").unwrap();
     let func = unsafe {{ mem::transmute::<_, extern "C" fn()>(func_ptr) }};
     func();
@@ -19,7 +19,7 @@ fn main() {{
     let code = r#"
 {}
 "#;
-    let mut jit = default_std_jit_from_code(code).unwrap();
+    let mut jit = default_std_jit_from_code(code, false).unwrap();
     let func_ptr = jit.get_func("main").unwrap();
     let func = unsafe {{ mem::transmute::<_, extern "C" fn()>(func_ptr) }};
     func();
