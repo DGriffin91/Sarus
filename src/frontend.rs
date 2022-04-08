@@ -121,13 +121,6 @@ impl CodeRef {
             file_index: code_ctx.file_index,
         }
     }
-    pub fn z() -> Self {
-        CodeRef {
-            pos: 0,
-            line: None,
-            file_index: None,
-        }
-    }
     pub fn s(&self, t: &Option<Vec<PathBuf>>) -> String {
         let s = if let Some(file_index) = self.file_index {
             if let Some(file_index_table) = t {
@@ -151,6 +144,16 @@ impl CodeRef {
     }
 }
 
+impl Default for CodeRef {
+    fn default() -> Self {
+        CodeRef {
+            pos: 0,
+            line: None,
+            file_index: None,
+        }
+    }
+}
+
 impl Display for CodeRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(line) = self.line {
@@ -164,33 +167,129 @@ impl Display for CodeRef {
 /// The AST node for expressions.
 #[derive(Debug, Clone)]
 pub enum Expr {
-    LiteralFloat(CodeRef, f32),
-    LiteralInt(CodeRef, i64),
-    LiteralU8(CodeRef, u8),
-    LiteralBool(CodeRef, bool),
-    LiteralString(CodeRef, String),
-    LiteralArray(CodeRef, Vec<Expr>, usize),
-    Identifier(CodeRef, String),
-    Binop(CodeRef, Binop, Box<Expr>, Box<Expr>),
-    Unaryop(CodeRef, Unaryop, Box<Expr>),
-    Compare(CodeRef, Cmp, Box<Expr>, Box<Expr>),
-    IfThen(CodeRef, Box<Expr>, Vec<Expr>),
-    IfElse(CodeRef, Box<Expr>, Vec<Expr>, Vec<Expr>),
-    IfThenElseIf(CodeRef, Vec<(Expr, Vec<Expr>)>),
-    IfThenElseIfElse(CodeRef, Vec<(Expr, Vec<Expr>)>, Vec<Expr>),
-    Assign(CodeRef, Vec<Expr>, Vec<Expr>),
-    NewStruct(CodeRef, String, Vec<StructAssignField>),
-    Match(CodeRef, Box<Expr>, Vec<MatchField>),
-    WhileLoop(CodeRef, Box<Expr>, Option<Vec<Expr>>, Vec<Expr>), //Should this take a block instead of Vec<Expr>?
-    Block(CodeRef, Vec<Expr>),
-    Break(CodeRef),
-    Continue(CodeRef),
-    Return(CodeRef),
-    Call(CodeRef, String, Vec<Expr>, bool),
-    GlobalDataAddr(CodeRef, String),
-    Parentheses(CodeRef, Box<Expr>),
-    ArrayAccess(CodeRef, Box<Expr>, Box<Expr>),
-    Declaration(CodeRef, Declaration),
+    LiteralFloat {
+        code_ref: CodeRef,
+        val: f32,
+    },
+    LiteralInt {
+        code_ref: CodeRef,
+        val: i64,
+    },
+    LiteralU8 {
+        code_ref: CodeRef,
+        val: u8,
+    },
+    LiteralBool {
+        code_ref: CodeRef,
+        val: bool,
+    },
+    LiteralString {
+        code_ref: CodeRef,
+        val: String,
+    },
+    LiteralArray {
+        code_ref: CodeRef,
+        exprs: Vec<Expr>,
+        len: usize,
+    },
+    Identifier {
+        code_ref: CodeRef,
+        name: String,
+    },
+    Binop {
+        code_ref: CodeRef,
+        op: Binop,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
+    Unaryop {
+        code_ref: CodeRef,
+        op: Unaryop,
+        expr: Box<Expr>,
+    },
+    Compare {
+        code_ref: CodeRef,
+        cmp: Cmp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
+    IfThen {
+        code_ref: CodeRef,
+        condition: Box<Expr>,
+        then_body: Vec<Expr>,
+    },
+    IfElse {
+        code_ref: CodeRef,
+        condition: Box<Expr>,
+        then_body: Vec<Expr>,
+        else_body: Vec<Expr>,
+    },
+    IfThenElseIf {
+        code_ref: CodeRef,
+        expr_bodies: Vec<(Expr, Vec<Expr>)>,
+    },
+    IfThenElseIfElse {
+        code_ref: CodeRef,
+        expr_bodies: Vec<(Expr, Vec<Expr>)>,
+        else_body: Vec<Expr>,
+    },
+    Assign {
+        code_ref: CodeRef,
+        to_exprs: Vec<Expr>,
+        from_exprs: Vec<Expr>,
+    },
+    NewStruct {
+        code_ref: CodeRef,
+        name: String,
+        fields: Vec<StructAssignField>,
+    },
+    Match {
+        code_ref: CodeRef,
+        expr_arg: Box<Expr>,
+        fields: Vec<MatchField>,
+    },
+    WhileLoop {
+        code_ref: CodeRef,
+        condition: Box<Expr>,
+        iter_body: Option<Vec<Expr>>,
+        loop_body: Vec<Expr>,
+    }, //Should this take a block instead of Vec<Expr>?
+    Block {
+        code_ref: CodeRef,
+        block: Vec<Expr>,
+    },
+    Break {
+        code_ref: CodeRef,
+    },
+    Continue {
+        code_ref: CodeRef,
+    },
+    Return {
+        code_ref: CodeRef,
+    },
+    Call {
+        code_ref: CodeRef,
+        fn_name: String,
+        args: Vec<Expr>,
+        is_macro: bool,
+    },
+    GlobalDataAddr {
+        code_ref: CodeRef,
+        name: String,
+    },
+    Parentheses {
+        code_ref: CodeRef,
+        expr: Box<Expr>,
+    },
+    ArrayAccess {
+        code_ref: CodeRef,
+        expr: Box<Expr>,
+        idx_expr: Box<Expr>,
+    },
+    Declaration {
+        code_ref: CodeRef,
+        declaration: Declaration,
+    },
 }
 
 impl Expr {
@@ -203,158 +302,214 @@ impl Expr {
 
     pub fn get_code_ref(&self) -> &CodeRef {
         match self {
-            Expr::LiteralFloat(code_ref, ..) => code_ref,
-            Expr::LiteralInt(code_ref, ..) => code_ref,
-            Expr::LiteralU8(code_ref, ..) => code_ref,
-            Expr::LiteralBool(code_ref, ..) => code_ref,
-            Expr::LiteralString(code_ref, ..) => code_ref,
-            Expr::LiteralArray(code_ref, ..) => code_ref,
-            Expr::Identifier(code_ref, ..) => code_ref,
-            Expr::Binop(code_ref, ..) => code_ref,
-            Expr::Unaryop(code_ref, ..) => code_ref,
-            Expr::Compare(code_ref, ..) => code_ref,
-            Expr::IfThen(code_ref, ..) => code_ref,
-            Expr::IfThenElseIf(code_ref, ..) => code_ref,
-            Expr::IfThenElseIfElse(code_ref, ..) => code_ref,
-            Expr::IfElse(code_ref, ..) => code_ref,
-            Expr::Assign(code_ref, ..) => code_ref,
-            Expr::NewStruct(code_ref, ..) => code_ref,
-            Expr::Match(code_ref, ..) => code_ref,
-            Expr::WhileLoop(code_ref, ..) => code_ref,
-            Expr::Block(code_ref, ..) => code_ref,
-            Expr::Break(code_ref, ..) => code_ref,
-            Expr::Continue(code_ref, ..) => code_ref,
-            Expr::Return(code_ref, ..) => code_ref,
-            Expr::Call(code_ref, ..) => code_ref,
-            Expr::GlobalDataAddr(code_ref, ..) => code_ref,
-            Expr::Parentheses(code_ref, ..) => code_ref,
-            Expr::ArrayAccess(code_ref, ..) => code_ref,
-            Expr::Declaration(code_ref, ..) => code_ref,
+            Expr::LiteralFloat { code_ref, .. }
+            | Expr::LiteralInt { code_ref, .. }
+            | Expr::LiteralU8 { code_ref, .. }
+            | Expr::LiteralBool { code_ref, .. }
+            | Expr::LiteralString { code_ref, .. }
+            | Expr::LiteralArray { code_ref, .. }
+            | Expr::Identifier { code_ref, .. }
+            | Expr::Binop { code_ref, .. }
+            | Expr::Unaryop { code_ref, .. }
+            | Expr::Compare { code_ref, .. }
+            | Expr::IfThen { code_ref, .. }
+            | Expr::IfThenElseIf { code_ref, .. }
+            | Expr::IfThenElseIfElse { code_ref, .. }
+            | Expr::IfElse { code_ref, .. }
+            | Expr::Assign { code_ref, .. }
+            | Expr::NewStruct { code_ref, .. }
+            | Expr::Match { code_ref, .. }
+            | Expr::WhileLoop { code_ref, .. }
+            | Expr::Block { code_ref, .. }
+            | Expr::Break { code_ref, .. }
+            | Expr::Continue { code_ref, .. }
+            | Expr::Return { code_ref, .. }
+            | Expr::Call { code_ref, .. }
+            | Expr::GlobalDataAddr { code_ref, .. }
+            | Expr::Parentheses { code_ref, .. }
+            | Expr::ArrayAccess { code_ref, .. }
+            | Expr::Declaration { code_ref, .. } => code_ref,
         }
     }
 
     pub fn get_code_ref_mut(&mut self) -> &mut CodeRef {
         match self {
-            Expr::LiteralFloat(code_ref, ..) => code_ref,
-            Expr::LiteralInt(code_ref, ..) => code_ref,
-            Expr::LiteralU8(code_ref, ..) => code_ref,
-            Expr::LiteralBool(code_ref, ..) => code_ref,
-            Expr::LiteralString(code_ref, ..) => code_ref,
-            Expr::LiteralArray(code_ref, ..) => code_ref,
-            Expr::Identifier(code_ref, ..) => code_ref,
-            Expr::Binop(code_ref, ..) => code_ref,
-            Expr::Unaryop(code_ref, ..) => code_ref,
-            Expr::Compare(code_ref, ..) => code_ref,
-            Expr::IfThen(code_ref, ..) => code_ref,
-            Expr::IfThenElseIf(code_ref, ..) => code_ref,
-            Expr::IfThenElseIfElse(code_ref, ..) => code_ref,
-            Expr::IfElse(code_ref, ..) => code_ref,
-            Expr::Assign(code_ref, ..) => code_ref,
-            Expr::NewStruct(code_ref, ..) => code_ref,
-            Expr::Match(code_ref, ..) => code_ref,
-            Expr::WhileLoop(code_ref, ..) => code_ref,
-            Expr::Block(code_ref, ..) => code_ref,
-            Expr::Break(code_ref, ..) => code_ref,
-            Expr::Continue(code_ref, ..) => code_ref,
-            Expr::Return(code_ref, ..) => code_ref,
-            Expr::Call(code_ref, ..) => code_ref,
-            Expr::GlobalDataAddr(code_ref, ..) => code_ref,
-            Expr::Parentheses(code_ref, ..) => code_ref,
-            Expr::ArrayAccess(code_ref, ..) => code_ref,
-            Expr::Declaration(code_ref, ..) => code_ref,
+            Expr::LiteralFloat { code_ref, .. }
+            | Expr::LiteralInt { code_ref, .. }
+            | Expr::LiteralU8 { code_ref, .. }
+            | Expr::LiteralBool { code_ref, .. }
+            | Expr::LiteralString { code_ref, .. }
+            | Expr::LiteralArray { code_ref, .. }
+            | Expr::Identifier { code_ref, .. }
+            | Expr::Binop { code_ref, .. }
+            | Expr::Unaryop { code_ref, .. }
+            | Expr::Compare { code_ref, .. }
+            | Expr::IfThen { code_ref, .. }
+            | Expr::IfThenElseIf { code_ref, .. }
+            | Expr::IfThenElseIfElse { code_ref, .. }
+            | Expr::IfElse { code_ref, .. }
+            | Expr::Assign { code_ref, .. }
+            | Expr::NewStruct { code_ref, .. }
+            | Expr::Match { code_ref, .. }
+            | Expr::WhileLoop { code_ref, .. }
+            | Expr::Block { code_ref, .. }
+            | Expr::Break { code_ref, .. }
+            | Expr::Continue { code_ref, .. }
+            | Expr::Return { code_ref, .. }
+            | Expr::Call { code_ref, .. }
+            | Expr::GlobalDataAddr { code_ref, .. }
+            | Expr::Parentheses { code_ref, .. }
+            | Expr::ArrayAccess { code_ref, .. }
+            | Expr::Declaration { code_ref, .. } => code_ref,
         }
     }
 
-    pub fn literal_float(v: f32) -> Self {
-        Expr::LiteralFloat(CodeRef::z(), v)
+    pub fn literal_float(val: f32) -> Self {
+        Expr::LiteralFloat {
+            code_ref: Default::default(),
+            val,
+        }
     }
-    pub fn literal_int(v: i64) -> Self {
-        Expr::LiteralInt(CodeRef::z(), v)
+    pub fn literal_int(val: i64) -> Self {
+        Expr::LiteralInt {
+            code_ref: Default::default(),
+            val,
+        }
     }
-    pub fn literal_bool(v: bool) -> Self {
-        Expr::LiteralBool(CodeRef::z(), v)
+    pub fn literal_bool(val: bool) -> Self {
+        Expr::LiteralBool {
+            code_ref: Default::default(),
+            val,
+        }
     }
-    pub fn literal_string(s: &str) -> Self {
-        Expr::LiteralString(CodeRef::z(), s.to_string())
+    pub fn literal_string(val: &str) -> Self {
+        Expr::LiteralString {
+            code_ref: Default::default(),
+            val: String::from(val),
+        }
     }
-    pub fn literal_array(v: &Expr, len: usize) -> Self {
-        Expr::LiteralArray(CodeRef::z(), vec![v.clone()], len)
+    pub fn literal_array(expr: &Expr, len: usize) -> Self {
+        Expr::LiteralArray {
+            code_ref: Default::default(),
+            exprs: vec![expr.clone()],
+            len,
+        }
     }
-    pub fn identifier(s: &str) -> Self {
-        Expr::Identifier(CodeRef::z(), s.to_string())
+    pub fn identifier(name: &str) -> Self {
+        Expr::Identifier {
+            code_ref: Default::default(),
+            name: String::from(name),
+        }
     }
     pub fn binop(op: &Binop, lhs: &Expr, rhs: &Expr) -> Self {
-        Expr::Binop(
-            CodeRef::z(),
-            op.clone(),
-            Box::new(lhs.clone()),
-            Box::new(rhs.clone()),
-        )
+        Expr::Binop {
+            code_ref: Default::default(),
+            op: op.clone(),
+            lhs: Box::new(lhs.clone()),
+            rhs: Box::new(rhs.clone()),
+        }
     }
     pub fn unaryop(op: &Unaryop, lhs: &Expr) -> Self {
-        Expr::Unaryop(CodeRef::z(), op.clone(), Box::new(lhs.clone()))
+        Expr::Unaryop {
+            code_ref: Default::default(),
+            op: op.clone(),
+            expr: Box::new(lhs.clone()),
+        }
     }
-    pub fn compare(op: &Cmp, lhs: &Expr, rhs: &Expr) -> Self {
-        Expr::Compare(
-            CodeRef::z(),
-            op.clone(),
-            Box::new(lhs.clone()),
-            Box::new(rhs.clone()),
-        )
+    pub fn compare(cmp: &Cmp, lhs: &Expr, rhs: &Expr) -> Self {
+        Expr::Compare {
+            code_ref: Default::default(),
+            cmp: cmp.clone(),
+            lhs: Box::new(lhs.clone()),
+            rhs: Box::new(rhs.clone()),
+        }
     }
     pub fn if_then(cond: &Expr, then_body: &Vec<Expr>) -> Self {
-        Expr::IfThen(CodeRef::z(), Box::new(cond.clone()), then_body.clone())
+        Expr::IfThen {
+            code_ref: Default::default(),
+            condition: Box::new(cond.clone()),
+            then_body: then_body.clone(),
+        }
     }
     pub fn if_else(cond: &Expr, then_body: &Vec<Expr>, else_body: &Vec<Expr>) -> Self {
-        Expr::IfElse(
-            CodeRef::z(),
-            Box::new(cond.clone()),
-            then_body.clone(),
-            else_body.clone(),
-        )
+        Expr::IfElse {
+            code_ref: Default::default(),
+            condition: Box::new(cond.clone()),
+            then_body: then_body.clone(),
+            else_body: else_body.clone(),
+        }
     }
     pub fn if_then_else_if(expr_bodies: &Vec<(Expr, Vec<Expr>)>) -> Self {
-        Expr::IfThenElseIf(CodeRef::z(), expr_bodies.clone())
+        Expr::IfThenElseIf {
+            code_ref: Default::default(),
+            expr_bodies: expr_bodies.clone(),
+        }
     }
     pub fn if_then_else_if_else(
         expr_bodies: &Vec<(Expr, Vec<Expr>)>,
         else_body: &Vec<Expr>,
     ) -> Self {
-        Expr::IfThenElseIfElse(CodeRef::z(), expr_bodies.clone(), else_body.clone())
+        Expr::IfThenElseIfElse {
+            code_ref: Default::default(),
+            expr_bodies: expr_bodies.clone(),
+            else_body: else_body.clone(),
+        }
     }
-    pub fn assign(lhs: &Vec<Expr>, rhs: &Vec<Expr>) -> Self {
-        Expr::Assign(CodeRef::z(), lhs.clone(), rhs.clone())
+    pub fn assign(to_exprs: &Vec<Expr>, from_exprs: &Vec<Expr>) -> Self {
+        Expr::Assign {
+            code_ref: Default::default(),
+            to_exprs: to_exprs.clone(),
+            from_exprs: from_exprs.clone(),
+        }
     }
     //use assign_op_to_assign(op: Binop, a: Expr, b: Expr) for op_assign
-    pub fn new_struct(name: &str, rhs: &Vec<StructAssignField>) -> Self {
-        Expr::NewStruct(CodeRef::z(), name.to_string(), rhs.clone())
+    pub fn new_struct(name: &str, fields: &Vec<StructAssignField>) -> Self {
+        Expr::NewStruct {
+            code_ref: Default::default(),
+            name: name.to_string(),
+            fields: fields.clone(),
+        }
     }
-    pub fn while_loop(cond: &Expr, iter_body: &Option<Vec<Expr>>, body: &Vec<Expr>) -> Self {
-        Expr::WhileLoop(
-            CodeRef::z(),
-            Box::new(cond.clone()),
-            iter_body.clone(),
-            body.clone(),
-        )
+    pub fn while_loop(cond: &Expr, iter_body: &Option<Vec<Expr>>, loop_body: &Vec<Expr>) -> Self {
+        Expr::WhileLoop {
+            code_ref: Default::default(),
+            condition: Box::new(cond.clone()),
+            iter_body: iter_body.clone(),
+            loop_body: loop_body.clone(),
+        }
     }
-    pub fn block(body: &Vec<Expr>) -> Self {
-        Expr::Block(CodeRef::z(), body.clone())
+    pub fn block(block: &Vec<Expr>) -> Self {
+        Expr::Block {
+            code_ref: Default::default(),
+            block: block.clone(),
+        }
     }
-    pub fn call(func_name: &str, args: &Vec<Expr>) -> Self {
-        Expr::Call(CodeRef::z(), func_name.to_string(), args.clone(), false)
+    pub fn call(fn_name: &str, args: &Vec<Expr>) -> Self {
+        Expr::Call {
+            code_ref: Default::default(),
+            fn_name: String::from(fn_name),
+            args: args.clone(),
+            is_macro: false,
+        }
     }
-    pub fn parentheses(args: &Expr) -> Self {
-        Expr::Parentheses(CodeRef::z(), Box::new(args.clone()))
+    pub fn parentheses(expr: &Expr) -> Self {
+        Expr::Parentheses {
+            code_ref: Default::default(),
+            expr: Box::new(expr.clone()),
+        }
     }
     pub fn array_access(expr: &Expr, idx_expr: &Expr) -> Self {
-        Expr::ArrayAccess(
-            CodeRef::z(),
-            Box::new(expr.clone()),
-            Box::new(idx_expr.clone()),
-        )
+        Expr::ArrayAccess {
+            code_ref: Default::default(),
+            expr: Box::new(expr.clone()),
+            idx_expr: Box::new(idx_expr.clone()),
+        }
     }
     pub fn declaration(decl: &Declaration) -> Self {
-        Expr::Declaration(CodeRef::z(), decl.clone())
+        Expr::Declaration {
+            code_ref: Default::default(),
+            declaration: decl.clone(),
+        }
     }
 }
 
@@ -362,46 +517,76 @@ impl Expr {
 impl Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Expr::LiteralFloat(_, s) => write!(f, "{}", s),
-            Expr::LiteralInt(_, s) => write!(f, "{}", s),
-            Expr::LiteralU8(_, s) => write!(f, "{}u8", s),
-            Expr::LiteralString(_, s) => write!(f, "\"{}\"", s),
-            Expr::LiteralArray(_, es, len) => {
-                if es.len() == 1 {
-                    write!(f, "[{}; {}]", es[0], len)
+            Expr::LiteralFloat { code_ref: _, val } => write!(f, "{val}"),
+            Expr::LiteralInt { code_ref: _, val } => write!(f, "{val}"),
+            Expr::LiteralU8 { code_ref: _, val } => write!(f, "{val}u8"),
+            Expr::LiteralString { code_ref: _, val } => write!(f, "\"{val}\""),
+            Expr::LiteralArray {
+                code_ref: _,
+                exprs,
+                len,
+            } => {
+                if exprs.len() == 1 {
+                    let first = &exprs[0];
+                    write!(f, "[{first}; {len}]")
                 } else {
                     write!(f, "[")?;
-                    for (i, e) in es.iter().enumerate() {
-                        if i < es.len() - 1 {
-                            write!(f, "{},", e)?;
+                    for (i, expr) in exprs.iter().enumerate() {
+                        if i < exprs.len() - 1 {
+                            write!(f, "{expr},")?;
                         } else {
-                            write!(f, "{}", e)?;
+                            write!(f, "{expr}")?;
                         }
                     }
                     write!(f, "]")
                 }
             }
-            Expr::Identifier(_, s) => write!(f, "{}", s),
-            Expr::Binop(_, op, e1, e2) => write!(f, "{}{}{}", e1, op, e2),
-            Expr::Unaryop(_, op, e1) => write!(f, "{} {}", op, e1),
-            Expr::Compare(_, cmp, e1, e2) => write!(f, "{} {} {}", e1, cmp, e2),
-            Expr::IfThen(_, e, body) => {
-                writeln!(f, "if {} {{", e)?;
-                for expr in body.iter() {
-                    writeln!(f, "{}", expr)?;
+            Expr::Identifier {
+                code_ref: _,
+                name: val,
+            } => write!(f, "{}", val),
+            Expr::Binop {
+                code_ref: _,
+                op,
+                lhs: expr_a,
+                rhs: expr_b,
+            } => write!(f, "{expr_a}{op}{expr_b}"),
+            Expr::Unaryop {
+                code_ref: _,
+                op,
+                expr,
+            } => write!(f, "{op} {expr}"),
+            Expr::Compare {
+                code_ref: _,
+                cmp: op,
+                lhs: expr_a,
+                rhs: expr_b,
+                ..
+            } => write!(f, "{expr_a} {op} {expr_b}"),
+            Expr::IfThen {
+                code_ref: _,
+                condition,
+                then_body,
+            } => {
+                writeln!(f, "if {condition} {{")?;
+                for expr in then_body.iter() {
+                    writeln!(f, "{expr}")?;
                 }
                 write!(f, "}}")?;
                 Ok(())
             }
-            Expr::IfThenElseIf(_, a) => {
+            Expr::IfThenElseIf {
+                code_ref: _,
+                expr_bodies,
+            } => {
                 write!(f, "if ")?;
-                for (i, (e, body)) in a.iter().enumerate() {
-                    writeln!(f, "{} {{", e)?;
+                for (i, (e, body)) in expr_bodies.iter().enumerate() {
+                    writeln!(f, "{e} {{")?;
                     for expr in body {
-                        writeln!(f, "{}", expr)?;
+                        writeln!(f, "{expr}")?;
                     }
                     write!(f, "}}")?;
-                    if i < a.len() - 1 {
+                    if i < expr_bodies.len() - 1 {
                         write!(f, " else if ")?;
                     } else {
                         writeln!(f)?;
@@ -409,100 +594,131 @@ impl Display for Expr {
                 }
                 Ok(())
             }
-            Expr::IfThenElseIfElse(_, a, else_body) => {
+            Expr::IfThenElseIfElse {
+                code_ref: _,
+                expr_bodies,
+                else_body,
+            } => {
                 write!(f, "if ")?;
-                for (i, (e, body)) in a.iter().enumerate() {
-                    writeln!(f, "{} {{", e)?;
+                for (i, (e, body)) in expr_bodies.iter().enumerate() {
+                    writeln!(f, "{e} {{")?;
                     for expr in body {
                         writeln!(f, "{}", expr)?;
                     }
                     write!(f, "}}")?;
-                    if i < a.len() - 1 {
+                    if i < else_body.len() - 1 {
                         write!(f, " else if ")?;
                     }
                 }
                 writeln!(f, " else {{")?;
                 for expr in else_body {
-                    writeln!(f, "{}", expr)?;
+                    writeln!(f, "{expr}")?;
                 }
                 writeln!(f, "}}")?;
 
                 Ok(())
             }
-            Expr::IfElse(_, e, body, else_body) => {
-                writeln!(f, "if {} {{", e)?;
-                for expr in body.iter() {
-                    writeln!(f, "{}", expr)?;
+            Expr::IfElse {
+                code_ref: _,
+                condition,
+                then_body,
+                else_body,
+            } => {
+                writeln!(f, "if {condition} {{")?;
+                for expr in then_body.iter() {
+                    writeln!(f, "{expr}")?;
                 }
                 writeln!(f, "}} else {{")?;
                 for expr in else_body.iter() {
-                    writeln!(f, "{}", expr)?;
+                    writeln!(f, "{expr}")?;
                 }
                 write!(f, "}}")?;
                 Ok(())
             }
-            Expr::Assign(_, vars, exprs) => {
-                for (i, var) in vars.iter().enumerate() {
-                    write!(f, "{}", var)?;
-                    let len: usize = vars.len().into();
+            Expr::Assign {
+                code_ref: _,
+                to_exprs,
+                from_exprs,
+            } => {
+                for (i, var) in to_exprs.iter().enumerate() {
+                    write!(f, "{var}")?;
+                    let len: usize = to_exprs.len().into();
                     if i < len - 1 {
                         write!(f, ", ")?;
                     }
                 }
                 write!(f, " = ")?;
-                for (i, expr) in exprs.iter().enumerate() {
-                    write!(f, "{}", expr)?;
-                    let len: usize = exprs.len().into();
+                for (i, expr) in from_exprs.iter().enumerate() {
+                    write!(f, "{expr}")?;
+                    let len: usize = from_exprs.len().into();
                     if i < len - 1 {
                         write!(f, ", ")?;
                     }
                 }
                 Ok(())
             }
-            Expr::NewStruct(_, struct_name, args) => {
-                writeln!(f, "{}{{", struct_name)?;
-                for arg in args.iter() {
-                    writeln!(f, "{},", arg)?;
+            Expr::NewStruct {
+                code_ref: _,
+                name: struct_name,
+                fields,
+            } => {
+                writeln!(f, "{struct_name}{{")?;
+                for field in fields.iter() {
+                    writeln!(f, "{field},")?;
                 }
                 writeln!(f, "}}")?;
                 Ok(())
             }
-            Expr::Match(_, struct_name, args) => {
-                writeln!(f, "match {}{{", struct_name)?;
-                for arg in args.iter() {
-                    writeln!(f, "{},", arg)?;
+            Expr::Match {
+                code_ref: _,
+                expr_arg,
+                fields,
+            } => {
+                writeln!(f, "match {expr_arg}{{")?;
+                for field in fields.iter() {
+                    writeln!(f, "{field},")?;
                 }
                 writeln!(f, "}}")?;
                 Ok(())
             }
-            Expr::WhileLoop(_, eval, iter_block, block) => {
-                writeln!(f, "while {} ", eval)?;
-                if let Some(iter_block) = iter_block {
+            Expr::WhileLoop {
+                code_ref: _,
+                condition,
+                iter_body,
+                loop_body,
+            } => {
+                writeln!(f, "while {condition} ")?;
+                if let Some(iter_body) = iter_body {
                     write!(f, "{{")?;
-                    for expr in iter_block.iter() {
-                        writeln!(f, "{}", expr)?;
+                    for expr in iter_body.iter() {
+                        writeln!(f, "{expr}")?;
                     }
                     write!(f, "}} : ")?;
                 }
                 write!(f, "{{")?;
-                for expr in block.iter() {
-                    writeln!(f, "{}", expr)?;
+                for expr in loop_body.iter() {
+                    writeln!(f, "{expr}")?;
                 }
                 write!(f, "}}")?;
                 Ok(())
             }
-            Expr::Block(_, block) => {
+            Expr::Block { code_ref: _, block } => {
                 for expr in block.iter() {
-                    writeln!(f, "{}", expr)?;
+                    writeln!(f, "{expr}")?;
                 }
                 Ok(())
             }
-            Expr::Break(_) => writeln!(f, "break"),
-            Expr::Continue(_) => writeln!(f, "continue"),
-            Expr::Return(_) => writeln!(f, "return"),
-            Expr::Call(_, func_name, args, _) => {
+            Expr::Break { code_ref: _ } => writeln!(f, "break"),
+            Expr::Continue { code_ref: _ } => writeln!(f, "continue"),
+            Expr::Return { code_ref: _ } => writeln!(f, "return"),
+            Expr::Call {
+                code_ref: _,
+                fn_name,
+                args,
+                is_macro: _,
+            } => {
                 //todo print this correctly
-                write!(f, "{}(", func_name)?;
+                write!(f, "{fn_name}(")?;
                 for (i, arg) in args.iter().enumerate() {
                     write!(f, "{}", arg)?;
                     if i < args.len() - 1 {
@@ -512,11 +728,18 @@ impl Display for Expr {
                 write!(f, ")")?;
                 Ok(())
             }
-            Expr::GlobalDataAddr(_, e) => write!(f, "{}", e),
-            Expr::LiteralBool(_, b) => write!(f, "{}", b),
-            Expr::Parentheses(_, e) => write!(f, "({})", e),
-            Expr::ArrayAccess(_, var, e) => write!(f, "{}[{}]", var, e),
-            Expr::Declaration(_, e) => write!(f, "{}", e),
+            Expr::GlobalDataAddr { code_ref: _, name } => write!(f, "{name}"),
+            Expr::LiteralBool { code_ref: _, val } => write!(f, "{val}"),
+            Expr::Parentheses { code_ref: _, expr } => write!(f, "({expr})"),
+            Expr::ArrayAccess {
+                code_ref: _,
+                expr,
+                idx_expr,
+            } => write!(f, "{expr}[{idx_expr}]"),
+            Expr::Declaration {
+                code_ref: _,
+                declaration,
+            } => write!(f, "{declaration}"),
         }
     }
 }
@@ -823,7 +1046,7 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
     / "always_inline" {InlineKind::Always}
 
     rule arg() -> Arg
-        = _ i:identifier() _ ":" _ c:closure_definition(i) _ { Arg {name: c.name.to_string(), expr_type: ExprType::Void(CodeRef::z()), no_type_listed: false, closure_arg: Some(c) } }
+        = _ i:identifier() _ ":" _ c:closure_definition(i) _ { Arg {name: c.name.to_string(), expr_type: ExprType::Void(Default::default()), no_type_listed: false, closure_arg: Some(c) } }
         / _ i:identifier() _ ":" _ t:type_label() _ { Arg {name: i, expr_type: t, no_type_listed: false, closure_arg: None } }
         / _ pos:position!() i:identifier() _ { Arg {name: i, expr_type: ExprType::F32(CodeRef::new(pos, code_ctx)), no_type_listed: true, closure_arg: None } }
 
@@ -855,16 +1078,18 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         / return_()
 
     rule break_() -> Expr
-        = _ pos:position!() "break" _ {Expr::Break(CodeRef::new(pos, code_ctx))}
+        = _ pos:position!() "break" _ {Expr::Break { code_ref: CodeRef::new(pos, code_ctx) } }
 
     rule continue_() -> Expr
-        = _ pos:position!() "continue" _ {Expr::Continue(CodeRef::new(pos, code_ctx))}
+        = _ pos:position!() "continue" _ {Expr::Continue { code_ref: CodeRef::new(pos, code_ctx) } }
 
     rule return_() -> Expr
-        = _ pos:position!() "return" _ {Expr::Return(CodeRef::new(pos, code_ctx))}
+        = _ pos:position!() "return" _ {Expr::Return { code_ref: CodeRef::new(pos, code_ctx) } }
 
     rule expression_declaration() -> Expr
-        = _ pos:position!() i:identifier()  _ c:closure_declaration(i) { Expr::Declaration(CodeRef::new(pos, code_ctx), c) }
+        = _ pos:position!() i:identifier()  _ declaration:closure_declaration(i) {
+            Expr::Declaration { code_ref: CodeRef::new(pos, code_ctx), declaration }
+        }
 
     rule expression() -> Expr
         = if_then()
@@ -878,31 +1103,32 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         / anon_closure()
 
     rule anon_closure() -> Expr
-        = pos:position!() _ c:closure_declaration(("~anon~".to_string())) { Expr::Declaration(CodeRef::new(pos, code_ctx), c) }
+        = pos:position!() _ declaration:closure_declaration(("~anon~".to_string())) {
+            Expr::Declaration { code_ref: CodeRef::new(pos, code_ctx), declaration }
+        }
 
     rule if_then() -> Expr
         = _ pos:position!() "if" _ e:expression() then_body:block() "\n"
-        { Expr::IfThen(CodeRef::new(pos, code_ctx), Box::new(e), then_body) }
-
+        { Expr::IfThen { code_ref: CodeRef::new(pos, code_ctx), condition: Box::new(e), then_body } }
     rule if_else() -> Expr
-        = _ pos:position!() "if" e:expression() _ when_true:block() _ "else" when_false:block()
-        { Expr::IfElse(CodeRef::new(pos, code_ctx), Box::new(e), when_true, when_false) }
+        = _ pos:position!() "if" e:expression() _ then_body:block() _ "else" else_body:block()
+        { Expr::IfElse { code_ref: CodeRef::new(pos, code_ctx), condition: Box::new(e), then_body, else_body } }
 
     rule if_then_else_if() -> Expr
         = _ pos:position!() "if" _ expr_bodies:((_ e:expression() _ b:block() _ {(e, b)}) ** "else if" )
-        { Expr::IfThenElseIf(CodeRef::new(pos, code_ctx), expr_bodies) }
+        { Expr::IfThenElseIf { code_ref: CodeRef::new(pos, code_ctx), expr_bodies } }
 
     rule if_then_else_if_else() -> Expr
-        = _ pos:position!() "if" _ expr_bodies:((_ e:expression() _ b:block() _ {(e, b)}) ** "else if" ) _ "else" when_false:block()
-        { Expr::IfThenElseIfElse(CodeRef::new(pos, code_ctx), expr_bodies, when_false) }
+        = _ pos:position!() "if" _ expr_bodies:((_ e:expression() _ b:block() _ {(e, b)}) ** "else if" ) _ "else" else_body:block()
+        { Expr::IfThenElseIfElse { code_ref: CodeRef::new(pos, code_ctx), expr_bodies, else_body } }
 
     rule while_loop() -> Expr
-        = _ pos:position!() "while" e:expression() iter_body:(b:block()_":"{b})? body:block()
-        { Expr::WhileLoop(CodeRef::new(pos, code_ctx), Box::new(e), iter_body, body) }
+        = _ pos:position!() "while" e:expression() iter_body:(b:block()_":"{b})? loop_body:block()
+        { Expr::WhileLoop { code_ref: CodeRef::new(pos, code_ctx), condition: Box::new(e), iter_body, loop_body } }
 
     rule assignment() -> Expr
-        = assignments:((binary_op()) ** comma()) _ pos:position!() "=" args:((_ e:expression() _ {e}) ** comma()) {
-            Expr::Assign(CodeRef::new(pos, code_ctx), assignments, args)
+        = to_exprs:((binary_op()) ** comma()) _ pos:position!() "=" from_exprs:((_ e:expression() _ {e}) ** comma()) {
+            Expr::Assign { code_ref: CodeRef::new(pos, code_ctx), to_exprs, from_exprs }
         }
 
 
@@ -914,25 +1140,64 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
 
     #[cache]
     rule binary_op() -> Expr = precedence!{
-        a:@ _ pos:position!() "&&" _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::LogicalAnd, Box::new(a), Box::new(b)) }
-        a:@ _ pos:position!() "||" _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::LogicalOr, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "&&" _ b:(@) { Expr::Binop { code_ref: CodeRef::new(pos, code_ctx),
+                                                           op: Binop::LogicalAnd,
+                                                           lhs: Box::new(a),
+                                                           rhs:  Box::new(b) } }
+        a:@ _ pos:position!() "||" _ b:(@) { Expr::Binop { code_ref: CodeRef::new(pos, code_ctx),
+                                                           op: Binop::LogicalOr,
+                                                           lhs: Box::new(a),
+                                                           rhs:  Box::new(b) } }
         --
-        a:@ _ pos:position!() "==" _ b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Eq, Box::new(a), Box::new(b)) }
-        a:@ _ pos:position!() "!=" _ b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Ne, Box::new(a), Box::new(b)) }
-        a:@ _ pos:position!() "<"  _ b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Lt, Box::new(a), Box::new(b)) }
-        a:@ _ pos:position!() "<=" _ b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Le, Box::new(a), Box::new(b)) }
-        a:@ _ pos:position!() ">"  _ b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Gt, Box::new(a), Box::new(b)) }
-        a:@ _ pos:position!() ">=" _ b:(@) { Expr::Compare(CodeRef::new(pos, code_ctx), Cmp::Ge, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "==" _ b:(@) { Expr::Compare { code_ref: CodeRef::new(pos, code_ctx),
+                                                             cmp: Cmp::Eq,
+                                                             lhs: Box::new(a),
+                                                             rhs: Box::new(b) } }
+        a:@ _ pos:position!() "!=" _ b:(@) { Expr::Compare { code_ref: CodeRef::new(pos, code_ctx),
+                                                             cmp: Cmp::Ne,
+                                                             lhs: Box::new(a),
+                                                             rhs: Box::new(b) } }
+        a:@ _ pos:position!() "<"  _ b:(@) { Expr::Compare { code_ref: CodeRef::new(pos, code_ctx),
+                                                             cmp: Cmp::Lt,
+                                                             lhs: Box::new(a),
+                                                             rhs: Box::new(b) } }
+        a:@ _ pos:position!() "<=" _ b:(@) { Expr::Compare { code_ref: CodeRef::new(pos, code_ctx),
+                                                             cmp: Cmp::Le,
+                                                             lhs: Box::new(a),
+                                                             rhs: Box::new(b) } }
+        a:@ _ pos:position!() ">"  _ b:(@) { Expr::Compare { code_ref: CodeRef::new(pos, code_ctx),
+                                                             cmp: Cmp::Gt,
+                                                             lhs: Box::new(a),
+                                                             rhs: Box::new(b) } }
+        a:@ _ pos:position!() ">=" _ b:(@) { Expr::Compare { code_ref: CodeRef::new(pos, code_ctx),
+                                                             cmp: Cmp::Ge,
+                                                             lhs: Box::new(a),
+                                                             rhs: Box::new(b) } }
         --
-        a:@ _ pos:position!() "+" _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::Add, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "+" _ b:(@) { Expr::Binop { code_ref: CodeRef::new(pos, code_ctx),
+                                                          op: Binop::Add,
+                                                          lhs: Box::new(a),
+                                                          rhs: Box::new(b) } }
         --
-        a:@ _ pos:position!() "-" _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::Sub, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "-" _ b:(@) { Expr::Binop { code_ref: CodeRef::new(pos, code_ctx),
+                                                          op: Binop::Sub,
+                                                          lhs: Box::new(a),
+                                                          rhs: Box::new(b) } }
         --
-        a:@ _ pos:position!() "*" _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::Mul, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "*" _ b:(@) { Expr::Binop { code_ref: CodeRef::new(pos, code_ctx),
+                                                          op: Binop::Mul,
+                                                          lhs: Box::new(a),
+                                                          rhs: Box::new(b) } }
         --
-        a:@ _ pos:position!() "/" _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::Div, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "/" _ b:(@) { Expr::Binop { code_ref: CodeRef::new(pos, code_ctx),
+                                                          op: Binop::Div,
+                                                          lhs: Box::new(a),
+                                                          rhs: Box::new(b) } }
         --
-        a:@ _ pos:position!() "." _ b:(@) { Expr::Binop(CodeRef::new(pos, code_ctx), Binop::DotAccess, Box::new(a), Box::new(b)) }
+        a:@ _ pos:position!() "." _ b:(@) { Expr::Binop { code_ref: CodeRef::new(pos, code_ctx),
+                                                          op: Binop::DotAccess,
+                                                          lhs: Box::new(a),
+                                                          rhs: Box::new(b) } }
         --
         u:unary_op()  { u }
         u:unary()  { u }
@@ -940,10 +1205,16 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
 
     rule unary_op() -> Expr
         //TODO e:unary() "[" idx:expression() "]" is causing a severe performance regression vs using i:identifier() "[" idx:expression() "]"
-        = _ pos:position!() e:unary() "[" r:range() "]" { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Slice(r), Box::new(e)) }
-        / _ pos:position!() e:unary() "[" idx:expression() "]" { Expr::ArrayAccess(CodeRef::new(pos, code_ctx), Box::new(e), Box::new(idx)) }
-        / _ pos:position!() "!" e:unary() { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Not, Box::new(e)) }
-        / _ pos:position!() "-" e:unary() { Expr::Unaryop(CodeRef::new(pos, code_ctx),Unaryop::Negative, Box::new(e)) }
+        = _ pos:position!() e:unary() "[" r:range() "]" { Expr::Unaryop { code_ref: CodeRef::new(pos, code_ctx),
+                                                                          op: Unaryop::Slice(r),
+                                                                          expr: Box::new(e) } }
+        / _ pos:position!() e:unary() "[" idx:expression() "]" { Expr::ArrayAccess { code_ref: CodeRef::new(pos, code_ctx),
+                                                                                     expr: Box::new(e),
+                                                                                     idx_expr: Box::new(idx) } }
+        / _ pos:position!() "!" e:unary() { Expr::Unaryop { code_ref: CodeRef::new(pos, code_ctx), op: Unaryop::Not, expr: Box::new(e) } }
+        / _ pos:position!() "-" e:unary() { Expr::Unaryop { code_ref: CodeRef::new(pos, code_ctx),
+                                                            op: Unaryop::Negative,
+                                                            expr: Box::new(e) } }
 
     rule range() -> SarusRange
         = _ se:expression()? _ ".." _ ee:expression()? _ {SarusRange{start: if let Some(se) = se {Some(Box::new(se))} else {None},
@@ -961,20 +1232,31 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         //Having a _ before the () breaks in this case:
         //c = p.x + p.y + p.z
         //(p.x).print()
-        = _ pos:position!() i:identifier() _macro:("!")? "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
-            Expr::Call(CodeRef::new(pos, code_ctx), i, args, _macro.is_some())
+        = _ pos:position!() fn_name:identifier() _macro:("!")? "(" args:((_ e:expression() _ {e}) ** comma()) ")" {
+            Expr::Call { code_ref: CodeRef::new(pos, code_ctx), fn_name, args, is_macro: _macro.is_some() }
         }
-        / _ pos:position!() "match" _ e:expression() _ "{" args:((_ e:match_field() _ {e})*) "}" {Expr::Match(CodeRef::new(pos, code_ctx), Box::new(e), args)}
-        / _ pos:position!() i:identifier() _ "{" args:((_ e:struct_assign_field() _ {e})*) "}" {Expr::NewStruct(CodeRef::new(pos, code_ctx), i, args)}
-        / _ pos:position!() i:identifier() { Expr::Identifier(CodeRef::new(pos, code_ctx), i) }
-        / _ pos:position!() "(" e:expression() _ ")" { Expr::Parentheses(CodeRef::new(pos, code_ctx), Box::new(e)) }
-        / _ pos:position!() "\"" body:$[^'"']* "\"" { Expr::LiteralString(CodeRef::new(pos, code_ctx), body.join("")) }
+        / _ pos:position!() "match" _ e:expression() _ "{" fields:((_ e:match_field() _ {e})*) "}" {
+            Expr::Match { code_ref: CodeRef::new(pos, code_ctx), expr_arg: Box::new(e), fields }
+        }
+        / _ pos:position!() "match" _ e:expression() _ "{" fields:((_ e:match_field() _ {e})*) "}" {
+            Expr::Match { code_ref: CodeRef::new(pos, code_ctx), expr_arg: Box::new(e), fields }
+        }
+        / _ pos:position!() name:identifier() _ "{" fields:((_ e:struct_assign_field() _ {e})*) "}" {
+            Expr::NewStruct { code_ref: CodeRef::new(pos, code_ctx), name, fields }
+        }
+        / _ pos:position!() name:identifier() {
+            Expr::Identifier { code_ref: CodeRef::new(pos, code_ctx), name }
+        }
+        / _ pos:position!() "(" e:expression() _ ")" {
+            Expr::Parentheses { code_ref: CodeRef::new(pos, code_ctx), expr: Box::new(e) }
+        }
+        / _ pos:position!() "\"" body:$[^'"']* "\"" { Expr::LiteralString{code_ref: CodeRef::new(pos, code_ctx), val: body.join("")} }
         / _ pos:position!() "[" e:expression()  _ ";" _ len:$(['0'..='9']+) _ "]" {
-            Expr::LiteralArray(CodeRef::new(pos, code_ctx), vec![e], len.parse::<usize>().unwrap())
+            Expr::LiteralArray { code_ref: CodeRef::new(pos, code_ctx), exprs: vec![e], len: len.parse::<usize>().unwrap() }
         }
         / _ pos:position!() "[" exprs:(e:expression() ** comma() {e}) _ "]" {
             let len = exprs.len();
-            Expr::LiteralArray(CodeRef::new(pos, code_ctx), exprs, len)
+            Expr::LiteralArray { code_ref: CodeRef::new(pos, code_ctx), exprs, len }
         }
         / l:literal() { l }
 
@@ -984,18 +1266,20 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
         }
 
     rule literal() -> Expr
-        = _ pos:position!() n:$(['0'..='9']+) "u8" { Expr::LiteralU8(CodeRef::new(pos, code_ctx), n.parse::<u8>().unwrap()) }
-        / _ pos:position!() n:$(['-']?['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat(CodeRef::new(pos, code_ctx), n.parse::<f32>().unwrap()) }
-        / _ pos:position!() n:$(['-']?['0'..='9']+) { Expr::LiteralInt(CodeRef::new(pos, code_ctx), n.parse::<i64>().unwrap()) }
-        / _ pos:position!() "*" i:identifier() { Expr::GlobalDataAddr(CodeRef::new(pos, code_ctx), i) }
-        / _ pos:position!() "true" { Expr::LiteralBool(CodeRef::new(pos, code_ctx), true) }
-        / _ pos:position!() "false" { Expr::LiteralBool(CodeRef::new(pos, code_ctx), false) }
+        = _ pos:position!() n:$(['0'..='9']+) "u8" { Expr::LiteralU8 { code_ref: CodeRef::new(pos, code_ctx), val: n.parse::<u8>().unwrap() } }
+        / _ pos:position!() n:$(['-']?['0'..='9']+"."['0'..='9']+) { Expr::LiteralFloat{code_ref: CodeRef::new(pos, code_ctx), val: n.parse::<f32>().unwrap()} }
+        / _ pos:position!() n:$(['-']?['0'..='9']+) { Expr::LiteralInt { code_ref: CodeRef::new(pos, code_ctx), val: n.parse::<i64>().unwrap() } }
+        / _ pos:position!() "*" name:identifier() { Expr::GlobalDataAddr { code_ref: CodeRef::new(pos, code_ctx), name } }
+        / _ pos:position!() "true" { Expr::LiteralBool{code_ref: CodeRef::new(pos, code_ctx), val: true } }
+        / _ pos:position!() "false" { Expr::LiteralBool{code_ref: CodeRef::new(pos, code_ctx), val: false } }
 
     rule struct_assign_field() -> StructAssignField
         = _ i:identifier() _ ":" _ e:expression() comma() { StructAssignField {field_name: i.into(), expr: e } }
 
     rule match_field() -> MatchField
-        = _ i:identifier() _ ":" _ pos:position!() b:block() comma() { MatchField {field_name: i.into(), expr: Expr::Block(CodeRef::new(pos, code_ctx), b) } }
+        = _ i:identifier() _ ":" _ pos:position!() block:block() comma() {
+            MatchField {field_name: i.into(), expr: Expr::Block { code_ref: CodeRef::new(pos, code_ctx), block } }
+        }
 
     rule comment() -> ()
         = quiet!{"//" [^'\n']*"\n"}
@@ -1009,16 +1293,19 @@ peg::parser!(pub grammar parser(code_ctx: &CodeContext) for str {
 
 pub fn assign_op_to_assign(op: Binop, a: Expr, b: Expr) -> Expr {
     let b_code_ref = *b.get_code_ref();
-    Expr::Assign(
-        *a.clone().get_code_ref(),
-        vec![a.clone()],
-        vec![Expr::Binop(
-            b_code_ref,
+    Expr::Assign {
+        code_ref: *a.clone().get_code_ref(),
+        to_exprs: vec![a.clone()],
+        from_exprs: vec![Expr::Binop {
+            code_ref: b_code_ref,
             op,
-            Box::new(a),
-            Box::new(Expr::Parentheses(b_code_ref, Box::new(b))),
-        )],
-    )
+            lhs: Box::new(a),
+            rhs: Box::new(Expr::Parentheses {
+                code_ref: b_code_ref,
+                expr: Box::new(b),
+            }),
+        }],
+    }
 }
 
 pub struct CodeContext<'a> {

@@ -106,28 +106,45 @@ impl<'a> FunctionTranslator<'a> {
 
         //dbg!(&expr);
         let v = match expr {
-            Expr::LiteralFloat(_code_ref, literal) => Ok(SValue::F32(self.f32const(*literal))),
-            Expr::LiteralInt(_code_ref, literal) => Ok(SValue::I64(self.i64const(*literal))),
-            Expr::LiteralU8(_code_ref, literal) => Ok(SValue::U8(self.u8const(*literal))),
-            Expr::LiteralString(_code_ref, literal) => self.translate_string(literal),
-            Expr::LiteralArray(code_ref, item, len) => {
-                self.translate_array_create(code_ref, item, *len)
-            }
-            Expr::Binop(_code_ref, op, lhs, rhs) => {
-                Ok(self.translate_binop(*op, lhs, rhs, false)?.0)
-            }
-            Expr::Unaryop(_code_ref, op, lhs) => self.translate_unaryop(op.clone(), lhs),
-            Expr::Compare(_code_ref, cmp, lhs, rhs) => self.translate_cmp(*cmp, lhs, rhs),
-            Expr::Call(code_ref, name, args, is_macro) => {
-                self.translate_call(code_ref, name, args, None, *is_macro)
-            }
-            Expr::GlobalDataAddr(_code_ref, name) => Ok(SValue::Array(
+            Expr::LiteralFloat { val, .. } => Ok(SValue::F32(self.f32const(*val))),
+            Expr::LiteralInt { val, .. } => Ok(SValue::I64(self.i64const(*val))),
+            Expr::LiteralU8 { val, .. } => Ok(SValue::U8(self.u8const(*val))),
+            Expr::LiteralString { val, .. } => self.translate_string(val),
+            Expr::LiteralArray {
+                code_ref,
+                exprs,
+                len,
+            } => self.translate_array_create(code_ref, exprs, *len),
+            Expr::Binop {
+                code_ref: _,
+                op,
+                lhs,
+                rhs,
+            } => Ok(self.translate_binop(*op, lhs, rhs, false)?.0),
+            Expr::Unaryop {
+                code_ref: _,
+                op,
+                expr,
+            } => self.translate_unaryop(op.clone(), expr),
+            Expr::Compare {
+                code_ref: _,
+                cmp,
+                lhs,
+                rhs,
+            } => self.translate_cmp(*cmp, lhs, rhs),
+            Expr::Call {
+                code_ref,
+                fn_name,
+                args,
+                is_macro,
+            } => self.translate_call(code_ref, fn_name, args, None, *is_macro),
+            Expr::GlobalDataAddr { code_ref: _, name } => Ok(SValue::Array(
                 Box::new(SValue::F32(
                     self.translate_global_data_addr(self.ptr_ty, name),
                 )),
                 ArraySized::Unsized,
             )),
-            Expr::Identifier(code_ref, name) => {
+            Expr::Identifier { code_ref, name } => {
                 if name.contains("::") {
                     //check if this is an enum
                     let parts = name.split("::").collect::<Vec<_>>();
@@ -163,48 +180,78 @@ impl<'a> FunctionTranslator<'a> {
                     )) //Try to load global
                 }
             }
-            Expr::Assign(_code_ref, to_exprs, from_exprs) => {
-                self.translate_assign(to_exprs, from_exprs)
-            }
-            Expr::NewStruct(code_ref, struct_name, fields) => {
-                self.translate_new_struct(code_ref, struct_name, fields)
-            }
-            Expr::Match(code_ref, expr_arg, fields) => {
-                self.translate_match(code_ref, expr_arg, fields)
-            }
-            Expr::IfThen(_code_ref, condition, then_body) => {
+            Expr::Assign {
+                code_ref: _,
+                to_exprs,
+                from_exprs,
+            } => self.translate_assign(to_exprs, from_exprs),
+            Expr::NewStruct {
+                code_ref,
+                name,
+                fields,
+            } => self.translate_new_struct(code_ref, name, fields),
+            Expr::Match {
+                code_ref,
+                expr_arg,
+                fields,
+            } => self.translate_match(code_ref, expr_arg, fields),
+            Expr::IfThen {
+                code_ref: _,
+                condition,
+                then_body,
+            } => {
                 self.translate_if_then(condition, then_body)?;
                 Ok(SValue::Void)
             }
-            Expr::IfElse(_code_ref, condition, then_body, else_body) => {
-                self.translate_if_else(condition, then_body, else_body)
-            }
-            Expr::IfThenElseIf(code_ref, expr_bodies) => {
+            Expr::IfElse {
+                code_ref: _,
+                condition,
+                then_body,
+                else_body,
+            } => self.translate_if_else(condition, then_body, else_body),
+            Expr::IfThenElseIf {
+                code_ref,
+                expr_bodies,
+            } => {
                 self.translate_if_then_else_if(code_ref, expr_bodies)?;
                 Ok(SValue::Void)
             }
-            Expr::IfThenElseIfElse(code_ref, expr_bodies, else_body) => {
-                self.translate_if_then_else_if_else(code_ref, expr_bodies, else_body)
-            }
-            Expr::WhileLoop(_code_ref, condition, iter_body, loop_body) => {
+            Expr::IfThenElseIfElse {
+                code_ref,
+                expr_bodies,
+                else_body,
+            } => self.translate_if_then_else_if_else(code_ref, expr_bodies, else_body),
+            Expr::WhileLoop {
+                code_ref: _,
+                condition,
+                iter_body,
+                loop_body,
+            } => {
                 self.translate_while_loop(condition, iter_body, loop_body)?;
                 Ok(SValue::Void)
             }
-            Expr::Block(_code_ref, b) => b
+            Expr::Block { code_ref: _, block } => block
                 .iter()
                 .map(|e| self.translate_expr(e))
                 .last()
                 .unwrap_or(Ok(SValue::Void)),
-            Expr::Break(code_ref) => self.translate_break(code_ref),
-            Expr::Continue(code_ref) => self.translate_continue(code_ref),
-            Expr::Return(code_ref) => self.translate_return(code_ref),
-            Expr::LiteralBool(_code_ref, b) => Ok(SValue::Bool(self.bconst(*b))),
-            Expr::Parentheses(_code_ref, expr) => self.translate_expr(expr),
-            Expr::ArrayAccess(code_ref, expr, idx_expr) => {
+            Expr::Break { code_ref } => self.translate_break(code_ref),
+            Expr::Continue { code_ref } => self.translate_continue(code_ref),
+            Expr::Return { code_ref } => self.translate_return(code_ref),
+            Expr::LiteralBool { val, .. } => Ok(SValue::Bool(self.bconst(*val))),
+            Expr::Parentheses { code_ref: _, expr } => self.translate_expr(expr),
+            Expr::ArrayAccess {
+                code_ref,
+                expr,
+                idx_expr,
+            } => {
                 let idx_val = self.idx_expr_to_val(idx_expr)?;
                 self.translate_array_get(code_ref, expr, idx_val, false)
             }
-            Expr::Declaration(_code_ref, declaration) => match &declaration {
+            Expr::Declaration {
+                code_ref: _,
+                declaration,
+            } => match &declaration {
                 Declaration::Function(_closure) => Ok(SValue::Void),
                 Declaration::Metadata(_, _) => todo!(),
                 Declaration::Struct(_) => todo!(),
@@ -237,7 +284,7 @@ impl<'a> FunctionTranslator<'a> {
         // variable.
         let mut return_values = Vec::new();
         for ret in func.returns.iter() {
-            let return_variable = self.get_variable(&CodeRef::z(), &ret.name)?.clone();
+            let return_variable = self.get_variable(&CodeRef::default(), &ret.name)?.clone();
             let v = match &ret.expr_type {
                 ExprType::F32(code_ref) => self
                     .builder
@@ -539,7 +586,12 @@ impl<'a> FunctionTranslator<'a> {
             next_expr = None;
             array_field = false;
             match expr {
-                Expr::Call(code_ref, fn_name, args, is_macro) => {
+                Expr::Call {
+                    code_ref,
+                    fn_name,
+                    args,
+                    is_macro,
+                } => {
                     if path.is_empty() {
                         lhs_val =
                             Some(self.translate_call(code_ref, fn_name, args, lhs_val, *is_macro)?);
@@ -574,10 +626,15 @@ impl<'a> FunctionTranslator<'a> {
                         path = Vec::new();
                     }
                 }
-                Expr::LiteralString(_code_ref, _) => lhs_val = Some(self.translate_expr(expr)?),
-                Expr::LiteralArray(_code_ref, _, _) => lhs_val = Some(self.translate_expr(expr)?),
-                Expr::Identifier(_code_ref, _) => path.push(expr.clone()),
-                Expr::Binop(_code_ref, op, lhs, rhs) => {
+                Expr::LiteralString { .. } => lhs_val = Some(self.translate_expr(expr)?),
+                Expr::LiteralArray { .. } => lhs_val = Some(self.translate_expr(expr)?),
+                Expr::Identifier { .. } => path.push(expr.clone()),
+                Expr::Binop {
+                    code_ref: _,
+                    op,
+                    lhs,
+                    rhs,
+                } => {
                     if let Binop::DotAccess = op {
                         curr_expr = Some(lhs);
                         next_expr = Some(rhs);
@@ -586,14 +643,20 @@ impl<'a> FunctionTranslator<'a> {
                     }
                 }
 
-                Expr::Parentheses(_code_ref, e) => lhs_val = Some(self.translate_expr(e)?),
-                Expr::ArrayAccess(code_ref, expr, idx_expr) => {
+                Expr::Parentheses { code_ref: _, expr } => {
+                    lhs_val = Some(self.translate_expr(expr)?)
+                }
+                Expr::ArrayAccess {
+                    code_ref,
+                    expr,
+                    idx_expr,
+                } => {
                     if !path.is_empty() {
                         let mut spath = path
                             .iter()
                             .map(|lhs_i: &Expr| lhs_i.to_string())
                             .collect::<Vec<String>>();
-                        let name = if let Expr::Identifier(_code_ref, name) = *expr.clone() {
+                        let name = if let Expr::Identifier { code_ref: _, name } = *expr.clone() {
                             name
                         } else {
                             anyhow::bail!("{} array access on dot binop of non identifier not supported yet {}", code_ref, expr)
@@ -628,26 +691,26 @@ impl<'a> FunctionTranslator<'a> {
 
                     path = Vec::new();
                 }
-                Expr::NewStruct(_code_ref, _, _) => lhs_val = Some(self.translate_expr(expr)?),
-                Expr::Declaration(code_ref, ..)
-                | Expr::Unaryop(code_ref, ..)
-                | Expr::Compare(code_ref, ..)
-                | Expr::IfThen(code_ref, ..)
-                | Expr::IfElse(code_ref, ..)
-                | Expr::IfThenElseIf(code_ref, ..)
-                | Expr::IfThenElseIfElse(code_ref, ..)
-                | Expr::Match(code_ref, ..)
-                | Expr::Assign(code_ref, ..)
-                | Expr::WhileLoop(code_ref, ..)
-                | Expr::Block(code_ref, ..)
-                | Expr::Break(code_ref, ..)
-                | Expr::Continue(code_ref, ..)
-                | Expr::Return(code_ref, ..)
-                | Expr::GlobalDataAddr(code_ref, ..)
-                | Expr::LiteralFloat(code_ref, ..)
-                | Expr::LiteralInt(code_ref, ..)
-                | Expr::LiteralU8(code_ref, ..)
-                | Expr::LiteralBool(code_ref, ..) => anyhow::bail!(
+                Expr::NewStruct { .. } => lhs_val = Some(self.translate_expr(expr)?),
+                Expr::Declaration { code_ref, .. }
+                | Expr::Unaryop { code_ref, .. }
+                | Expr::Compare { code_ref, .. }
+                | Expr::IfThen { code_ref, .. }
+                | Expr::IfElse { code_ref, .. }
+                | Expr::IfThenElseIf { code_ref, .. }
+                | Expr::IfThenElseIfElse { code_ref, .. }
+                | Expr::Match { code_ref, .. }
+                | Expr::Assign { code_ref, .. }
+                | Expr::WhileLoop { code_ref, .. }
+                | Expr::Block { code_ref, .. }
+                | Expr::Break { code_ref, .. }
+                | Expr::Continue { code_ref, .. }
+                | Expr::Return { code_ref, .. }
+                | Expr::GlobalDataAddr { code_ref, .. }
+                | Expr::LiteralFloat { code_ref, .. }
+                | Expr::LiteralInt { code_ref, .. }
+                | Expr::LiteralU8 { code_ref, .. }
+                | Expr::LiteralBool { code_ref, .. } => anyhow::bail!(
                     "{} dot binop not supported, try putting expression in parenthesis: ({})",
                     code_ref,
                     expr
@@ -1182,7 +1245,12 @@ impl<'a> FunctionTranslator<'a> {
             'expression: for (i, dst_expr) in dst_exprs.iter().enumerate() {
                 let src_sval = self.translate_expr(src_exprs.get(i).unwrap())?;
                 match dst_expr {
-                    Expr::Binop(code_ref, op, lhs, rhs) => {
+                    Expr::Binop {
+                        code_ref,
+                        op,
+                        lhs,
+                        rhs,
+                    } => {
                         let (struct_field_address, parent_struct, struct_field, array_field) =
                             self.translate_binop(*op, lhs, rhs, true)?;
 
@@ -1202,14 +1270,14 @@ impl<'a> FunctionTranslator<'a> {
                             unreachable!()
                         }
                     }
-                    Expr::Identifier(code_ref, name) => {
+                    Expr::Identifier { code_ref, name } => {
                         declare_variable(
                             self.ptr_ty,
                             &src_sval.expr_type(code_ref)?,
                             &mut self.builder,
                             &mut self.var_index,
-                            &[&name],
-                            &mut self.variables.last_mut().unwrap(),
+                            &[name],
+                            self.variables.last_mut().unwrap(),
                             &mut self.per_scope_vars.last_mut().unwrap().last_mut().unwrap(),
                             false,
                         )?;
@@ -1325,9 +1393,13 @@ impl<'a> FunctionTranslator<'a> {
                         self.builder
                             .def_var(dst_svar.inner(), src_sval.inner("translate_assign")?);
                     }
-                    Expr::ArrayAccess(_code_ref, name, idx_expr) => {
+                    Expr::ArrayAccess {
+                        code_ref: _,
+                        expr,
+                        idx_expr,
+                    } => {
                         let idx_val = self.idx_expr_to_val(idx_expr)?;
-                        self.translate_array_set_from_var(name.to_string(), idx_val, &src_sval)?;
+                        self.translate_array_set_from_var(expr.to_string(), idx_val, &src_sval)?;
                     }
                     _ => anyhow::bail!(
                         "{} operation not supported",
@@ -1340,16 +1412,16 @@ impl<'a> FunctionTranslator<'a> {
             match self.translate_expr(src_exprs.first().unwrap())? {
                 SValue::Tuple(values) => {
                     for (i, dst_expr) in dst_exprs.iter().enumerate() {
-                        if let Expr::Binop(_code_ref, _, _, _) = dst_expr {
+                        if let Expr::Binop { .. } = dst_expr {
                             todo!()
                             //self.set_struct_field(dst_expr, values[i].clone())?
-                        } else if let Expr::Identifier(code_ref, name) = dst_expr {
+                        } else if let Expr::Identifier { code_ref, name } = dst_expr {
                             declare_variable(
                                 self.ptr_ty,
                                 &values[i].expr_type(code_ref)?,
                                 &mut self.builder,
                                 &mut self.var_index,
-                                &[&name],
+                                &[name],
                                 &mut self.variables.last_mut().unwrap(),
                                 &mut self.per_scope_vars.last_mut().unwrap().last_mut().unwrap(),
                                 false,
@@ -1669,11 +1741,11 @@ impl<'a> FunctionTranslator<'a> {
     ) -> anyhow::Result<SValue> {
         trace!("translate_array_set_from_var");
         //TODO crash if idx_val > ExprType::Array(_, len)
-        let variable = self.get_variable(&CodeRef::z(), &name)?.clone();
+        let variable = self.get_variable(&CodeRef::default(), &name)?.clone();
 
         let array_address = self.builder.use_var(variable.inner());
 
-        let array_expr_type = &variable.expr_type(&CodeRef::z())?;
+        let array_expr_type = &variable.expr_type(&CodeRef::default())?;
 
         self.array_set(val, &array_address, array_expr_type, idx_val, true)?;
 
@@ -2176,7 +2248,7 @@ impl<'a> FunctionTranslator<'a> {
             )
         }
         if let Some(field) = struct_.fields.get(&field_name) {
-            if args.len() == 0 {
+            if args.is_empty() {
                 let struct_address = self.alloc(struct_.size);
                 let field_index_val = self.i64const((field.index - 1) as i64);
                 //the enum type is stored at the first position
@@ -2197,7 +2269,7 @@ impl<'a> FunctionTranslator<'a> {
                 false,
             )?;
 
-            return Ok(SValue::Struct(enum_name, struct_address));
+            Ok(SValue::Struct(enum_name, struct_address))
         } else {
             anyhow::bail!(
                 "{} field {} not found for enum {}",
@@ -2311,7 +2383,7 @@ impl<'a> FunctionTranslator<'a> {
             let func = func.clone();
             for (expr, arg) in args.iter().zip(func.params.iter()) {
                 let closure_d = match expr {
-                    Expr::Identifier(_, name) => {
+                    Expr::Identifier { code_ref: _, name } => {
                         if let Some((closure, temp_closure)) =
                             self.env.get_inline_closure(callee_func_name, name)
                         {
@@ -2320,7 +2392,10 @@ impl<'a> FunctionTranslator<'a> {
                             None
                         }
                     }
-                    Expr::Declaration(_, Declaration::Function(closure)) => Some((
+                    Expr::Declaration {
+                        code_ref: _,
+                        declaration: Declaration::Function(closure),
+                    } => Some((
                         Closure {
                             func: closure.clone(),
                             src_scope: self.func_stack.last().unwrap().name.to_string(),
@@ -2675,7 +2750,7 @@ impl<'a> FunctionTranslator<'a> {
                 anyhow::bail!("variable {} is not a struct type {:?}", lhs_val, parts)
             }
         } else {
-            let svar = self.get_variable(&CodeRef::z(), &parts[0])?.clone();
+            let svar = self.get_variable(&CodeRef::default(), &parts[0])?.clone();
             if let SVariable::Struct(_var_name, vstruct_name, var, _return_struct) = svar {
                 let base_struct_var_ptr = self.builder.use_var(var);
                 start = 1;
@@ -2964,8 +3039,11 @@ impl<'a> FunctionTranslator<'a> {
     }
 
     fn call_panic(&mut self, message: &str) -> anyhow::Result<()> {
-        let arg_values = vec![Expr::LiteralString(CodeRef::z(), message.to_string())];
-        self.translate_call(&CodeRef::z(), "panic", &arg_values, None, false)?;
+        let arg_values = vec![Expr::LiteralString {
+            code_ref: CodeRef::default(),
+            val: message.to_string(),
+        }];
+        self.translate_call(&CodeRef::default(), "panic", &arg_values, None, false)?;
         Ok(())
     }
 
@@ -2974,7 +3052,7 @@ impl<'a> FunctionTranslator<'a> {
         let fn_name = if new_line { "i64.println" } else { "i64.print" };
         let func = self.env.funcs.get(fn_name).unwrap().clone();
         self.call_with_svalues(
-            &CodeRef::z(),
+            &CodeRef::default(),
             fn_name,
             Some(&func),
             None,
@@ -2991,7 +3069,7 @@ impl<'a> FunctionTranslator<'a> {
         let fn_name = if new_line { "f32.println" } else { "f32.print" };
         let func = self.env.funcs.get(fn_name).unwrap().clone();
         self.call_with_svalues(
-            &CodeRef::z(),
+            &CodeRef::default(),
             fn_name,
             Some(&func),
             None,
@@ -3005,9 +3083,12 @@ impl<'a> FunctionTranslator<'a> {
 
     #[allow(dead_code)]
     fn call_print(&mut self, message: &str, new_line: bool) -> anyhow::Result<()> {
-        let arg_values = vec![Expr::LiteralString(CodeRef::z(), message.to_string())];
+        let arg_values = vec![Expr::LiteralString {
+            code_ref: CodeRef::default(),
+            val: message.to_string(),
+        }];
         self.translate_call(
-            &CodeRef::z(),
+            &CodeRef::default(),
             if new_line {
                 "[u8].println"
             } else {
@@ -3942,7 +4023,10 @@ pub fn setup_inline_closures(
 ) {
     for stmt in stmts {
         match stmt {
-            Expr::Declaration(_coderef, Declaration::Function(closure_fn)) => {
+            Expr::Declaration {
+                code_ref: _,
+                declaration: Declaration::Function(closure_fn),
+            } => {
                 if !inline_closures.contains_key(func_name) {
                     inline_closures.insert(func_name.to_string(), HashMap::new());
                 }

@@ -158,10 +158,10 @@ fn build_graph_func(
                 let connection = connection.first().unwrap();
                 param_names.push(Expr::identifier(&format!(
                     "v{}_{}",
-                    &connection.src_node, connection.src_port
+                    connection.src_node, connection.src_port
                 )))
             } else {
-                println!("{}", format!("{}", node.port_defaults[&param.name]));
+                println!("{}", node.port_defaults[&param.name]);
                 // If there is no connection use the default val
                 param_names.push(Expr::literal_float(node.port_defaults[&param.name]))
                 //TODO arbitrary precision while always printing decimal?
@@ -170,12 +170,7 @@ fn build_graph_func(
 
         body.push(Expr::assign(
             &return_var_names,
-            &vec![Expr::Call(
-                CodeRef::z(),
-                node.func_name.clone(),
-                param_names,
-                false,
-            )],
+            &vec![Expr::call(&node.func_name, &param_names)],
         ))
     }
 
@@ -211,16 +206,14 @@ fn build_graph_func(
         Expr::literal_int(1),
     ));
 
-    main_body.push(Expr::WhileLoop(
-        CodeRef::z(),
-        Box::new(Expr::Compare(
-            CodeRef::z(),
-            Cmp::Le,
-            Box::new(Expr::identifier("i")),
-            Box::new(Expr::literal_int((block_size - 1) as i64)),
-        )),
-        None,
-        body,
+    main_body.push(Expr::while_loop(
+        &Expr::compare(
+            &Cmp::Le,
+            &Expr::identifier("i"),
+            &Expr::literal_int((block_size - 1) as i64),
+        ),
+        &None,
+        &body,
     ));
 
     Ok(Declaration::Function(Function {
@@ -228,8 +221,8 @@ fn build_graph_func(
         params: vec![Arg {
             name: "audio".into(),
             expr_type: ExprType::Array(
-                CodeRef::z(),
-                Box::new(ExprType::F32(CodeRef::z())),
+                CodeRef::default(),
+                Box::new(ExprType::F32(CodeRef::default())),
                 ArraySizedExpr::Unsized,
             ),
             no_type_listed: false,

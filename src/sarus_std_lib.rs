@@ -31,6 +31,10 @@ impl<T> SarusSlice<T> {
         self.len
     }
     #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len <= 0
+    }
+    #[inline]
     pub fn cap(&self) -> i64 {
         self.cap
     }
@@ -301,17 +305,13 @@ pub fn append_std_strings(prog: &mut Vec<Declaration>, jit_builder: &mut JITBuil
 
 pub(crate) fn check_core_generics(fn_name: &str, impl_val: Option<SValue>) -> bool {
     if HashSet::from(["push", "pop", "len", "cap", "append"]).contains(fn_name) {
-        if let Some(impl_val) = &impl_val {
-            if let SValue::Array(_sval, ArraySized::Slice) = impl_val {
-                return true;
-            }
+        if let Some(SValue::Array(_sval, ArraySized::Slice)) = &impl_val {
+            return true;
         }
     }
     if fn_name == "len" {
-        if let Some(impl_val) = &impl_val {
-            if let SValue::Array(_sval, ArraySized::Fixed(..)) = impl_val {
-                return true;
-            }
+        if let Some(SValue::Array(_sval, ArraySized::Fixed(..))) = &impl_val {
+            return true;
         }
     }
     HashSet::from(["unsized"]).contains(fn_name)
@@ -326,38 +326,37 @@ pub(crate) fn validate_core_generics(
     variables: &HashMap<String, SVariable>,
 ) -> Result<Option<ExprType>, TypeError> {
     if fn_name == "push" {
-        if let Some(lhs_val) = lhs_val {
-            if let ExprType::Array(code_ref, expr_type, ArraySizedExpr::Slice) = lhs_val {
-                if args.len() != 1 {
-                    return Err(TypeError::TupleLengthMismatch {
-                        c: code_ref.s(&env.file_idx),
-                        actual: args.len(),
-                        expected: 1,
-                    });
-                }
-                let targ = ExprType::of(&args[0], env, fn_name, variables)?;
-                if **expr_type != targ {
-                    return Err(TypeError::TypeMismatchSpecific {
-                                    c: code_ref.s(&env.file_idx),
-                                    s: format!("function {} expected parameter {} to be of type {} but type {} was found", fn_name, 1, expr_type , targ)
-                                });
-                }
-                return Ok(Some(ExprType::Void(*code_ref)));
+        if let Some(ExprType::Array(code_ref, expr_type, ArraySizedExpr::Slice)) = lhs_val {
+            if args.len() != 1 {
+                return Err(TypeError::TupleLengthMismatch {
+                    c: code_ref.s(&env.file_idx),
+                    actual: args.len(),
+                    expected: 1,
+                });
             }
+            let targ = ExprType::of(&args[0], env, fn_name, variables)?;
+            if **expr_type != targ {
+                return Err(TypeError::TypeMismatchSpecific {
+                    c: code_ref.s(&env.file_idx),
+                    s: format!(
+                        "function {} expected parameter {} to be of type {} but type {} was found",
+                        fn_name, 1, expr_type, targ
+                    ),
+                });
+            }
+            return Ok(Some(ExprType::Void(*code_ref)));
         }
     }
     if fn_name == "pop" {
-        if let Some(lhs_val) = lhs_val {
-            if let ExprType::Array(code_ref, expr_type, ArraySizedExpr::Slice) = lhs_val {
-                if args.len() != 0 {
-                    return Err(TypeError::TupleLengthMismatch {
-                        c: code_ref.s(&env.file_idx),
-                        actual: args.len(),
-                        expected: 0,
-                    });
-                }
-                return Ok(Some(*expr_type.clone()));
+        if let Some(ExprType::Array(code_ref, expr_type, ArraySizedExpr::Slice)) = lhs_val {
+            if !args.is_empty() {
+                return Err(TypeError::TupleLengthMismatch {
+                    c: code_ref.s(&env.file_idx),
+                    actual: args.len(),
+                    expected: 0,
+                });
             }
+            return Ok(Some(*expr_type.clone()));
         }
     }
     if fn_name == "len" {
@@ -368,7 +367,7 @@ pub(crate) fn validate_core_generics(
                 ArraySizedExpr::Slice | ArraySizedExpr::Fixed(..),
             ) = lhs_val
             {
-                if args.len() != 0 {
+                if !args.is_empty() {
                     return Err(TypeError::TupleLengthMismatch {
                         c: code_ref.s(&env.file_idx),
                         actual: args.len(),
@@ -532,7 +531,7 @@ impl SConstant {
         let code_ref = if let Some(code_ref) = code_ref {
             code_ref
         } else {
-            CodeRef::z()
+            CodeRef::default()
         };
         match self {
             SConstant::Address(_) => ExprType::Address(code_ref),

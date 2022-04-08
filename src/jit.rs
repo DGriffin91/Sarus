@@ -169,7 +169,7 @@ impl JIT {
 
         //let _ = order_funcs(&funcs);
 
-        for (_func_name, func) in &funcs {
+        for func in funcs.values() {
             if func.extern_func {
                 // Don't compile the contents of std func, it will be empty
                 trace!(
@@ -191,7 +191,7 @@ impl JIT {
 
             // Then, translate the AST nodes into Cranelift IR.
             self.codegen(
-                &func,
+                func,
                 funcs.to_owned(),
                 &struct_map,
                 &constant_vars,
@@ -439,7 +439,7 @@ impl JIT {
             func,
             entry_block,
             &mut variables,
-            &mut per_scope_vars.last_mut().unwrap().last_mut().unwrap(),
+            per_scope_vars.last_mut().unwrap().last_mut().unwrap(),
             &None,
         )?;
 
@@ -543,109 +543,133 @@ impl Env {
 
 fn find_calls(expr: &Expr, calls: &mut Vec<String>) {
     match expr {
-        Expr::LiteralFloat(..)
-        | Expr::LiteralInt(..)
-        | Expr::LiteralU8(..)
-        | Expr::LiteralBool(..)
-        | Expr::LiteralString(..)
-        | Expr::Break(..)
-        | Expr::Continue(..)
-        | Expr::Return(..)
-        | Expr::Declaration(..)
-        | Expr::Identifier(..)
-        | Expr::GlobalDataAddr(_, _) => return,
-        Expr::LiteralArray(_, a, _) => {
-            for e in a {
+        Expr::LiteralFloat { .. }
+        | Expr::LiteralInt { .. }
+        | Expr::LiteralU8 { .. }
+        | Expr::LiteralBool { .. }
+        | Expr::LiteralString { .. }
+        | Expr::Break { .. }
+        | Expr::Continue { .. }
+        | Expr::Return { .. }
+        | Expr::Declaration { .. }
+        | Expr::Identifier { .. }
+        | Expr::GlobalDataAddr { .. } => (),
+        Expr::LiteralArray { exprs, .. } => {
+            for expr in exprs {
+                find_calls(expr, calls)
+            }
+        }
+        Expr::Binop { lhs, rhs, .. } => {
+            find_calls(lhs, calls);
+            find_calls(rhs, calls)
+        }
+        Expr::Unaryop { expr, .. } => find_calls(expr, calls),
+        Expr::Compare { lhs, rhs, .. } => {
+            find_calls(lhs, calls);
+            find_calls(rhs, calls)
+        }
+        Expr::IfThen {
+            condition,
+            then_body,
+            ..
+        } => {
+            find_calls(condition, calls);
+            for e in then_body {
                 find_calls(e, calls)
             }
         }
-        Expr::Binop(_, _, a, b) => {
-            find_calls(a, calls);
-            find_calls(b, calls)
-        }
-        Expr::Unaryop(_, _, a) => find_calls(a, calls),
-        Expr::Compare(_, _, a, b) => {
-            find_calls(a, calls);
-            find_calls(b, calls)
-        }
-        Expr::IfThen(_, a, b) => {
-            find_calls(a, calls);
-            for e in b {
+        Expr::IfElse {
+            condition,
+            then_body,
+            else_body,
+            ..
+        } => {
+            find_calls(condition, calls);
+            for e in then_body {
+                find_calls(e, calls)
+            }
+            for e in else_body {
                 find_calls(e, calls)
             }
         }
-        Expr::IfElse(_, a, b, c) => {
-            find_calls(a, calls);
-            for e in b {
-                find_calls(e, calls)
-            }
-            for e in c {
-                find_calls(e, calls)
-            }
-        }
-        Expr::IfThenElseIf(_, aa) => {
-            for (a, b) in aa {
+        Expr::IfThenElseIf { expr_bodies, .. } => {
+            for (a, b) in expr_bodies {
                 find_calls(a, calls);
                 for e in b {
                     find_calls(e, calls)
                 }
             }
         }
-        Expr::IfThenElseIfElse(_, aa, c) => {
-            for (a, b) in aa {
+        Expr::IfThenElseIfElse {
+            expr_bodies,
+            else_body,
+            ..
+        } => {
+            for (a, b) in expr_bodies {
                 find_calls(a, calls);
                 for e in b {
                     find_calls(e, calls)
                 }
             }
-            for e in c {
+            for e in else_body {
                 find_calls(e, calls)
             }
         }
-        Expr::Assign(_, a, b) => {
-            for e in a {
+        Expr::Assign {
+            to_exprs,
+            from_exprs,
+            ..
+        } => {
+            for e in to_exprs {
                 find_calls(e, calls)
             }
-            for e in b {
+            for e in from_exprs {
                 find_calls(e, calls)
             }
         }
-        Expr::NewStruct(_, _, a) => {
-            for e in a {
+        Expr::NewStruct { fields, .. } => {
+            for e in fields {
                 find_calls(&e.expr, calls)
             }
         }
-        Expr::Match(_, a, b) => {
-            find_calls(&a, calls);
-            for e in b {
+        Expr::Match {
+            expr_arg, fields, ..
+        } => {
+            find_calls(&expr_arg, calls);
+            for e in fields {
                 find_calls(&e.expr, calls)
             }
         }
-        Expr::WhileLoop(_, a, b, c) => {
-            find_calls(&a, calls);
-            if let Some(b) = b {
+        Expr::WhileLoop {
+            condition,
+            iter_body,
+            loop_body,
+            ..
+        } => {
+            find_calls(condition, calls);
+            if let Some(b) = iter_body {
                 for e in b {
-                    find_calls(&e, calls)
+                    find_calls(e, calls)
                 }
             }
-            for e in c {
-                find_calls(&e, calls)
+            for e in loop_body {
+                find_calls(e, calls)
             }
         }
-        Expr::Block(_, a) => {
-            for e in a {
-                find_calls(&e, calls)
+        Expr::Block { block, .. } => {
+            for e in block {
+                find_calls(e, calls)
             }
         }
-        Expr::Call(_, _, a, _) => {
-            for e in a {
-                find_calls(&e, calls)
+        Expr::Call { args, .. } => {
+            for e in args {
+                find_calls(e, calls)
             }
         }
-        Expr::Parentheses(_, a) => find_calls(&a, calls),
-        Expr::ArrayAccess(_, a, b) => {
-            find_calls(a, calls);
-            find_calls(b, calls)
+        Expr::Parentheses { expr, .. } => find_calls(expr, calls),
+        Expr::ArrayAccess { expr, idx_expr, .. } => {
+            find_calls(expr, calls);
+            find_calls(idx_expr, calls)
         }
     }
 }
@@ -655,7 +679,7 @@ fn order_funcs(funcs: &HashMap<String, Function>) -> Vec<String> {
     for (func_name, func) in funcs {
         let mut calls = Vec::new();
         for expr in &func.body {
-            find_calls(&expr, &mut calls)
+            find_calls(expr, &mut calls)
         }
         func_calls.insert(func_name.to_string(), calls);
     }

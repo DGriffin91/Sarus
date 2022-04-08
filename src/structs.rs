@@ -37,7 +37,7 @@ pub fn create_struct_map(
                     0,
                     Arg {
                         name: "type".to_string(),
-                        expr_type: ExprType::I64(CodeRef::z()),
+                        expr_type: ExprType::I64(CodeRef::default()),
                         no_type_listed: false,
                         closure_arg: None,
                     },
@@ -69,7 +69,7 @@ pub fn create_struct_map(
                     offset: 0,
                     size: 0,
                     name: field.name.to_string(),
-                    expr_type: ExprType::Void(CodeRef::z()),
+                    expr_type: ExprType::Void(CodeRef::default()),
                     enum_typeless_field: struct_def.enum_struct && field.no_type_listed,
                 };
                 fields.insert(field.name.to_string(), new_field.clone());
@@ -239,14 +239,10 @@ fn can_insert_into_map(
         ExprType::Struct(code_ref, field_struct_name) => {
             if !in_structs.contains_key(&field_struct_name.to_string()) {
                 anyhow::bail!(
-                    "{} Can't find Struct {} referenced in Struct {} field {}",
-                    code_ref,
-                    field_struct_name,
-                    struct_name,
-                    field_name
+                    "{code_ref} Can't find Struct {field_struct_name} referenced in Struct {struct_name} field {field_name}",
                 )
             }
-            if structs_order.contains(&field_struct_name.to_string()) {
+            if structs_order.contains(&field_struct_name) {
                 can_insert
             } else {
                 false
